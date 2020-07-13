@@ -50,7 +50,7 @@ class VariantRecord:
 
 SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&variants=chr8-140300615-C-G"
 
-@app.route("/spliceai/?", methods=['POST', 'GET'])
+@app.route("/spliceai/", methods=['POST', 'GET'])
 def get_spliceai_scores():
 
     # check params
@@ -119,8 +119,8 @@ def get_spliceai_scores():
     return Response(json.dumps(results),  mimetype='application/json')
 
 
-@app.route('/?', defaults={'path': ''})
-@app.route('/<path:path>/?')
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>/')
 def catch_all(path):
 
     return f"""<html>
