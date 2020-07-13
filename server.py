@@ -50,7 +50,7 @@ class VariantRecord:
 
 SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&variants=chr8-140300615-C-G"
 
-@app.route("/spliceai", methods=['POST', 'GET'])
+@app.route("/spliceai/?", methods=['POST', 'GET'])
 def get_spliceai_scores():
 
     # check params
@@ -118,7 +118,12 @@ def get_spliceai_scores():
 
     return Response(json.dumps(results),  mimetype='application/json')
 
-f"""<html>
+
+@app.route('/?', defaults={'path': ''})
+@app.route('/<path:path>/?')
+def catch_all(path):
+
+    return f"""<html>
 <head>
 <title>TGG APIs</title>
 </head>
@@ -127,11 +132,10 @@ This server provides the following APIs:<br/>
 <br />
 
 GET {SPLICEAI_EXAMPLE} <br />
-<b>[genome_version]</b> should be: {' or '.join(SPLICEAI_ANNOTATOR.keys())} <br />
-<b>variants should have the format "chrom:pos ref&gt;alt" or "chrom-pos-ref-alt" or "chrom pos ref alt" <br />
+<b>hg</b> can be: {' or '.join(SPLICEAI_ANNOTATOR.keys())} <br />
+<b>variants</b> can have the format "chrom:pos ref&gt;alt" or "chrom-pos-ref-alt" or "chrom pos ref alt" <br />
 <br />
-
-The API response is a json list that's the same length as the input list and has splice AI scores for each variant.<br/>
+<b>spliceai API response:</b> a json list that's the same length as the input "variants" list and has the splice AI scores or error message for each variant.<br/>
 <br />
 </body>
 </html>"""
