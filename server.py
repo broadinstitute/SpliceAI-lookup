@@ -6,8 +6,8 @@ from flask_cors import CORS
 from spliceai.utils import Annotator, get_delta_scores
 
 SPLICEAI_ANNOTATOR = {
-    "37": Annotator(os.path.expanduser("hg19.fa"), "grch37"),
-    "38": Annotator(os.path.expanduser("hg38.fa"), "grch38"),
+    "37": Annotator(os.path.expanduser("~/hg19.fa"), "grch37"),
+    "38": Annotator(os.path.expanduser("~/hg38.fa"), "grch38"),
 }
 
 SPLICEAI_DEFAULT_DISTANCE = 50  # maximum distance between the variant and gained/lost splice site, defaults to 50
