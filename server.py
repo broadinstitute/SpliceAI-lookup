@@ -5,15 +5,15 @@ from flask import Flask, request, Response
 from flask_cors import CORS
 from spliceai.utils import Annotator, get_delta_scores
 
-ANNOTATOR = {
+SPLICEAI_ANNOTATOR = {
     "37": Annotator(os.path.expanduser("hg19.fa"), "grch37"),
     "38": Annotator(os.path.expanduser("hg38.fa"), "grch38"),
 }
 
-DISTANCE = 50  # maximum distance between the variant and gained/lost splice site, defaults to 50
-MASK = 0  # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
+SPLICEAI_DEFAULT_DISTANCE = 50  # maximum distance between the variant and gained/lost splice site, defaults to 50
+SPLICEAI_DEFAULT_MASK = 0  # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
 
-SPLICE_AI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
+SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
 
 app = Flask(__name__, template_folder='.')
 CORS(app)
@@ -48,9 +48,9 @@ class VariantRecord:
         return f"{self.chrom}-{self.pos}-{self.ref}-{self.alts[0]}"
 
 
-EXAMPLE = f"For example: /?hg=38&variants='chr8:140300615 C>G'"
+SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&variants=chr8-140300615-C-G"
 
-@app.route("/", methods=['POST', 'GET'])
+@app.route("/spliceai", methods=['POST', 'GET'])
 def get_spliceai_scores():
 
     # check params
@@ -63,19 +63,25 @@ def get_spliceai_scores():
 
     genome_version = params.get("hg")
     if not genome_version:
-        return f'"hg" not specified. The URL must include hg=37 or hg=38. {EXAMPLE}\n', 400
+        return f'"hg" not specified. The URL must include an "hg" arg: hg=37 or hg=38. For example: {SPLICEAI_EXAMPLE}\n', 400
 
     if genome_version not in ("37", "38"):
-        return f'Invalid "hg" value: "{genome_version}". The value must be either "37" or "38". {EXAMPLE}\n', 400
+        return f'Invalid "hg" value: "{genome_version}". The value must be either "37" or "38". For example: {SPLICEAI_EXAMPLE}\n', 400
 
     variants = params.get('variants')
     if not variants:
-        return f'"variants" not specified. The URL must include a "variants" arg. {EXAMPLE}\n', 400
+        return f'"variants" not specified. The URL must include a "variants" arg. For example: {SPLICEAI_EXAMPLE}\n', 400
 
     if isinstance(variants, str):
         variants = variants.split(",")
     else:
         return f'"variants" value must be a string rather than a {type(variants)}.\n', 400
+
+    spliceai_distance = params.get("distance", SPLICEAI_DEFAULT_DISTANCE)
+    try:
+        spliceai_distance = int(spliceai_distance)
+    except Exception as e:
+        return f'Invalid "distance" value: "{spliceai_distance}". The value must be an integer.\n', 400
 
     # parse and perform liftover
     results = []
@@ -92,7 +98,11 @@ def get_spliceai_scores():
 
         record = VariantRecord(chrom, pos, ref, alt)
         try:
-            scores = get_delta_scores(record, ANNOTATOR[genome_version], DISTANCE, MASK)
+            scores = get_delta_scores(
+                record,
+                SPLICEAI_ANNOTATOR[genome_version],
+                spliceai_distance,
+                SPLICEAI_DEFAULT_MASK)
         except Exception as e:
             results.append({"variant": variant, "error": f"{type(e)}: {e}"})
             continue
@@ -103,31 +113,21 @@ def get_spliceai_scores():
 
         parsed_scores = []
         for score in scores:
-            parsed_scores.append(dict(zip(SPLICE_AI_SCORE_FIELDS, score.split("|"))))
+            parsed_scores.append(dict(zip(SPLICEAI_SCORE_FIELDS, score.split("|"))))
         results.append({"variant": variant, "scores": parsed_scores})
 
     return Response(json.dumps(results),  mimetype='application/json')
 
 f"""<html>
 <head>
-<title>SpliceAI Lookup API</title>
+<title>TGG APIs</title>
 </head>
 <body style="font-family: monospace">
-Welcome to the SpliceAI Lookup API. <br/>
+This server provides the following APIs:<br/>
 <br />
-The API can be queried via: <br />
-<br />
-GET  /?variants=[variant1],[variant2]... <br />
-<br/>
-or <br/>
-<br/>
-POST  /<br />
-{{variants: "[variant1],[variant2],[variant3]"}} <br/>
-<br/>
-{EXAMPLE} <br />
-<br />
-<br />
-<b>[genome_version]</b> should be: {' or '.join(ANNOTATOR.keys())} <br />
+
+GET {SPLICEAI_EXAMPLE} <br />
+<b>[genome_version]</b> should be: {' or '.join(SPLICEAI_ANNOTATOR.keys())} <br />
 <b>variants should have the format "chrom:pos ref&gt;alt" or "chrom-pos-ref-alt" or "chrom pos ref alt" <br />
 <br />
 
