@@ -132,6 +132,7 @@ def catch_all(path):
         return markdown2.markdown(f.read())
 
 
+print("Initialization completed.")
+
 if __name__ == "__main__":
-    print("Starting server..")
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
