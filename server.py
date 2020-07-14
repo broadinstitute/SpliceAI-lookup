@@ -1,4 +1,5 @@
 import json
+import markdown2
 import os
 import re
 from flask import Flask, request, Response
@@ -10,6 +11,7 @@ SPLICEAI_ANNOTATOR = {
     "38": Annotator(os.path.expanduser("~/hg38.fa"), "grch38"),
 }
 
+SPLICEAI_MAX_INPUT_VARIANTS = 100
 SPLICEAI_DEFAULT_DISTANCE = 50  # maximum distance between the variant and gained/lost splice site, defaults to 50
 SPLICEAI_DEFAULT_MASK = 0  # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
 
@@ -77,6 +79,10 @@ def get_spliceai_scores():
     else:
         return f'"variants" value must be a string rather than a {type(variants)}.\n', 400
 
+    if len(variants) > SPLICEAI_MAX_INPUT_VARIANTS:
+        return f'"variants" value have fewer than {SPLICEAI_MAX_INPUT_VARIANTS} variants. The current list contains {len(variants)} variants.\n', 400
+
+
     spliceai_distance = params.get("distance", SPLICEAI_DEFAULT_DISTANCE)
     try:
         spliceai_distance = int(spliceai_distance)
@@ -122,24 +128,10 @@ def get_spliceai_scores():
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>/')
 def catch_all(path):
-
-    return f"""<html>
-<head>
-<title>TGG APIs</title>
-</head>
-<body style="font-family: monospace">
-This server provides the following APIs:<br/>
-<br />
-
-GET {SPLICEAI_EXAMPLE} <br />
-<b>hg</b> can be: {' or '.join(SPLICEAI_ANNOTATOR.keys())} <br />
-<b>variants</b> can have the format "chrom:pos ref&gt;alt" or "chrom-pos-ref-alt" or "chrom pos ref alt" <br />
-<br />
-<b>spliceai API response:</b> a json list that's the same length as the input "variants" list and has the splice AI scores or error message for each variant.<br/>
-<br />
-</body>
-</html>"""
+    with open("README.md") as f:
+        return markdown2.markdown(f.read())
 
 
 if __name__ == "__main__":
+    print("Starting server..")
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
