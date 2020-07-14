@@ -1,9 +1,153 @@
 <html>
 <head>
-<title>SpliceAI Lookup</title>
+    <meta charset="utf-8"/>
+    <title>SpliceAI Lookup</title>
+    <link rel="shortcut icon" href="/icon.png">
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/semantic-ui@2.4.2/dist/semantic.min.css" />
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/semantic-ui@2.4.2/dist/semantic.min.js"></script>
+
+    <!-- Global site tag (gtag.js) - Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-172722632-1"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'UA-172722632-1');
+    </script>
+
+    <style>
+        td {
+            padding: 5px 15px;
+        }
+        .upperBorder {
+            border-top: 1px solid black;
+        }
+        table {
+            border-collapse: collapse;
+        }
+    </style>
 </head>
-<body style="font-family: monospace">
-Test
-<iframe src="http://34.71.77.14/spliceai/?hg=38&variants=chr8-140300615-C-G,chr8-140300616-T-G"></iframe>
+<body>
+    <div class="ui stackable grid">
+        <div class="row">
+        <div class="one wide column"></div>
+        <div class="six wide column">
+            <div style="padding:15px 0px">
+                <div style="padding:10px 0px 5px 0px">
+                    <b>Splice AI Score Lookup</b>
+                </div>
+                Enter variant(s) below to see their <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf">SpliceAI</a> scores. This can be any exonic or intronic variant, including long InDels.
+            </div>
+            <div class="ui form" style="width:100%">
+
+                <div class="field no-margin" style="padding-bottom: 10px;">
+                    <textarea id="search-box" rows="7" style="width: 100%" placeholder="Supported formats: &#13;&#13;chr8-140300616-T-G or &#13;chr8:140300616 T&gt;G or &#13;chr8 &nbsp; 140300616 &nbsp; T &nbsp; G&#13;&#13;The 'chr' prefix is optional."></textarea>
+                </div>
+                <div class="ui stackable grid">
+                    <div class="row">
+                        <div class="eight wide column">
+                            <div class="field" style="padding-right:10px; padding-bottom:12px">
+                                <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Genome version:</b></span>
+                                <div class="ui radio checkbox no-margin" style="padding-left:15px; padding-bottom:10px">
+                                    <input type="radio" name="hg" value="37" /><label>hg19</label>
+                                </div>
+                                <div class="ui radio checkbox no-margin" style="padding-left:15px; padding-bottom:10px">
+                                    <input type="radio" name="hg" value="38" checked /><label>hg38</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="five wide column"></div>
+                        <div class="three wide column">
+                            <button id="submit-button" class="ui primary button">Submit</button>
+                        </div>
+                    </div>
+            </div>
+            </div>
+        </div>
+        <div class="eight wide column"></div>
+    </div>
+        <div class="row">
+        <div class="one wide column"></div>
+        <div class="fifteen wide column">
+            <div>
+                <div id="error-box" style="color:darkred"></div>
+                <div id="response-box"></div>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <script>
+      $(document).ready(function() {
+        $('.ui.radio.checkbox').checkbox();
+        $("#submit-button").click(function() {
+          var variants = $("#search-box").val().trim()
+          if (!variants) {
+            return
+          }
+          variants = variants.split(/[\n,]/).filter(function(v) { return v.trim().length > 0}).join(",")
+
+          var requestData = {
+            hg: $("input[name='hg']:checked").val(),
+            variants: variants,
+          }
+
+          console.log("Request:", requestData)
+          $("#error-box").hide()
+          $("#response-box").hide()
+
+          $("#submit-button").addClass(["loading", "disabled"]);
+          $.getJSON(
+            "http://34.71.77.14/spliceai/",
+            requestData
+          ).done(function(response) {
+            console.log('API response:', response);
+            $("#error-box").hide()
+            $("#response-box").html("<table>" +
+             "<tr>" +
+                "<td><b>variant</b></td>" +
+                "<td><b>gene</b></td>" +
+                "<td><b>score type</b></td>" +
+                "<td><b>score</b></td>" +
+                "<td><b>distance</b></td>" +
+             "</tr>" + response.map(function(v) {
+                if (v.error) {
+                    return "<tr class='upperBorder'>" +
+                      "<td>"+v.variant+"</td>" +
+                      "<td>ERROR: "+v.error+"</td>" +
+                    "</tr>"
+                } else {
+                    return v.scores.map(function(scores) {
+                      return "<tr class='upperBorder'>" +
+                        "<td>"+v.variant+"</td>" +
+                        "<td>"+scores.SYMBOL+"</td>" +
+                        "<td>Acceptor Loss</td><td>"+scores.DS_AL+"</td><td>"+scores.DP_AL+" bp</td>" +
+                      "</tr><tr><td></td><td></td>" +
+                        "<td>Donor Loss</td><td>"+scores.DS_DL+"</td><td>"+scores.DP_DL+" bp</td>" +
+                      "</tr><tr><td></td><td></td>" +
+                        "<td>Acceptor Gain</td><td>"+scores.DS_AG+"</td><td>"+scores.DP_AG+" bp</td>" +
+                      "</tr><tr><td></td><td></td>" +
+                        "<td>Donor Gain</td><td>"+scores.DS_DG+"</td><td>"+scores.DP_DG+" bp</td>" +
+                      "</tr>"
+
+                    }).join("")
+                }
+              }).join("") +
+              "</table>")
+            $("#response-box").show()
+          }).fail(function(error) {
+            $("#response-box").hide()
+            $("#error-box").html(error.responseText)
+            $("#error-box").show()
+          }).always(function() {
+            $("#submit-button").removeClass(["loading", "disabled"]);
+          })
+        })
+      })
+    </script>
+
 </body>
 </html>

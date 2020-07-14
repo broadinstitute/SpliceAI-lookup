@@ -80,7 +80,7 @@ def get_spliceai_scores():
         return f'"variants" value must be a string rather than a {type(variants)}.\n', 400
 
     if len(variants) > SPLICEAI_MAX_INPUT_VARIANTS:
-        return f'"variants" value have fewer than {SPLICEAI_MAX_INPUT_VARIANTS} variants. The current list contains {len(variants)} variants.\n', 400
+        return f'{SPLICEAI_MAX_INPUT_VARIANTS} variant limit exceeded. The provided list contains {len(variants)} variants.\n', 400
 
 
     spliceai_distance = params.get("distance", SPLICEAI_DEFAULT_DISTANCE)
