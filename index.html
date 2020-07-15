@@ -181,13 +181,13 @@
           $("#error-box").hide()
           $("#response-box").html(generateResultsTable(response))
           $("#response-box").show()
-          $('.question').popup()
         }).fail(function(error) {
           $("#response-box").hide()
           $("#error-box").html(error.responseText)
           $("#error-box").show()
         }).always(function() {
           $("#submit-button").removeClass(["loading", "disabled"]);
+          $('.question').popup()
         })
       })
     })
