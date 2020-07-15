@@ -22,11 +22,11 @@ CORS(app)
 
 VARIANT_RE = re.compile(
     "(chr)?(?P<chrom>[0-9XYMTt]{1,2})"
-    "[: -]+"
+    "[:\s-]+"
     "(?P<pos>[0-9]{1,9})"
-    "[: -]+"
+    "[:\s-]+"
     "(?P<ref>[ACGT]+)"
-    "[: ->]+"
+    "[:\s->]+"
     "(?P<alt>[ACGT]+)"
 )
 
@@ -37,6 +37,12 @@ def parse_variant(variant_str):
         raise ValueError(f"Unable to parse variant: {variant_str}")
 
     return match['chrom'], int(match['pos']), match['ref'], match['alt']
+
+
+def get_ucsc_link(genome_version, chrom, pos):
+    genome_version = genome_version.replace('37', '19')
+    chrom = chrom.replace('chr', '')
+    return f"https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg{genome_version}&position=chr{chrom}%3A{pos}"
 
 
 class VariantRecord:
@@ -99,7 +105,11 @@ def get_spliceai_scores():
         try:
             chrom, pos, ref, alt = parse_variant(variant)
         except ValueError as e:
-            results.append({"variant": variant, "error": str(e)})
+            results.append({
+                "variant": variant,
+                "url": "#",
+                "error": str(e),
+            })
             continue
 
         record = VariantRecord(chrom, pos, ref, alt)
@@ -110,11 +120,19 @@ def get_spliceai_scores():
                 spliceai_distance,
                 SPLICEAI_DEFAULT_MASK)
         except Exception as e:
-            results.append({"variant": variant, "error": f"{type(e)}: {e}"})
+            results.append({
+                "variant": variant,
+                "url": get_ucsc_link(genome_version, chrom, pos),
+                "error": f"{type(e)}: {e}",
+            })
             continue
 
         if len(scores) == 0:
-            results.append({"variant": variant, "error": f"unable to compute scores for {variant}. Is the genome version and reference base correct, and is the variant either exonic or intronic?"})
+            results.append({
+                "variant": variant,
+                "url": get_ucsc_link(genome_version, chrom, pos),
+                "error": f"unable to compute scores for {variant}. Is the genome version and reference allele correct, and is the variant either exonic or intronic?",
+            })
             continue
 
         parsed_scores = []
@@ -123,7 +141,7 @@ def get_spliceai_scores():
 
         results.append({
             "variant": variant,
-            "url": f"https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg{genome_version.replace('37', '19')}&position=chr{chrom.replace('chr', '')}%3A{pos}",
+            "url": get_ucsc_link(genome_version, chrom, pos),
             "scores": parsed_scores,
         })
 

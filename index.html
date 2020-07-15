@@ -84,72 +84,92 @@
     </div>
 
     <script>
-      $(document).ready(function() {
-        $('.ui.radio.checkbox').checkbox();
-        $("#submit-button").click(function() {
-          var variants = $("#search-box").val().trim()
-          if (!variants) {
-            return
-          }
-          variants = variants.split(/[\n,]/).filter(function(v) { return v.trim().length > 0}).join(",")
+    function getScoreColor(score) {
+      var green = "#70ff8c"
+      var yellow = "#fff19d"
+      var red = "#ffa0a0"
 
-          var requestData = {
-            hg: $("input[name='hg']:checked").val(),
-            variants: variants,
-          }
+    }
+    function generateResultsTable(response) {
+      return "<table>" +
+        "<tr>" +
+        "<td><b>variant</b></td>" +
+        "<td><b>gene</b></td>" +
+        "<td><b>score type</b></td>" +
+        "<td><b>score</b></td>" +
+        "<td><b>distance</b></td>" +
+        "</tr>" + response.map(function(v) {
+          if (v.error) {
+            return "<tr class='upperBorder'>" +
+              "<td><a href='"+v.url+"' target='_blank'>"+v.variant+"</a></td>"+
+              "<td>ERROR: "+v.error+"</td>" +
+              "</tr>"
+          } else {
+            return v.scores.map(function(scores) {
+              return "<tr class='upperBorder'>" +
+                "<td><a href='"+v.url+"' target='_blank'>"+v.variant+"</a></td>"+
+                "<td><a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+scores.SYMBOL+"' target='_blank'>"+scores.SYMBOL+"</td>" +
+                "<td>Acceptor Loss</td><td>"+scores.DS_AL+"</td><td>"+scores.DP_AL+" bp</td>"+
+                "</tr><tr><td></td><td></td>"+
+                "<td>Donor Loss</td><td>"+scores.DS_DL+"</td><td>"+scores.DP_DL+" bp</td>"+
+                "</tr><tr><td></td><td></td>"+
+                "<td>Acceptor Gain</td><td>"+scores.DS_AG+"</td><td>"+scores.DP_AG+" bp</td>"+
+                "</tr><tr><td></td><td></td>"+
+                "<td>Donor Gain</td><td>"+scores.DS_DG+"</td><td>"+scores.DP_DG+" bp</td>"+
+                "</tr>"
 
-          console.log("Request:", requestData)
+            }).join("")
+          }
+        }).join("") +
+        "</table>"
+    }
+
+    function parseVariants(variantsText) {
+        return variantsText.split(/[\n]/)
+            .filter(function(v) { return !v.startsWith("#") })
+            .map(function(v) { return v.trim() })
+            .filter(function(v) { return v.length > 0 })
+            .map(function(v) { var fields = v.split(/[\t ]+/); if (fields.length > 4) { return fields[0] + "-" + fields[1] + "-" + fields[3] + "-" + fields[4] } else { return v } })  // reprocess VCF format to variant
+            .map(function(v) { return v.replace(/([0-9]),([0-9])/g, "$1$2") })  // remove commas from numbers
+            .join(",")
+    }
+
+    $(document).ready(function() {
+      $('.ui.radio.checkbox').checkbox();
+      $("#submit-button").click(function() {
+        var variants = $("#search-box").val().trim()
+        if (!variants) {
+          return
+        }
+        variants = parseVariants(variants)
+
+        var requestData = {
+          hg: $("input[name='hg']:checked").val(),
+          variants: variants,
+        }
+
+        console.log("Request:", requestData)
+        $("#error-box").hide()
+        $("#response-box").hide()
+
+        $("#submit-button").addClass(["loading", "disabled"])
+        $.getJSON(
+          "http://34.71.77.14/spliceai/",
+          requestData
+        ).done(function(response) {
+          console.log('API response:', response)
           $("#error-box").hide()
+          $("#response-box").html(generateResultsTable(response))
+          $("#response-box").show()
+        }).fail(function(error) {
           $("#response-box").hide()
-
-          $("#submit-button").addClass(["loading", "disabled"]);
-          $.getJSON(
-            "http://34.71.77.14/spliceai/",
-            requestData
-          ).done(function(response) {
-            console.log('API response:', response);
-            $("#error-box").hide()
-            $("#response-box").html("<table>" +
-             "<tr>" +
-                "<td><b>variant</b></td>" +
-                "<td><b>gene</b></td>" +
-                "<td><b>score type</b></td>" +
-                "<td><b>score</b></td>" +
-                "<td><b>distance</b></td>" +
-             "</tr>" + response.map(function(v) {
-                if (v.error) {
-                    return "<tr class='upperBorder'>" +
-                      "<td>"+v.variant+"</td>" +
-                      "<td>ERROR: "+v.error+"</td>" +
-                    "</tr>"
-                } else {
-                    return v.scores.map(function(scores) {
-                      return "<tr class='upperBorder'>" +
-                        "<td><a href='" + v.url + "'>"+v.variant+"</a></td>" +
-                        "<td>"+scores.SYMBOL+"</td>" +
-                        "<td>Acceptor Loss</td><td>"+scores.DS_AL+"</td><td>"+scores.DP_AL+" bp</td>" +
-                      "</tr><tr><td></td><td></td>" +
-                        "<td>Donor Loss</td><td>"+scores.DS_DL+"</td><td>"+scores.DP_DL+" bp</td>" +
-                      "</tr><tr><td></td><td></td>" +
-                        "<td>Acceptor Gain</td><td>"+scores.DS_AG+"</td><td>"+scores.DP_AG+" bp</td>" +
-                      "</tr><tr><td></td><td></td>" +
-                        "<td>Donor Gain</td><td>"+scores.DS_DG+"</td><td>"+scores.DP_DG+" bp</td>" +
-                      "</tr>"
-
-                    }).join("")
-                }
-              }).join("") +
-              "</table>")
-            $("#response-box").show()
-          }).fail(function(error) {
-            $("#response-box").hide()
-            $("#error-box").html(error.responseText)
-            $("#error-box").show()
-          }).always(function() {
-            $("#submit-button").removeClass(["loading", "disabled"]);
-          })
+          $("#error-box").html(error.responseText)
+          $("#error-box").show()
+        }).always(function() {
+          $("#submit-button").removeClass(["loading", "disabled"]);
         })
       })
+    })
     </script>
 
 </body>
