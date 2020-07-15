@@ -13,6 +13,7 @@ SPLICEAI_ANNOTATOR = {
 }
 
 SPLICEAI_MAX_INPUT_VARIANTS = 100
+SPLICEAI_MAX_DISTANCE_LIMIT = 20000
 SPLICEAI_DEFAULT_DISTANCE = 50  # maximum distance between the variant and gained/lost splice site, defaults to 50
 SPLICEAI_DEFAULT_MASK = 0  # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
 
@@ -95,6 +96,9 @@ def get_spliceai_scores():
         spliceai_distance = int(spliceai_distance)
     except Exception as e:
         return f'Invalid "distance": "{spliceai_distance}". The value must be an integer.\n', 400
+
+    if spliceai_distance > SPLICEAI_MAX_DISTANCE_LIMIT:
+        return f'Invalid "distance": "{spliceai_distance}". The value must be < {SPLICEAI_MAX_DISTANCE_LIMIT}.\n', 400
 
     # parse and perform liftover
     results = []
