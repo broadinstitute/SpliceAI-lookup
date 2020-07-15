@@ -22,11 +22,11 @@ CORS(app)
 
 VARIANT_RE = re.compile(
     "(chr)?(?P<chrom>[0-9XYMTt]{1,2})"
-    "[:\s-]+"
+    "[-\s:]+"
     "(?P<pos>[0-9]{1,9})"
-    "[:\s-]+"
+    "[-\s:]+"
     "(?P<ref>[ACGT]+)"
-    "[:\s->]+"
+    "[-\s:>]+"
     "(?P<alt>[ACGT]+)"
 )
 
