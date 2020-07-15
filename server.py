@@ -136,8 +136,11 @@ def get_spliceai_scores():
             continue
 
         parsed_scores = []
-        for score in scores:
-            parsed_scores.append(dict(zip(SPLICEAI_SCORE_FIELDS, score.split("|"))))
+        for score_fields in scores:
+            score_dict = dict(zip(SPLICEAI_SCORE_FIELDS, score_fields.split("|")))
+            for score_type in "DG", "DL", "AG", "AL":
+                score_dict[f"{score_type}_url"] = get_ucsc_link(genome_version, chrom, pos + int(score_fields[f"DP_{score_type}"]))
+            parsed_scores.append(score_dict)
 
         results.append({
             "variant": variant,
