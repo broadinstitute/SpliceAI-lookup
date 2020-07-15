@@ -2,6 +2,7 @@ import json
 import markdown2
 import os
 import re
+from datetime import datetime
 from flask import Flask, request, Response
 from flask_cors import CORS
 from spliceai.utils import Annotator, get_delta_scores
@@ -42,7 +43,7 @@ def parse_variant(variant_str):
 def get_ucsc_link(genome_version, chrom, pos):
     genome_version = genome_version.replace('37', '19')
     chrom = chrom.replace('chr', '')
-    return f"https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg{genome_version}&position=chr{chrom}%3A{pos}"
+    return f"https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg{genome_version}&position=chr{chrom}:{pos}"
 
 
 class VariantRecord:
@@ -102,6 +103,8 @@ def get_spliceai_scores():
         if not variant:
             continue
 
+        start_time = datetime.now()
+        print(start_time.strftime("%d/%m/%Y %H:%M:%S ") + f"Processing variant: {variant}")
         try:
             chrom, pos, ref, alt = parse_variant(variant)
         except ValueError as e:
@@ -153,7 +156,9 @@ def get_spliceai_scores():
             "scores": parsed_scores,
         })
 
-    return Response(json.dumps(results),  mimetype='application/json')
+        print(f"Done processing variant: {variant}. This took " + str(datetime.now() - start_time))
+
+    return Response(json.dumps(results), mimetype='application/json')
 
 
 @app.route('/', defaults={'path': ''})
