@@ -67,7 +67,7 @@
                                 <div class="ui input" style="padding-left:15px; padding-bottom:10px; padding-right:8px; width:80px">
                                     <input id="max-distance-input" type="text" value="50" style="padding:7px 10px">
                                 </div>
-                                <i class="question circle outline icon" data-content="For each variant, SpliceAI looks within a window (+/- 50bp by default) around that variant to see how it affects the probabilities of different positions being splice acceptors or donors. The distance specified here controls the size of this window."></i>
+                                <i class="question circle outline icon" data-content="For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distance specified here controls the size of this window."></i>
                             </div>
                         </div>
                         <div class="three wide column">
@@ -114,7 +114,7 @@
         "<td><b>gene</b></td>" +
         "<td><b>score type</b></td>" +
         "<td><b>score</b></td>" +
-        "<td><b>distance</b>  "+"<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) around that variant to see how it affects the probabilities of different positions being splice acceptors or donors. The distances in this column represent positions with the biggest change in probability within the window. Negative values are upstream of the variant, and positive are downstream.'></i>"+"</td>" +
+        "<td><b>distance</b>  "+"<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distances in this column represent positions with the biggest change in probability within the window. Negative values are upstream of the variant, and positive are downstream.'></i>"+"</td>" +
         "</tr>" + response.map(function(v) {
           if (v.error) {
             return "<tr class='upperBorder'>" +
