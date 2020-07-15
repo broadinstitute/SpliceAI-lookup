@@ -102,7 +102,7 @@
           if (v.error) {
             return "<tr class='upperBorder'>" +
               "<td><a href='"+v.url+"' target='_blank'>"+v.variant+"</a></td>"+
-              "<td>ERROR: "+v.error+"</td>" +
+              "<td colpan='5'>ERROR: "+v.error+"</td>" +
               "</tr>"
           } else {
             return v.scores.map(function(scores) {
