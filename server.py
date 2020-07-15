@@ -114,13 +114,18 @@ def get_spliceai_scores():
             continue
 
         if len(scores) == 0:
-            results.append({"variant": variant, "error": f"unable to compute scores for {variant}"})
+            results.append({"variant": variant, "error": f"unable to compute scores for {variant}. Is the genome version and reference base correct, and is the variant either exonic or intronic?"})
             continue
 
         parsed_scores = []
         for score in scores:
             parsed_scores.append(dict(zip(SPLICEAI_SCORE_FIELDS, score.split("|"))))
-        results.append({"variant": variant, "scores": parsed_scores})
+
+        results.append({
+            "variant": variant,
+            "url": f"https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg{genome_version.replace('37', '19')}&position=chr{chrom.replace('chr', '')}%3A{pos}",
+            "scores": parsed_scores,
+        })
 
     return Response(json.dumps(results),  mimetype='application/json')
 

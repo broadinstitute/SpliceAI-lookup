@@ -19,6 +19,9 @@
     </script>
 
     <style>
+        body, .ui.form, label {
+            font-size: 11pt !important;
+        }
         td {
             padding: 5px 15px;
         }
@@ -39,16 +42,17 @@
                 <div style="padding:10px 0px 5px 0px">
                     <b>Splice AI Score Lookup</b>
                 </div>
-                Enter variant(s) below to see their <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf">SpliceAI</a> scores. This can be any exonic or intronic variant, including long InDels.
+                Enter variant(s) below to see their <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf">SpliceAI</a> scores. <br />
+                This can be any exonic or intronic variant, including long InDels.
             </div>
             <div class="ui form" style="width:100%">
 
                 <div class="field no-margin" style="padding-bottom: 10px;">
-                    <textarea id="search-box" rows="7" style="width: 100%" placeholder="Supported formats: &#13;&#13;chr8-140300616-T-G or &#13;chr8:140300616 T&gt;G or &#13;chr8 &nbsp; 140300616 &nbsp; T &nbsp; G&#13;&#13;The 'chr' prefix is optional."></textarea>
+                    <textarea id="search-box" rows="7" style="width: 100%" placeholder="chr8-140300616-T-G or &#13;chr8:140300616 T&gt;G or &#13;chr8 &nbsp; 140300616 &nbsp; T &nbsp; G&#13;&#13;The 'chr' prefix is optional.&#13;VCF format is also supported. Lines that start with # will be skipped."></textarea>
                 </div>
                 <div class="ui stackable grid">
                     <div class="row">
-                        <div class="eight wide column">
+                        <div class="thirteen wide column">
                             <div class="field" style="padding-right:10px; padding-bottom:12px">
                                 <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Genome version:</b></span>
                                 <div class="ui radio checkbox no-margin" style="padding-left:15px; padding-bottom:10px">
@@ -59,7 +63,6 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="five wide column"></div>
                         <div class="three wide column">
                             <button id="submit-button" class="ui primary button">Submit</button>
                         </div>
@@ -122,7 +125,7 @@
                 } else {
                     return v.scores.map(function(scores) {
                       return "<tr class='upperBorder'>" +
-                        "<td>"+v.variant+"</td>" +
+                        "<td><a href='" + v.url + "'>"+v.variant+"</a></td>" +
                         "<td>"+scores.SYMBOL+"</td>" +
                         "<td>Acceptor Loss</td><td>"+scores.DS_AL+"</td><td>"+scores.DP_AL+" bp</td>" +
                       "</tr><tr><td></td><td></td>" +
