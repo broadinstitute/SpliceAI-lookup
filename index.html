@@ -84,12 +84,22 @@
     </div>
 
     <script>
-    function getScoreColor(score) {
-      var green = "#70ff8c"
-      var yellow = "#fff19d"
-      var red = "#ffa0a0"
 
+    function getScoreStyle(score) {
+      var red = "#fccfb8"
+      var yellow = "#fff19d"
+      var green = "#cdffd7"
+
+      var score = parseFloat(score)
+      if (0.5 < score && score < 0.8) {
+        return "style='background-color:"+yellow+"'"
+      } else if(0.8 < score) {
+        return "style='background-color:"+red+"'"
+      } else {
+        return "style='background-color:"+green+"'"
+      }
     }
+
     function generateResultsTable(response) {
       return "<table>" +
         "<tr>" +
@@ -102,20 +112,20 @@
           if (v.error) {
             return "<tr class='upperBorder'>" +
               "<td><a href='"+v.url+"' target='_blank'>"+v.variant+"</a></td>"+
-              "<td colpan='5'>ERROR: "+v.error+"</td>" +
+              "<td colspan=4>ERROR: "+v.error+"</td>" +
               "</tr>"
           } else {
             return v.scores.map(function(scores) {
               return "<tr class='upperBorder'>" +
                 "<td><a href='"+v.url+"' target='_blank'>"+v.variant+"</a></td>"+
                 "<td><a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+scores.SYMBOL+"' target='_blank'>"+scores.SYMBOL+"</td>" +
-                "<td>Acceptor Loss</td><td>"+scores.DS_AL+"</td><td>"+scores.DP_AL+" bp</td>"+
+                "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL+"</><td>"+scores.DP_AL+" bp</td>"+
                 "</tr><tr><td></td><td></td>"+
-                "<td>Donor Loss</td><td>"+scores.DS_DL+"</td><td>"+scores.DP_DL+" bp</td>"+
+                "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL)+">"+scores.DS_DL+"</td><td>"+scores.DP_DL+" bp</td>"+
                 "</tr><tr><td></td><td></td>"+
-                "<td>Acceptor Gain</td><td>"+scores.DS_AG+"</td><td>"+scores.DP_AG+" bp</td>"+
+                "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG)+">"+scores.DS_AG+"</td><td>"+scores.DP_AG+" bp</td>"+
                 "</tr><tr><td></td><td></td>"+
-                "<td>Donor Gain</td><td>"+scores.DS_DG+"</td><td>"+scores.DP_DG+" bp</td>"+
+                "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">"+scores.DS_DG+"</td><td>"+scores.DP_DG+" bp</td>"+
                 "</tr>"
 
             }).join("")
