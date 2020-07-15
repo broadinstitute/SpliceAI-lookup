@@ -104,7 +104,7 @@ def get_spliceai_scores():
             continue
 
         start_time = datetime.now()
-        print(start_time.strftime("%d/%m/%Y %H:%M:%S ") + f"Processing variant: {variant}")
+        print(start_time.strftime("%d/%m/%Y %H:%M:%S ") + f"Processing {variant}  with hg={genome_version}, distance={spliceai_distance}")
         try:
             chrom, pos, ref, alt = parse_variant(variant)
         except ValueError as e:
