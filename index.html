@@ -91,9 +91,9 @@
       var green = "#cdffd7"
 
       var score = parseFloat(score)
-      if (0.5 < score && score < 0.8) {
+      if (0.5 <= score && score < 0.8) {
         return "style='background-color:"+yellow+"'"
-      } else if(0.8 < score) {
+      } else if(score >= 0.8) {
         return "style='background-color:"+red+"'"
       } else {
         return "style='background-color:"+green+"'"

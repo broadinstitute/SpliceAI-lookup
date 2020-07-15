@@ -131,7 +131,7 @@ def get_spliceai_scores():
             results.append({
                 "variant": variant,
                 "url": get_ucsc_link(genome_version, chrom, pos),
-                "error": f"unable to compute scores for {variant}. Is the genome version and reference allele correct, and is the variant either exonic or intronic?",
+                "error": f"Unable to compute scores for {variant}. Please check that the genome version and reference allele are correct, and the variant is either exonic or intronic.",
             })
             continue
 
