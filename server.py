@@ -93,7 +93,7 @@ def get_spliceai_scores():
     try:
         spliceai_distance = int(spliceai_distance)
     except Exception as e:
-        return f'Invalid "distance" value: "{spliceai_distance}". The value must be an integer.\n', 400
+        return f'Invalid "distance": "{spliceai_distance}". The value must be an integer.\n', 400
 
     # parse and perform liftover
     results = []
@@ -139,7 +139,12 @@ def get_spliceai_scores():
         for score_fields in scores:
             score_dict = dict(zip(SPLICEAI_SCORE_FIELDS, score_fields.split("|")))
             for score_type in "DG", "DL", "AG", "AL":
-                score_dict[f"{score_type}_url"] = get_ucsc_link(genome_version, chrom, pos + int(score_fields[f"DP_{score_type}"]))
+                try:
+                    score_dict[f"{score_type}_url"] = get_ucsc_link(genome_version, chrom, pos + int(score_dict[f"DP_{score_type}"]))
+                except Exception as e:
+                    print("{type(e)}: {e}")
+                    score_dict[f"{score_type}_url"] = "#"
+
             parsed_scores.append(score_dict)
 
         results.append({

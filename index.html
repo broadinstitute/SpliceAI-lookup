@@ -53,13 +53,19 @@
                 <div class="ui stackable grid">
                     <div class="row">
                         <div class="thirteen wide column">
-                            <div class="field" style="padding-right:10px; padding-bottom:12px">
+                            <div class="field" style="padding-right:10px">
                                 <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Genome version:</b></span>
                                 <div class="ui radio checkbox no-margin" style="padding-left:15px; padding-bottom:10px">
                                     <input type="radio" name="hg" value="37" /><label>hg19</label>
                                 </div>
                                 <div class="ui radio checkbox no-margin" style="padding-left:15px; padding-bottom:10px">
                                     <input type="radio" name="hg" value="38" checked /><label>hg38</label>
+                                </div>
+                            </div>
+                            <div class="field" style="padding-right:10px; padding-bottom:12px">
+                                <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Max distance:</b></span>
+                                <div class="ui input" style="padding-left:15px; padding-bottom:10px; width:80px">
+                                    <input id="max-distance-input" type="text" value="50" style="padding:7px 10px">
                                 </div>
                             </div>
                         </div>
@@ -118,14 +124,14 @@
             return v.scores.map(function(scores) {
               return "<tr class='upperBorder'>" +
                 "<td><a href='"+v.url+"' target='_blank'>"+v.variant+"</a></td>"+
-                "<td><a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+scores.SYMBOL+"' target='_blank'>"+scores.SYMBOL+"</td>" +
-                "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL+"</><td>"+scores.DP_AL+" bp</td>"+
+                "<td><a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+scores.SYMBOL+"' target='_blank'>"+scores.SYMBOL+"</a></td>" +
+                "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL+"</><td><a href='"+v.url+"' target='_blank'>"+scores.DP_AL+" bp</a></td>"+
                 "</tr><tr><td></td><td></td>"+
-                "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL)+">"+scores.DS_DL+"</td><td>"+scores.DP_DL+" bp</td>"+
+                "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL)+">"+scores.DS_DL+"</td><td><a href='"+v.url+"' target='_blank'>"+scores.DP_DL+" bp</a></td>"+
                 "</tr><tr><td></td><td></td>"+
-                "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG)+">"+scores.DS_AG+"</td><td>"+scores.DP_AG+" bp</td>"+
+                "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG)+">"+scores.DS_AG+"</td><td><a href='"+v.url+"' target='_blank'>"+scores.DP_AG+" bp</a></td>"+
                 "</tr><tr><td></td><td></td>"+
-                "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">"+scores.DS_DG+"</td><td>"+scores.DP_DG+" bp</td>"+
+                "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">"+scores.DS_DG+"</td><td><a href='"+v.url+"' target='_blank'>"+scores.DP_DG+" bp</a></td>"+
                 "</tr>"
 
             }).join("")
@@ -155,6 +161,7 @@
 
         var requestData = {
           hg: $("input[name='hg']:checked").val(),
+          distance: $("#max-distance-input").val(),
           variants: variants,
         }
 
