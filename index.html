@@ -123,13 +123,13 @@
               return "<tr class='upperBorder'>" +
                 "<td><a href='"+v.url+"' target='_blank'>"+v.variant+"</a></td>"+
                 "<td><a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+scores.SYMBOL+"' target='_blank'>"+scores.SYMBOL+"</a></td>" +
-                "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL+"</><td>" + (parseFloat(scores.DS_AL) == 0 ? "" : "<a href='"+v.url+"' target='_blank'>"+scores.DP_AL+" bp</a>") + "</td>"+
+                "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL+"</td><td>" + (parseFloat(scores.DS_AL) == 0 ? "" : "<a href='"+v.url+"' target='_blank'>"+scores.DP_AL+" bp</a>") + "</td>"+
                 "</tr><tr><td></td><td></td>"+
                 "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL)+">"+scores.DS_DL+"</td><td>" + (parseFloat(scores.DS_DL) == 0 ? "" : "<a href='"+v.url+"' target='_blank'>"+scores.DP_DL+" bp</a>") + "</td>"+
                 "</tr><tr><td></td><td></td>"+
                 "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG)+">"+scores.DS_AG+"</td><td>" + (parseFloat(scores.DS_AG) == 0 ? "" : "<a href='"+v.url+"' target='_blank'>"+scores.DP_AG+" bp</a>") + "</td>"+
                 "</tr><tr><td></td><td></td>"+
-                "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">"+scores.DS_DG+"</td<td>" + (parseFloat(scores.DS_DG) == 0 ? "" : "<a href='"+v.url+"' target='_blank'>"+scores.DP_DG+" bp</a>") + "</td>"+
+                "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">"+scores.DS_DG+"</td><td>" + (parseFloat(scores.DS_DG) == 0 ? "" : "<a href='"+v.url+"' target='_blank'>"+scores.DP_DG+" bp</a>") + "</td>"+
                 "</tr>"
 
             }).join("")
