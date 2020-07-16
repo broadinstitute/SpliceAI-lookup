@@ -109,7 +109,7 @@ def get_spliceai_scores():
             continue
 
         start_time = datetime.now()
-        print(start_time.strftime("%d/%m/%Y %H:%M:%S") + f"  {request.remote_addr} Processing {variant}  with hg={genome_version}, distance={spliceai_distance}", file=sys.stderr)
+        print(start_time.strftime("%d/%m/%Y %H:%M:%S") + f"  {request.remote_addr} Processing {variant}  with hg={genome_version}, distance={spliceai_distance}", flush=True)
         try:
             chrom, pos, ref, alt = parse_variant(variant)
         except ValueError as e:
@@ -150,7 +150,7 @@ def get_spliceai_scores():
                 try:
                     score_dict[f"{score_type}_url"] = get_ucsc_link(genome_version, chrom, pos + int(score_dict[f"DP_{score_type}"]))
                 except Exception as e:
-                    print("{type(e)}: {e}", file=sys.stderr)
+                    print("{type(e)}: {e}", flush=True)
                     score_dict[f"{score_type}_url"] = "#"
 
             parsed_scores.append(score_dict)
@@ -161,7 +161,7 @@ def get_spliceai_scores():
             "scores": parsed_scores,
         })
 
-        print(f"Done processing variant: {variant}. This took " + str(datetime.now() - start_time), file=sys.stderr)
+        print(f"Done processing variant: {variant}. This took " + str(datetime.now() - start_time), flush=True)
 
     return Response(json.dumps(results), mimetype='application/json')
 
@@ -173,7 +173,7 @@ def catch_all(path):
         return markdown2.markdown(f.read())
 
 
-print("Initialization completed.", file=sys.stderr)
+print("Initialization completed.", flush=True)
 
 if __name__ == "__main__":
     app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
