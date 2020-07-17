@@ -1,5 +1,5 @@
-TAG1 = weisburd/spliceai-lookup:v1
-TAG2 = weisburd/spliceai-lookup:latest
+TAG1 = weisburd/spliceai-lookup-hg37:v1
+TAG2 = weisburd/spliceai-lookup-hg37:latest
 
 all: build push
 
