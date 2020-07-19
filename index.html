@@ -336,26 +336,28 @@
           }).then(function(response) {
             console.log("Esnembl API response", response)
             var splice_ai_scores = []
-            if (response && response[0]) {
-              var chrom = response[0].seq_region_name || ""  // eg. "8"
-              var pos = response[0].start
-              var alleles = (response[0].allele_string || "").split("/")
-              var ref = alleles[0]
-              var alt = alleles[1]
-              var most_severe_consequence = (response[0].most_severe_consequence || "").replace(/_/g, " ")
+            if (!response || !response[0]) {
+              throw { responseText: "Unable to parse Ensembl API repsonse: " + response }
+            }
+            
+            var chrom = response[0].seq_region_name || ""  // eg. "8"
+            var pos = response[0].start
+            var alleles = (response[0].allele_string || "").split("/")
+            var ref = alleles[0]
+            var alt = alleles[1]
+            var most_severe_consequence = (response[0].most_severe_consequence || "").replace(/_/g, " ")
 
-              console.log("chrom:", chrom, "pos:", pos, "ref:", ref, "alt:", alt)
-              console.log("most_severe_consequence:", most_severe_consequence)
-              if (max_distance == "50") {
-                var scores_set = new Set((response[0].transcript_consequences || []).filter(function(c) {
-                  return c.spliceai_pred
-                }).map(function(c) {
-                  return c.spliceai_pred
-                }))
-                scores_set.forEach(function(s) {
-                  splice_ai_scores.push(s)
-                })
-              }
+            console.log("chrom:", chrom, "pos:", pos, "ref:", ref, "alt:", alt)
+            console.log("most_severe_consequence:", most_severe_consequence)
+            if (max_distance == "50") {
+              var scores_set = new Set((response[0].transcript_consequences || []).filter(function(c) {
+                return c.spliceai_pred
+              }).map(function(c) {
+                return c.spliceai_pred
+              }))
+              scores_set.forEach(function(s) {
+                splice_ai_scores.push(s)
+              })
             }
 
             console.log("splice_ai_scores",  splice_ai_scores)
@@ -373,18 +375,13 @@
             }
 
             // call SpliceAI-lookup API
-            var variant_obj = parseVariant(variant)
-            if (!variant_obj) {
-              throw { responseText: "Unable to parse variant: " + variant }
-            }
-
             return $.getJSON(
               //"http://localhost:80/spliceai/",
               "http://34.71.77.14/spliceai/",
               {
                 hg: genome_version,
                 distance: max_distance,
-                variant: variant_obj['chrom']+'-'+variant_obj['pos']+'-'+variant_obj['ref']+'-'+variant_obj['alt'],
+                variant: chrom+'-'+pos+'-'+ref+'-'+alt,
               },
             )
           }).then(function(response) {
