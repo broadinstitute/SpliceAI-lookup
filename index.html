@@ -321,7 +321,7 @@
             ensembl_api_url_prefix = "grch37."
           }
           $.getJSON(
-            "https://" + ensembl_api_url_prefix + "rest.ensembl.org/vep/human/hgvs/" + variant_hgvs + "?content-type=application/json&SpliceAI=1"
+            "https://" + ensembl_api_url_prefix + "rest.ensembl.org/vep/human/hgvs/" + variant_hgvs + "?content-type=application/json&vcf_string=1&SpliceAI=1"
           ).catch(function(error) {
             var errorText = error.responseText
             try {
@@ -339,26 +339,24 @@
             if (!response || !response[0]) {
               throw { responseText: "Unable to parse Ensembl API repsonse: " + response }
             }
-            
-            var chrom = response[0].seq_region_name || ""  // eg. "8"
-            var pos = response[0].start
-            var alleles = (response[0].allele_string || "").split("/")
-            var ref = alleles[0]
-            var alt = alleles[1]
+
+            var vcf_string = (response[0].vcf_string || "---").split("-")
+            var chrom = vcf_string[0]
+            var pos = vcf_string[1]
+            var ref = vcf_string[2]
+            var alt = vcf_string[3]
             var most_severe_consequence = (response[0].most_severe_consequence || "").replace(/_/g, " ")
 
             console.log("chrom:", chrom, "pos:", pos, "ref:", ref, "alt:", alt)
             console.log("most_severe_consequence:", most_severe_consequence)
-            if (max_distance == "50") {
-              var scores_set = new Set((response[0].transcript_consequences || []).filter(function(c) {
-                return c.spliceai_pred
-              }).map(function(c) {
-                return c.spliceai_pred
-              }))
-              scores_set.forEach(function(s) {
-                splice_ai_scores.push(s)
-              })
-            }
+            var scores_set = new Set((response[0].transcript_consequences || []).filter(function(c) {
+              return c.spliceai_pred
+            }).map(function(c) {
+              return c.spliceai_pred
+            }))
+            scores_set.forEach(function(s) {
+              splice_ai_scores.push(s)
+            })
 
             console.log("splice_ai_scores",  splice_ai_scores)
             if (splice_ai_scores && splice_ai_scores.length > 0) {
