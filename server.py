@@ -65,7 +65,7 @@ def process_variant(variant, genome_version, spliceai_distance):
 
     record = VariantRecord(chrom, pos, ref, alt)
     try:
-        print(f"Processing variant: ", str(record), flush=True)
+        print(f"Processing variant: ", str(record), "genome_version: ", genome_version, flush=True)
         scores = get_delta_scores(
             record,
             SPLICEAI_ANNOTATOR[genome_version],
