@@ -231,6 +231,13 @@
       function generateResultsTable(response) {
         console.log("Processing result:", response)
 
+        try {
+          response["url"] = getUCSCBrowserUrl(response.genome_version, response.chrom, response.pos)
+        } catch(e) {
+          response["url"] = "#"
+        }
+
+
         var parsed_scores = response.scores.map(function(s) {
           var splice_ai_values = s.split("|")
           var splice_ai_dict = {}
@@ -238,13 +245,6 @@
             splice_ai_dict[k] = splice_ai_values[i]
           })
 
-          try {
-            splice_ai_dict["url"] = getUCSCBrowserUrl(response.genome_version, response.chrom, response.pos)
-          } catch(e) {
-            splice_ai_dict["url"] = "#"
-          }
-
-          console.log("splice_ai_dict", splice_ai_dict)
           var score_types = ["DG", "DL", "AG", "AL"]
           score_types.forEach(function(score_type) {
             try {
@@ -253,7 +253,6 @@
               splice_ai_dict[score_type + "_url"] = "#"
             }
           })
-          console.log("splice_ai_dict2", splice_ai_dict)
 
           return splice_ai_dict
         })
@@ -269,7 +268,7 @@
           "<td><b>distance</b>  "+"<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distances in this column represent positions with the biggest change in probability within the window. Negative values are upstream of the variant, and positive are downstream.'></i>"+"</td>" +
           "</tr>" + parsed_scores.map(function(scores) {
                 return "<tr class='upperBorder'>" +
-                  "<td><a href='"+scores.url+"' target='_blank'>"+response.variant+"</a></td>"+
+                  "<td><a href='"+response.url+"' target='_blank'>"+response.variant+"</a></td>"+
                   "<td><a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+scores.SYMBOL+"' target='_blank'>"+scores.SYMBOL+"</a></td>" +
                   "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL+"</td><td>" + (parseFloat(scores.DS_AL) == 0 ? "" : "<a href='"+scores.AL_url+"' target='_blank'>"+scores.DP_AL+" bp</a>") + "</td>"+
                   "</tr><tr><td></td><td></td>"+
