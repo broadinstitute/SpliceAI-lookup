@@ -330,7 +330,7 @@
               console.warn(e)
             }
 
-            errorText = "Ensembl API: " + errorText
+            errorText = "ERROR: Ensembl API: " + errorText
             console.warn(errorText)
             throw { responseText: errorText }
           }).then(function(response) {
