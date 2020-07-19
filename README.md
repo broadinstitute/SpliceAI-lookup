@@ -12,3 +12,9 @@ NOTE: The server takes ~ 2 seconds per variant.
 - **hg** (required) can be 37 or 38
 - **variants** (required) a comma-spearated list of one or variants in the format "chrom-pos-ref-alt" or "chrom:pos ref&gt;alt" or "chrom pos ref alt"
 - **distance** (optional) distance parameter of SpliceAI model (default: 50)    
+
+
+TODO:
+- move variant parsing, ucsc links, etc. to client
+- add firestore tables for precomputed variants
+- cloud function

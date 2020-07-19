@@ -13,7 +13,6 @@ SPLICEAI_ANNOTATOR = {
     "38": Annotator(os.path.expanduser("~/hg38.fa"), "grch38"),
 }
 
-SPLICEAI_MAX_INPUT_VARIANTS = 100
 SPLICEAI_MAX_DISTANCE_LIMIT = 20000
 SPLICEAI_DEFAULT_DISTANCE = 50  # maximum distance between the variant and gained/lost splice site, defaults to 50
 SPLICEAI_DEFAULT_MASK = 0  # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
@@ -42,12 +41,6 @@ def parse_variant(variant_str):
     return match['chrom'], int(match['pos']), match['ref'], match['alt']
 
 
-def get_ucsc_link(genome_version, chrom, pos):
-    genome_version = genome_version.replace('37', '19')
-    chrom = chrom.replace('chr', '')
-    return f"https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg{genome_version}&position=chr{chrom}:{pos}"
-
-
 class VariantRecord:
     def __init__(self, chrom, pos, ref, alt):
         self.chrom = chrom
@@ -59,7 +52,49 @@ class VariantRecord:
         return f"{self.chrom}-{self.pos}-{self.ref}-{self.alts[0]}"
 
 
-SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&variants=chr8-140300615-C-G"
+SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&variant=chr8-140300615-C-G"
+
+def process_variant(variant, genome_version, spliceai_distance):
+    try:
+        chrom, pos, ref, alt = parse_variant(variant)
+    except ValueError as e:
+        return {
+            "variant": variant,
+            "error": f"ERROR: {e}",
+        }
+
+    record = VariantRecord(chrom, pos, ref, alt)
+    try:
+        print(f"Processing variant: ", str(record), flush=True)
+        scores = get_delta_scores(
+            record,
+            SPLICEAI_ANNOTATOR[genome_version],
+            spliceai_distance,
+            SPLICEAI_DEFAULT_MASK)
+    except Exception as e:
+        return {
+            "variant": variant,
+            "error": f"ERROR: {type(e)}: {e}",
+        }
+
+    if len(scores) == 0:
+        return {
+            "variant": variant,
+            "error": f"ERROR: Unable to compute scores for {variant}. Please check that the genome version and reference allele are correct, and the variant is either exonic or intronic in Gencode v24.",
+        }
+
+    scores = [s[s.index("|")+1:] for s in scores]  # drop allele field
+
+    return {
+        "variant": variant,
+        "genome_version": genome_version,
+        "chrom": chrom,
+        "pos": pos,
+        "ref": ref,
+        "alt": alt,
+        "scores": scores,
+    }
+
 
 @app.route("/spliceai/", methods=['POST', 'GET'])
 def get_spliceai_scores():
@@ -69,7 +104,7 @@ def get_spliceai_scores():
     if request.values:
         params.update(request.values)
 
-    if 'variants' not in params:
+    if 'variant' not in params:
         params.update(request.get_json(force=True, silent=True) or {})
 
     genome_version = params.get("hg")
@@ -79,18 +114,13 @@ def get_spliceai_scores():
     if genome_version not in ("37", "38"):
         return f'Invalid "hg" value: "{genome_version}". The value must be either "37" or "38". For example: {SPLICEAI_EXAMPLE}\n', 400
 
-    variants = params.get('variants')
-    if not variants:
-        return f'"variants" not specified. The URL must include a "variants" arg. For example: {SPLICEAI_EXAMPLE}\n', 400
+    variant = params.get('variant', '')
+    variant = variant.strip().strip("'").strip('"').strip(",")
+    if not variant:
+        return f'"variant" not specified. For example: {SPLICEAI_EXAMPLE}\n', 400
 
-    if isinstance(variants, str):
-        variants = variants.split(",")
-    else:
-        return f'"variants" value must be a string rather than a {type(variants)}.\n', 400
-
-    if len(variants) > SPLICEAI_MAX_INPUT_VARIANTS:
-        return f'{SPLICEAI_MAX_INPUT_VARIANTS} variant limit exceeded. The provided list contains {len(variants)} variants.\n', 400
-
+    if not isinstance(variant, str):
+        return f'"variant" value must be a string rather than a {type(variant)}.\n', 400
 
     spliceai_distance = params.get("distance", SPLICEAI_DEFAULT_DISTANCE)
     try:
@@ -101,69 +131,15 @@ def get_spliceai_scores():
     if spliceai_distance > SPLICEAI_MAX_DISTANCE_LIMIT:
         return f'Invalid "distance": "{spliceai_distance}". The value must be < {SPLICEAI_MAX_DISTANCE_LIMIT}.\n', 400
 
-    # parse and perform liftover
-    results = []
-    for variant in variants:
-        variant = variant.strip().strip("'").strip('"').strip(",")
-        if not variant:
-            continue
+    start_time = datetime.now()
+    print(start_time.strftime("%d/%m/%Y %H:%M:%S") + f"  {request.remote_addr} Processing {variant}  with hg={genome_version}, distance={spliceai_distance}", flush=True)
 
-        start_time = datetime.now()
-        print(start_time.strftime("%d/%m/%Y %H:%M:%S") + f"  {request.remote_addr} Processing {variant}  with hg={genome_version}, distance={spliceai_distance}", flush=True)
-        try:
-            chrom, pos, ref, alt = parse_variant(variant)
-        except ValueError as e:
-            results.append({
-                "variant": variant,
-                "url": "#",
-                "error": str(e),
-            })
-            continue
+    results = process_variant(variant, genome_version, spliceai_distance)
 
-        record = VariantRecord(chrom, pos, ref, alt)
-        try:
-            scores = get_delta_scores(
-                record,
-                SPLICEAI_ANNOTATOR[genome_version],
-                spliceai_distance,
-                SPLICEAI_DEFAULT_MASK)
-        except Exception as e:
-            results.append({
-                "variant": variant,
-                "url": get_ucsc_link(genome_version, chrom, pos),
-                "error": f"{type(e)}: {e}",
-            })
-            continue
+    print(f"Done processing variant: {variant}. Results: {results}. This took " + str(datetime.now() - start_time), flush=True)
 
-        if len(scores) == 0:
-            results.append({
-                "variant": variant,
-                "url": get_ucsc_link(genome_version, chrom, pos),
-                "error": f"Unable to compute scores for {variant}. Please check that the genome version and reference allele are correct, and the variant is either exonic or intronic.",
-            })
-            continue
-
-        parsed_scores = []
-        for score_fields in scores:
-            score_dict = dict(zip(SPLICEAI_SCORE_FIELDS, score_fields.split("|")))
-            for score_type in "DG", "DL", "AG", "AL":
-                try:
-                    score_dict[f"{score_type}_url"] = get_ucsc_link(genome_version, chrom, pos + int(score_dict[f"DP_{score_type}"]))
-                except Exception as e:
-                    print("{type(e)}: {e}", flush=True)
-                    score_dict[f"{score_type}_url"] = "#"
-
-            parsed_scores.append(score_dict)
-
-        results.append({
-            "variant": variant,
-            "url": get_ucsc_link(genome_version, chrom, pos),
-            "scores": parsed_scores,
-        })
-
-        print(f"Done processing variant: {variant}. This took " + str(datetime.now() - start_time), flush=True)
-
-    return Response(json.dumps(results), mimetype='application/json')
+    status = 400 if results.get("error") else 200
+    return Response(json.dumps(results), status=status, mimetype='application/json')
 
 
 @app.route('/', defaults={'path': ''})

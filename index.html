@@ -40,16 +40,15 @@
         <div class="six wide column">
             <div style="padding:25px 0px">
                 Enter a variant below to see its <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf" target="_blank">SpliceAI</a> scores.
-                Any SNP or InDel within the exon or intron of a gene as defined by GENCODE v24 canonical transcripts is supported. <br />
+                This can be any SNP or InDel within the exon or intron of a gene as defined by GENCODE v24 canonical transcripts.<br />
                 <br />
                 Examples: &nbsp; (on hg38) <br />
                 <br />
                 <div style="padding-left: 30px; color: gray">
-                    chr8-140300616-T-G<br />
-                    8-140300616-T-G<br />
-                    chr8:140300616 T&gt;G<br />
+                    chr8-140300616-T-G  &nbsp; &nbsp; (<i>the</i> chr <i>prefix is optional</i>)<br />
+                    8:140300616 T&gt;G<br />
                     chr8 &nbsp; 140300616 &nbsp; T &nbsp; G<br />
-                    or HGVS notation - eg. NM_000552.4(VWF):c.3797C>A (p.Pro1266Gln)<br />
+                    NM_000552.4(VWF):c.3797C>A (p.Pro1266Gln)<br />
                 </div >
             </div>
             <div class="ui form" style="width:100%">
@@ -101,14 +100,14 @@
 
     <script>
       var VARIANT_RE = new RegExp(
-          "(chr)?(?<chrom>[0-9XYMTt]{1,2})" +
-          "[-\\s:]+" +
-          "(?<pos>[0-9]{1,9})" +
-          "[-\\s:]+" +
-          "(?<ref>[ACGT]+)" +
-          "[-\\s:>]+" +
-          "(?<alt>[ACGT]+)",
-          'i'
+        "(chr)?(?<chrom>[0-9XYMTt]{1,2})" +
+        "[-\\s:]+" +
+        "(?<pos>[0-9]{1,9})" +
+        "[-\\s:]+" +
+        "(?<ref>[ACGT]+)" +
+        "[-\\s:>]+" +
+        "(?<alt>[ACGT]+)",
+        'i'
       )
 
       var GRCH37_contigs = {
@@ -169,139 +168,249 @@
         "MT": "NC_012920.1",
       }
 
+      var SPLICEAI_SCORE_FIELDS = "SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
 
-    function parseVariant(variant, genome_version) {
-        m = variant.match(VARIANT_RE)
+      function parseVariant(variant) {
+        var m = variant.match(VARIANT_RE)
         if (m) {
-          chrom = m.groups['chrom'].toUpperCase()
-          if (genome_version == "37") {
-                chrom = GRCH37_contigs[chrom]
-            } else if(genome_version == "38") {
-                chrom = GRCH38_contigs[chrom]
-            } else {
-                throw "Invalid genome_version: " + genome_version
-            }
+          var chrom = m.groups['chrom'].toUpperCase()
+          return {
+            chrom: chrom,
+            pos: m.groups['pos'],
+            ref: m.groups["ref"],
+            alt: m.groups["alt"],
+          }
+        }
 
-            variant = chrom + ":g." + m.groups['pos'] + m.groups["ref"] + ">" + m.groups["alt"]
-            console.log("Parsed variant", variant)
+        return null
+      }
+
+
+      function parseVariantToHGVS(variant, genome_version) {
+        var m = variant.match(VARIANT_RE)
+        if (m) {
+          var chrom = m.groups['chrom'].toUpperCase()
+          if (genome_version == "37") {
+            chrom = GRCH37_contigs[chrom]
+          } else if(genome_version == "38") {
+            chrom = GRCH38_contigs[chrom]
+          } else {
+            throw "Invalid genome_version: " + genome_version
+          }
+
+          variant = chrom + ":g." + m.groups['pos'] + m.groups["ref"] + ">" + m.groups["alt"]
+          console.log("Parsed variant", variant)
         }
 
         return variant
-    }
-
-    function getScoreStyle(score) {
-      var red = "#fccfb8"
-      var yellow = "#fff19d"
-      var green = "#cdffd7"
-
-      var score = parseFloat(score)
-      if (0.5 <= score && score < 0.8) {
-        return "style='background-color:"+yellow+"'"
-      } else if(score >= 0.8) {
-        return "style='background-color:"+red+"'"
-      } else {
-        return "style='background-color:"+green+"'"
       }
-    }
 
-    function generateResultsTable(response) {
-      return "<table>" +
-        "<tr>" +
-        "<td><b>variant</b></td>" +
-        "<td><b>gene</b></td>" +
-        "<td><b>score type</b></td>" +
-        "<td><b>score</b></td>" +
-        "<td><b>distance</b>  "+"<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distances in this column represent positions with the biggest change in probability within the window. Negative values are upstream of the variant, and positive are downstream.'></i>"+"</td>" +
-        "</tr>" + response.map(function(v) {
-          if (v.error) {
-            return "<tr class='upperBorder'>" +
-              "<td><a href='"+v.url+"' target='_blank'>"+v.variant+"</a></td>"+
-              "<td colspan=4>ERROR: "+v.error+"</td>" +
-              "</tr>"
-          } else {
-            return v.scores.map(function(scores) {
-              return "<tr class='upperBorder'>" +
-                "<td><a href='"+v.url+"' target='_blank'>"+v.variant+"</a></td>"+
-                "<td><a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+scores.SYMBOL+"' target='_blank'>"+scores.SYMBOL+"</a></td>" +
-                "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL+"</td><td>" + (parseFloat(scores.DS_AL) == 0 ? "" : "<a href='"+v.url+"' target='_blank'>"+scores.DP_AL+" bp</a>") + "</td>"+
-                "</tr><tr><td></td><td></td>"+
-                "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL)+">"+scores.DS_DL+"</td><td>" + (parseFloat(scores.DS_DL) == 0 ? "" : "<a href='"+v.url+"' target='_blank'>"+scores.DP_DL+" bp</a>") + "</td>"+
-                "</tr><tr><td></td><td></td>"+
-                "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG)+">"+scores.DS_AG+"</td><td>" + (parseFloat(scores.DS_AG) == 0 ? "" : "<a href='"+v.url+"' target='_blank'>"+scores.DP_AG+" bp</a>") + "</td>"+
-                "</tr><tr><td></td><td></td>"+
-                "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">"+scores.DS_DG+"</td><td>" + (parseFloat(scores.DS_DG) == 0 ? "" : "<a href='"+v.url+"' target='_blank'>"+scores.DP_DG+" bp</a>") + "</td>"+
-                "</tr>"
 
-            }).join("")
-          }
-        }).join("") +
-        "</table>"
-    }
+      function getScoreStyle(score) {
+        var red = "#fccfb8"
+        var yellow = "#fff19d"
+        var green = "#cdffd7"
 
-    /*
-    function parseVariants(variantsText) {
-        return variantsText.split(/[\n]/)
-            .filter(function(v) { return !v.startsWith("#") })
-            .map(function(v) { return v.trim() })
-            .filter(function(v) { return v.length > 0 })
-            .map(function(v) { var fields = v.split(/[\t ]+/); if (fields.length > 4) { return fields[0] + "-" + fields[1] + "-" + fields[3] + "-" + fields[4] } else { return v } })  // reprocess VCF format to variant
-            .map(function(v) { return v.replace(/([0-9]),([0-9])/g, "$1$2") })  // remove commas from numbers
-            .join(",")
-    }
-    */
-
-    $(document).ready(function() {
-      $('.ui.radio.checkbox').checkbox()
-      $('.question').popup()
-      $("#search-box").focus()
-
-      $("#submit-button").click(function() {
-        var variant = $("#search-box").val().trim()
-        if (!variant) {
-          return
+        var score = parseFloat(score)
+        if (0.5 <= score && score < 0.8) {
+          return "style='background-color:"+yellow+"'"
+        } else if(score >= 0.8) {
+          return "style='background-color:"+red+"'"
+        } else {
+          return "style='background-color:"+green+"'"
         }
+      }
 
-        var genome_version = $("input[name='hg']:checked").val()
-        var max_distance = $("#max-distance-input").val()
+      function getUCSCBrowserUrl(genome_version, chrom, pos) {
 
-        variant = parseVariant(variant, genome_version)
+        genome_version = genome_version.replace('37', '19')
+        chrom = chrom.toUpperCase().replace('CHR', '')
+        return "https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg" + genome_version + "&position=chr" + chrom + ":" + pos
+      }
 
+      function generateResultsTable(response) {
+        console.log("Processing result:", response)
 
-        $("#error-box").hide()
-        $("#response-box").hide()
+        var parsed_scores = response.scores.map(function(s) {
+          var splice_ai_values = s.split("|")
+          var splice_ai_dict = {}
+          SPLICEAI_SCORE_FIELDS.forEach(function(k, i) {
+            splice_ai_dict[k] = splice_ai_values[i]
+          })
 
-        $("#submit-button").addClass(["loading", "disabled"])
-        $.getJSON(
-          "https://rest.ensembl.org/vep/human/hgvs/" + variant + "?content-type=application/json&SpliceAI=1"
-        ).done(function(response) {
-            console.log(response)
+          try {
+            splice_ai_dict["url"] = getUCSCBrowserUrl(response.genome_version, response.chrom, response.pos)
+          } catch(e) {
+            splice_ai_dict["url"] = "#"
+          }
+
+          console.log("splice_ai_dict", splice_ai_dict)
+          var score_types = ["DG", "DL", "AG", "AL"]
+          score_types.forEach(function(score_type) {
+            try {
+              splice_ai_dict[score_type + "_url"] = getUCSCBrowserUrl(response.genome_version, response.chrom, response.pos + parseInt(splice_ai_dict["DP_" + score_type]))
+            } catch(e) {
+              splice_ai_dict[score_type + "_url"] = "#"
+            }
+          })
+          console.log("splice_ai_dict2", splice_ai_dict)
+
+          return splice_ai_dict
         })
 
-        var requestData = {
-          hg: genome_version,
-          distance: max_distance,
-          variants: variant,
-        }
-        console.log("Request:", requestData)
+        console.log("Parsed scores", parsed_scores)
 
-        $.getJSON(
-          "http://34.71.77.14/spliceai/",
-          requestData
-        ).done(function(response) {
-          console.log('API response:', response)
+        return "<table>" +
+          "<tr>" +
+          "<td><b>variant</b></td>" +
+          "<td><b>gene</b></td>" +
+          "<td><b>score type</b></td>" +
+          "<td><b>score</b></td>" +
+          "<td><b>distance</b>  "+"<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distances in this column represent positions with the biggest change in probability within the window. Negative values are upstream of the variant, and positive are downstream.'></i>"+"</td>" +
+          "</tr>" + parsed_scores.map(function(scores) {
+                return "<tr class='upperBorder'>" +
+                  "<td><a href='"+scores.url+"' target='_blank'>"+response.variant+"</a></td>"+
+                  "<td><a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+scores.SYMBOL+"' target='_blank'>"+scores.SYMBOL+"</a></td>" +
+                  "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL+"</td><td>" + (parseFloat(scores.DS_AL) == 0 ? "" : "<a href='"+scores.AL_url+"' target='_blank'>"+scores.DP_AL+" bp</a>") + "</td>"+
+                  "</tr><tr><td></td><td></td>"+
+                  "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL)+">"+scores.DS_DL+"</td><td>" + (parseFloat(scores.DS_DL) == 0 ? "" : "<a href='"+scores.DL_url+"' target='_blank'>"+scores.DP_DL+" bp</a>") + "</td>"+
+                  "</tr><tr><td></td><td></td>"+
+                  "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG)+">"+scores.DS_AG+"</td><td>" + (parseFloat(scores.DS_AG) == 0 ? "" : "<a href='"+scores.AG_url+"' target='_blank'>"+scores.DP_AG+" bp</a>") + "</td>"+
+                  "</tr><tr><td></td><td></td>"+
+                  "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">"+scores.DS_DG+"</td><td>" + (parseFloat(scores.DS_DG) == 0 ? "" : "<a href='"+scores.DG_url+"' target='_blank'>"+scores.DP_DG+" bp</a>") + "</td>"+
+                  "</tr>"
+
+              }).join("") +
+          "</table>"
+      }
+
+      /*
+      function parseVariants(variantsText) {
+          return variantsText.split(/[\n]/)
+              .filter(function(v) { return !v.startsWith("#") })
+              .map(function(v) { return v.trim() })
+              .filter(function(v) { return v.length > 0 })
+              .map(function(v) { var fields = v.split(/[\t ]+/); if (fields.length > 4) { return fields[0] + "-" + fields[1] + "-" + fields[3] + "-" + fields[4] } else { return v } })  // reprocess VCF format to variant
+              .map(function(v) { return v.replace(/([0-9]),([0-9])/g, "$1$2") })  // remove commas from numbers
+              .join(",")
+      }
+      */
+
+      $(document).ready(function() {
+        $('.ui.radio.checkbox').checkbox()
+        $('.question').popup()
+        $("#search-box").focus()
+
+        $("#submit-button").click(function() {
+          var variant = $("#search-box").val().trim()
+          if (!variant) {
+            return
+          }
+
+          var genome_version = $("input[name='hg']:checked").val().trim()
+          var max_distance = $("#max-distance-input").val().trim()
+
+          var variant_hgvs = parseVariantToHGVS(variant, genome_version)
+
           $("#error-box").hide()
-          $("#response-box").html(generateResultsTable(response))
-          $("#response-box").show()
-        }).fail(function(error) {
           $("#response-box").hide()
-          $("#error-box").html(error.responseText)
-          $("#error-box").show()
-        }).always(function() {
-          $("#submit-button").removeClass(["loading", "disabled"]);
-          $('.question').popup()
+
+          $("#submit-button").addClass(["loading", "disabled"])
+
+          var ensembl_api_url_prefix = ""
+          if (genome_version == "37") {
+            ensembl_api_url_prefix = "grch37."
+          }
+          $.getJSON(
+            "https://" + ensembl_api_url_prefix + "rest.ensembl.org/vep/human/hgvs/" + variant_hgvs + "?content-type=application/json&SpliceAI=1"
+          ).catch(function(error) {
+            var errorText = error.responseText
+            try {
+              errorText = JSON.parse(errorText).error
+            } catch(e) {
+              console.warn(e)
+            }
+
+            errorText = "Ensembl API: " + errorText
+            console.warn(errorText)
+            throw { responseText: errorText }
+          }).then(function(response) {
+            console.log("Esnembl API response", response)
+            var splice_ai_scores = []
+            if (response && response[0]) {
+              var chrom = response[0].seq_region_name || ""  // eg. "8"
+              var pos = response[0].start
+              var alleles = (response[0].allele_string || "").split("/")
+              var ref = alleles[0]
+              var alt = alleles[1]
+              var most_severe_consequence = (response[0].most_severe_consequence || "").replace(/_/g, " ")
+
+              console.log("chrom:", chrom, "pos:", pos, "ref:", ref, "alt:", alt)
+              console.log("most_severe_consequence:", most_severe_consequence)
+              if (max_distance == "50") {
+                var scores_set = new Set((response[0].transcript_consequences || []).filter(function(c) {
+                  return c.spliceai_pred
+                }).map(function(c) {
+                  return c.spliceai_pred
+                }))
+                scores_set.forEach(function(s) {
+                  splice_ai_scores.push(s)
+                })
+              }
+            }
+
+            console.log("splice_ai_scores",  splice_ai_scores)
+            if (splice_ai_scores && splice_ai_scores.length > 0) {
+              return {
+                source: "Ensembl API",
+                scores: splice_ai_scores,
+                variant: variant,
+                genome_version: genome_version,
+                chrom: chrom,
+                pos: pos,
+                ref: ref,
+                alt: alt,
+              }
+            }
+
+            // call SpliceAI-lookup API
+            var variant_obj = parseVariant(variant)
+            if (!variant_obj) {
+              throw { responseText: "Unable to parse variant: " + variant }
+            }
+
+            return $.getJSON(
+              "http://localhost:80/spliceai/",
+              //"http://34.71.77.14/spliceai/",
+              {
+                hg: genome_version,
+                distance: max_distance,
+                variant: variant_obj['chrom']+'-'+variant_obj['pos']+'-'+variant_obj['ref']+'-'+variant_obj['alt'],
+              },
+            )
+          }).then(function(response) {
+            $("#error-box").hide()
+            $("#response-box").html(generateResultsTable(response))
+            $("#response-box").show()
+          }).catch(function(error) {
+            $("#response-box").hide()
+            var errorText = error.responseText
+            try {
+              errorText = JSON.parse(errorText).error
+            } catch { }
+
+            if (!errorText) {
+                errorText = "ERROR: An unknown error occurred."
+            }
+            console.warn(errorText)
+            $("#error-box").html(errorText)
+            $("#error-box").show()
+          }).always(function() {
+            $("#submit-button").removeClass(["loading", "disabled"]);
+            $('.question').popup()
+          })
         })
       })
-    })
     </script>
 </body>
 </html>
