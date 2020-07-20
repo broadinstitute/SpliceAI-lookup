@@ -351,13 +351,12 @@
             console.log("chrom:", chrom, "pos:", pos, "ref:", ref, "alt:", alt)
             console.log("most_severe_consequence:", most_severe_consequence)
             if (max_distance == SPLICEAI_DEFAULT_MAX_DISTANCE) {
-                var scores_set = new Set((response[0].transcript_consequences || []).filter(function(c) {
+                (response[0].transcript_consequences || []).filter(function(c) {
                   return c.spliceai_pred
-                }).map(function(c) {
-                  return c.spliceai_pred
-                }))
-                scores_set.forEach(function(s) {
-                  splice_ai_scores.push(s)
+                }).forEach(function(c) {
+                  if (splice_ai_scores.indexOf(c.spliceai_pred) == -1) {
+                    splice_ai_scores.push(c.spliceai_pred)
+                  }
                 })
             }
 
