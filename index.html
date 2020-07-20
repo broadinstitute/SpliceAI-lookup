@@ -394,7 +394,8 @@
             var errorText = error.responseText
             try {
               errorText = JSON.parse(errorText).error
-            } catch { }
+            } catch(e) {
+            }
 
             if (!errorText) {
                 errorText = "ERROR: An unknown error occurred."
