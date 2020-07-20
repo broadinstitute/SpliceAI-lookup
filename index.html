@@ -288,7 +288,7 @@
         $('.ui.radio.checkbox').checkbox()
         $('.question').popup()
         $("#search-box").focus()
-        $("#search-box").keydown(function (event) {
+        $("#search-box,#max-distance-input").keydown(function (event) {
           if ((event.keyCode || event.which) == 13) {
             $("#submit-button").click()
           }
