@@ -284,18 +284,6 @@
           "</table>"
       }
 
-      /*
-      function parseVariants(variantsText) {
-          return variantsText.split(/[\n]/)
-              .filter(function(v) { return !v.startsWith("#") })
-              .map(function(v) { return v.trim() })
-              .filter(function(v) { return v.length > 0 })
-              .map(function(v) { var fields = v.split(/[\t ]+/); if (fields.length > 4) { return fields[0] + "-" + fields[1] + "-" + fields[3] + "-" + fields[4] } else { return v } })  // reprocess VCF format to variant
-              .map(function(v) { return v.replace(/([0-9]),([0-9])/g, "$1$2") })  // remove commas from numbers
-              .join(",")
-      }
-      */
-
       $(document).ready(function() {
         $('.ui.radio.checkbox').checkbox()
         $('.question').popup()
