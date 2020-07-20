@@ -8,6 +8,9 @@ from flask import Flask, request, Response
 from flask_cors import CORS
 from spliceai.utils import Annotator, get_delta_scores
 
+app = Flask(__name__, template_folder='.')
+CORS(app)
+
 SPLICEAI_ANNOTATOR = {
     "37": Annotator(os.path.expanduser("~/hg19.fa"), "grch37"),
     "38": Annotator(os.path.expanduser("~/hg38.fa"), "grch38"),
@@ -19,8 +22,7 @@ SPLICEAI_DEFAULT_MASK = 0  # mask scores representing annotated acceptor/donor g
 
 SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
 
-app = Flask(__name__, template_folder='.')
-CORS(app)
+SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&variant=chr8-140300615-C-G"
 
 VARIANT_RE = re.compile(
     "(chr)?(?P<chrom>[0-9XYMTt]{1,2})"
@@ -52,8 +54,6 @@ class VariantRecord:
         return f"{self.chrom}-{self.pos}-{self.ref}-{self.alts[0]}"
 
 
-SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&variant=chr8-140300615-C-G"
-
 def process_variant(variant, genome_version, spliceai_distance):
     try:
         chrom, pos, ref, alt = parse_variant(variant)
@@ -65,7 +65,6 @@ def process_variant(variant, genome_version, spliceai_distance):
 
     record = VariantRecord(chrom, pos, ref, alt)
     try:
-        print(f"Processing variant: ", str(record), "genome_version: ", genome_version, flush=True)
         scores = get_delta_scores(
             record,
             SPLICEAI_ANNOTATOR[genome_version],
@@ -97,7 +96,7 @@ def process_variant(variant, genome_version, spliceai_distance):
 
 
 @app.route("/spliceai/", methods=['POST', 'GET'])
-def get_spliceai_scores():
+def run_spliceai():
 
     # check params
     params = {}
@@ -131,12 +130,17 @@ def get_spliceai_scores():
     if spliceai_distance > SPLICEAI_MAX_DISTANCE_LIMIT:
         return f'Invalid "distance": "{spliceai_distance}". The value must be < {SPLICEAI_MAX_DISTANCE_LIMIT}.\n', 400
 
+
     start_time = datetime.now()
-    print(start_time.strftime("%d/%m/%Y %H:%M:%S") + f"  {request.remote_addr} Processing {variant}  with hg={genome_version}, distance={spliceai_distance}", flush=True)
+    print(start_time.strftime("%d/%m/%Y %H:%M:%S") + f"======================", flush=True)
+    print(f"{request.remote_addr}", flush=True)
+    print(f"Processing {variant}  with hg={genome_version}, distance={spliceai_distance}", flush=True)
 
     results = process_variant(variant, genome_version, spliceai_distance)
 
-    print(f"Done processing variant: {variant}. Results: {results}. This took " + str(datetime.now() - start_time), flush=True)
+    print(f"Done processing variant: {variant}", flush=True)
+    print(f"Results: {results}", flush=True)
+    print(f"This took " + str(datetime.now() - start_time), flush=True)
 
     status = 400 if results.get("error") else 200
     return Response(json.dumps(results), status=status, mimetype='application/json')
