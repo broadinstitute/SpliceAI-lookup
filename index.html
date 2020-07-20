@@ -342,6 +342,7 @@
 
             console.log("chrom:", chrom, "pos:", pos, "ref:", ref, "alt:", alt)
             console.log("most_severe_consequence:", most_severe_consequence)
+            /*
             if (max_distance == SPLICEAI_DEFAULT_MAX_DISTANCE) {
                 (response[0].transcript_consequences || []).filter(function(c) {
                   return c.spliceai_pred
@@ -351,7 +352,7 @@
                   }
                 })
             }
-
+            */
             console.log("splice_ai_scores",  splice_ai_scores)
             if (splice_ai_scores && splice_ai_scores.length > 0) {
               return {
