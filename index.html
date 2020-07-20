@@ -300,7 +300,11 @@
         $('.ui.radio.checkbox').checkbox()
         $('.question').popup()
         $("#search-box").focus()
-
+        $("#search-box").keydown(function (event) {
+          if ((event.keyCode || event.which) == 13) {
+            $("#submit-button").click()
+          }
+        });
         $("#submit-button").click(function() {
           var variant = $("#search-box").val().trim()
           if (!variant) {
