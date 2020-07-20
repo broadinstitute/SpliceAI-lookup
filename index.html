@@ -100,13 +100,13 @@
 
     <script>
       var VARIANT_RE = new RegExp(
-        "(chr)?(?<chrom>[0-9XYMTt]{1,2})" +
+        "(chr)?([0-9XYMTt]{1,2})" +
         "[-\\s:]+" +
-        "(?<pos>[0-9]{1,9})" +
+        "([0-9]{1,9})" +
         "[-\\s:]+" +
-        "(?<ref>[ACGT]+)" +
+        "([ACGT]+)" +
         "[-\\s:>]+" +
-        "(?<alt>[ACGT]+)",
+        "([ACGT]+)",
         'i'
       )
 
@@ -174,12 +174,12 @@
       function parseVariant(variant) {
         var m = variant.match(VARIANT_RE)
         if (m) {
-          var chrom = m.groups['chrom'].toUpperCase()
+          var chrom = m[2].toUpperCase()
           return {
             chrom: chrom,
-            pos: m.groups['pos'],
-            ref: m.groups["ref"],
-            alt: m.groups["alt"],
+            pos: m[3],
+            ref: m[4],
+            alt: m[5],
           }
         }
 
@@ -190,7 +190,7 @@
       function parseVariantToHGVS(variant, genome_version) {
         var m = variant.match(VARIANT_RE)
         if (m) {
-          var chrom = m.groups['chrom'].toUpperCase()
+          var chrom = m[2].toUpperCase()
           if (genome_version == "37") {
             chrom = GRCH37_contigs[chrom]
           } else if(genome_version == "38") {
@@ -199,7 +199,7 @@
             throw "Invalid genome_version: " + genome_version
           }
 
-          variant = chrom + ":g." + m.groups['pos'] + m.groups["ref"] + ">" + m.groups["alt"]
+          variant = chrom + ":g." + m[3] + m[4] + ">" + m[5]
           console.log("Parsed variant", variant)
         }
 
