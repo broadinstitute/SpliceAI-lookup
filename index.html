@@ -48,6 +48,8 @@
                     chr8-140300616-T-G  &nbsp; &nbsp; (<i>the</i> chr <i>prefix is optional</i>)<br />
                     8:140300616 T&gt;G<br />
                     chr8 &nbsp; 140300616 &nbsp; T &nbsp; G<br />
+                    1-1042601-A-AGAGAG  (<i>insertion of GAGAG</i>)
+                    1-1042466-GGGC-G  (<i>deletion of GGC</i>)
                     NM_000552.4(VWF):c.3797C>A (p.Pro1266Gln)<br />
                 </div >
             </div>
@@ -199,7 +201,20 @@
             throw "Invalid genome_version: " + genome_version
           }
 
-          variant = chrom + ":g." + m[3] + m[4] + ">" + m[5]
+          var pos = parseInt(m[3])
+          var ref = m[4]
+          var alt = m[5]
+
+          if (ref.length == alt.length) {
+            variant = chrom + ":g." + pos + ref + ">" + alt
+          } else if (ref.length > alt.length) {
+            //deletion (https://varnomen.hgvs.org/recommendations/DNA/variant/deletion/)
+            variant = chrom + ":g." + (pos + 1) + "_" + (pos + ref.length - alt.length) + "del"
+          } else if (ref.length < alt.length) {
+            //insertion (https://varnomen.hgvs.org/recommendations/DNA/variant/insertion/)
+            variant = chrom + ":g." + pos + "_" + (pos + 1) + "ins" + alt.slice(1)
+          }
+
           console.log("Parsed variant", variant)
         }
 
