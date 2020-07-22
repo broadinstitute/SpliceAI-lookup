@@ -280,8 +280,8 @@
           "<td><b>variant</b></td>" +
           "<td><b>gene</b></td>" +
           "<td><b>score type</b></td>" +
-          "<td><b>score</b></td>" +
-          "<td><b>distance</b>  "+"<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distances in this column represent positions with the biggest change in probability within the window. Negative values are upstream of the variant, and positive are downstream.'></i>"+"</td>" +
+          "<td><b>score</b>  " + "<i class='question circle outline icon' data-content='Delta score of a variant, which ranges from 0 to 1 and can be interpreted as the probability of the variant being splice-altering. In the SpliceAI  paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs.'></i>"+"</td>" +
+          "<td><b>distance</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distances in this column represent positions with the biggest change in probability within the window. Negative values are upstream of the variant, and positive are downstream.'></i>"+"</td>" +
           "</tr>" + parsed_scores.map(function(scores) {
                 return "<tr class='upperBorder'>" +
                   "<td><a href='"+response.url+"' target='_blank'>"+response.variant+"</a></td>"+
