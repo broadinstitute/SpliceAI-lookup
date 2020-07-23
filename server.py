@@ -3,37 +3,39 @@ import markdown2
 import os
 import pysam
 import re
+import socket
 import sys
 from datetime import datetime
 from flask import Flask, request, Response
 from flask_cors import CORS
 from spliceai.utils import Annotator, get_delta_scores
 
+
 app = Flask(__name__, template_folder='.')
 CORS(app)
 
-SPLICEAI_CACHE_DIR = "/mnt/disks/cache"
-
 SPLICEAI_CACHE_FILES = {}
-for filename in [
-    "spliceai_scores.masked.indel.hg19.vcf.gz",
-    "spliceai_scores.masked.indel.hg38.vcf.gz",
-    "spliceai_scores.masked.snv.hg19.vcf.gz",
-    "spliceai_scores.masked.snv.hg38.vcf.gz",
-    "spliceai_scores.raw.indel.hg19.vcf.gz",
-    "spliceai_scores.raw.indel.hg38.vcf.gz",
-    "spliceai_scores.raw.snv.hg19.vcf.gz",
-    "spliceai_scores.raw.snv.hg38.vcf.gz",
-]:
-    key = filename.replace("spliceai_scores.", "").replace(".vcf.gz", "").split(".")
-    path = os.path.join(SPLICEAI_CACHE_DIR, filename)
-    if os.path.isfile(path):
-        SPLICEAI_CACHE_FILES[key] = pysam.TabixFile(path)
-
+if socket.gethostname() == "spliceai-lookup":
+    for filename in [
+        "spliceai_scores.masked.indel.hg19.vcf.gz",
+        "spliceai_scores.masked.indel.hg38.vcf.gz",
+        "spliceai_scores.masked.snv.hg19.vcf.gz",
+        "spliceai_scores.masked.snv.hg38.vcf.gz",
+        "spliceai_scores.raw.indel.hg19.vcf.gz",
+        "spliceai_scores.raw.indel.hg38.vcf.gz",
+        "spliceai_scores.raw.snv.hg19.vcf.gz",
+        "spliceai_scores.raw.snv.hg38.vcf.gz",
+    ]:
+        key = filename.replace("spliceai_scores.", "").replace(".vcf.gz", "").split(".")
+        path = os.path.join("/mnt/disks/cache", filename)
+        if os.path.isfile(path):
+            SPLICEAI_CACHE_FILES[key] = pysam.TabixFile(path)
+else:
+    SPLICEAI_CACHE_FILES[("raw", "indel", "hg38")] = pysam.TabixFile("./test_data/spliceai_scores.raw.indel.hg38_subset.vcf.gz")
 
 SPLICEAI_ANNOTATOR = {
-    "37": Annotator(os.path.expanduser("~/hg19.fa"), "grch37"),
-    "38": Annotator(os.path.expanduser("~/hg38.fa"), "grch38"),
+    #"37": Annotator(os.path.expanduser("~/hg19.fa"), "grch37"),
+    #"38": Annotator(os.path.expanduser("~/hg38.fa"), "grch38"),
 }
 
 SPLICEAI_MAX_DISTANCE_LIMIT = 20000
@@ -83,7 +85,7 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
             "error": f"ERROR: {e}",
         }
 
-    scores = ""
+    scores = []
     if len(ref) <= 5 or len(alt) <= 5:
         # examples: ("masked", "snv", "hg19")  ("raw", "indel", "hg38")
         key = (
@@ -92,14 +94,17 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
             "hg19" if genome_version == "37" else "hg38",
         )
         try:
-            results = SPLICEAI_CACHE_FILES[key].fetch(chrom.replace("chr", ""), pos-1, pos+1)
-            if results:
-                for line in results:
-                    fields = line.split("\t")
-                    print(chrom, ":", pos, ": ", fields, flush=True)
+            results = SPLICEAI_CACHE_FILES[key].fetch(chrom, pos-1, pos+1)
+            for line in results:
+                # ['1', '739023', '.', 'C', 'CT', '.', '.', 'SpliceAI=CT|AL669831.1|0.00|0.00|0.00|0.00|-1|-37|-48|-37']
+                fields = line.split("\t")
+                print(f"fetched fields: ", fields, flush=True)
+                if fields[0] == chrom and int(fields[1]) == pos and fields[3] == ref and fields[4] == alt:
+                    fetched_scores = fields[7]
+                    scores.append(fetched_scores[fetched_scores.index("|")+1:])
 
         except Exception as e:
-            print(f"ERROR: couldn't retrieve scores using tabix: {e}", flush=True)
+            print(f"ERROR: couldn't retrieve scores using tabix: {type(e)}: {e}", flush=True)
 
     if not scores:
         record = VariantRecord(chrom, pos, ref, alt)
