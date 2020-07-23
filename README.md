@@ -14,7 +14,7 @@ and
 ---
 API Example:
 
-*[/spliceai/?hg=38&distance=50&variant=chr8-140300616-T-G](http://spliceailookup.broadinstitute.org/spliceai/?hg=38&variant=chr8-140300616-T-G)*
+*[/spliceai/?hg=38&distance=50&variant=chr8-140300616-T-G](http://34.71.77.14/spliceai/?hg=38&variant=chr8-140300616-T-G)*
   
 Returns SpliceAI scores for the given variant.   
 
