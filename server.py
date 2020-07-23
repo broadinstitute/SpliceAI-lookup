@@ -26,7 +26,7 @@ if socket.gethostname() == "spliceai-lookup":
         "spliceai_scores.raw.snv.hg19.vcf.gz",
         "spliceai_scores.raw.snv.hg38.vcf.gz",
     ]:
-        key = filename.replace("spliceai_scores.", "").replace(".vcf.gz", "").split(".")
+        key = tuple(filename.replace("spliceai_scores.", "").replace(".vcf.gz", "").split("."))
         full_path = os.path.join("/mnt/disks/cache", filename)
         if os.path.isfile(full_path):
             SPLICEAI_CACHE_FILES[key] = pysam.TabixFile(full_path)
