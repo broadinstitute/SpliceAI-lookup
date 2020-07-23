@@ -1,6 +1,7 @@
 import json
 import markdown2
 import os
+import pysam
 import re
 import sys
 from datetime import datetime
@@ -10,6 +11,24 @@ from spliceai.utils import Annotator, get_delta_scores
 
 app = Flask(__name__, template_folder='.')
 CORS(app)
+
+SPLICEAI_CACHE_DIR = "/mnt/disks/cache"
+
+SPLICEAI_CACHE_FILES = {}
+for filename in [
+    "spliceai_scores.masked.indel.hg19.vcf.gz",
+    "spliceai_scores.masked.indel.hg38.vcf.gz",
+    "spliceai_scores.masked.snv.hg19.vcf.gz",
+    "spliceai_scores.masked.snv.hg38.vcf.gz",
+    "spliceai_scores.raw.indel.hg19.vcf.gz",
+    "spliceai_scores.raw.indel.hg38.vcf.gz",
+    "spliceai_scores.raw.snv.hg19.vcf.gz",
+    "spliceai_scores.raw.snv.hg38.vcf.gz"]:
+    key = filename.replace("spliceai_scores.", "").replace(".vcf.gz", "").splice(".")
+    path = os.path.join(SPLICEAI_CACHE_DIR, filename)
+    if os.path.isfile(path):
+        SPLICEAI_CACHE_FILES[key] = pysam.TabixFile(path)
+
 
 SPLICEAI_ANNOTATOR = {
     "37": Annotator(os.path.expanduser("~/hg19.fa"), "grch37"),
@@ -63,18 +82,37 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
             "error": f"ERROR: {e}",
         }
 
-    record = VariantRecord(chrom, pos, ref, alt)
-    try:
-        scores = get_delta_scores(
-            record,
-            SPLICEAI_ANNOTATOR[genome_version],
-            spliceai_distance,
-            spliceai_mask)
-    except Exception as e:
-        return {
-            "variant": variant,
-            "error": f"ERROR: {type(e)}: {e}",
-        }
+    scores = ""
+    if len(ref) <= 5 or len(alt) <= 5:
+        # examples: ("masked", "snv", "hg19")  ("raw", "indel", "hg38")
+        key = (
+            "masked" if spliceai_mask == "1" else "raw",
+            "snv" if len(ref) == 1 and len(alt) == 1 else "indel",
+            "hg19" if genome_version == "37" else "hg38",
+        )
+        try:
+            results = SPLICEAI_CACHE_FILES[key].fetch(chrom.replace("chr", ""), pos-1, pos+1)
+            if results:
+                for line in results:
+                    fields = line.split("\t")
+                    print(chrom, ":", pos, ": ", fields, flush=True)
+
+        except Exception as e:
+            print(f"ERROR: couldn't retrieve scores using tabix: {e}", flush=True)
+
+    if not scores:
+        record = VariantRecord(chrom, pos, ref, alt)
+        try:
+            scores = get_delta_scores(
+                record,
+                SPLICEAI_ANNOTATOR[genome_version],
+                spliceai_distance,
+                spliceai_mask)
+        except Exception as e:
+            return {
+                "variant": variant,
+                "error": f"ERROR: {type(e)}: {e}",
+            }
 
     if len(scores) == 0:
         return {
@@ -133,6 +171,8 @@ def run_spliceai():
     spliceai_mask = params.get("mask", str(SPLICEAI_DEFAULT_MASK))
     if spliceai_mask not in ("0", "1"):
         return f'Invalid "mask" value: "{spliceai_mask}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n', 400
+
+    spliceai_mask = int(spliceai_mask)
 
     start_time = datetime.now()
     print(f"======================", flush=True)

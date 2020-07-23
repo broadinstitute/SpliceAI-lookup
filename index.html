@@ -78,6 +78,16 @@
                                     <input type="radio" name="hg" value="38" checked /><label>hg38</label>
                                 </div>
                             </div>
+                            <div class="field" style="padding-right:10px">
+                                <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Score type:</b></span>
+                                <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                    <input type="radio" name="mask" value="1" /><label>masked</label>
+                                </div>
+                                <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                    <input type="radio" name="mask" value="0" checked /><label>raw</label>
+                                </div>
+                                <i style="margin-left:20px" class="question circle outline icon" data-content="Splicing changes corresponding to strengthening annotated splice sites and weakening unannotated splice sites are typically much less pathogenic than weakening annotated splice sites and strengthening unannotated splice sites. When this parameter is set to 'masked', the scores for such splicing changes will be masked and shown as 0. SpliceAI developers recommend using 'raw' scores for alternative splicing analysis and 'masked' scores for variant interpretation."></i>
+                            </div>
                             <div class="field" style="padding-right:10px; padding-bottom:12px">
                                 <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Max distance:</b></span>
                                 <div class="ui input" style="padding-left:15px; padding-bottom:10px; padding-right:8px; width:80px">
@@ -320,6 +330,7 @@
           }
 
           var genome_version = $("input[name='hg']:checked").val().trim()
+          var mask = $("input[name='mask']:checked").val().trim()
           var max_distance = $("#max-distance-input").val().trim()
 
           var variant_hgvs = parseVariantToHGVS(variant, genome_version)
@@ -369,6 +380,7 @@
               {
                 hg: genome_version,
                 distance: max_distance,
+                mask: mask,
                 variant: chrom+'-'+pos+'-'+ref+'-'+alt,
               }
             )
