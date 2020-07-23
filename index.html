@@ -37,7 +37,7 @@
     <div class="ui stackable grid">
         <div class="row">
         <div class="one wide column"></div>
-        <div class="six wide column">
+        <div class="seven wide column">
             <div style="padding:25px 0px">
                 Enter a variant below to see its <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf" target="_blank">SpliceAI</a> scores.
                 This can be any SNV or InDel within the exon or intron of a gene as defined by GENCODE v24 canonical transcripts.<br />
@@ -177,7 +177,6 @@
       }
 
       var SPLICEAI_SCORE_FIELDS = "SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
-      var SPLICEAI_DEFAULT_MAX_DISTANCE = "50"
 
       function parseVariant(variant) {
         var m = variant.match(VARIANT_RE)
@@ -335,7 +334,7 @@
             ensembl_api_url_prefix = "grch37."
           }
           $.getJSON(
-            "https://" + ensembl_api_url_prefix + "rest.ensembl.org/vep/human/hgvs/" + variant_hgvs + "?content-type=application/json&vcf_string=1&SpliceAI=1"
+            "https://" + ensembl_api_url_prefix + "rest.ensembl.org/vep/human/hgvs/" + variant_hgvs + "?content-type=application/json&vcf_string=1"
           ).catch(function(error) {
             var errorText = error.responseText
             try {
@@ -349,7 +348,6 @@
             throw { responseText: errorText }
           }).then(function(response) {
             console.log("Esnembl API response", response)
-            var splice_ai_scores = []
             if (!response || !response[0]) {
               throw { responseText: "Unable to parse Ensembl API repsonse: " + response }
             }
@@ -363,30 +361,6 @@
 
             console.log("chrom:", chrom, "pos:", pos, "ref:", ref, "alt:", alt)
             console.log("most_severe_consequence:", most_severe_consequence)
-            /*
-            if (max_distance == SPLICEAI_DEFAULT_MAX_DISTANCE) {
-                (response[0].transcript_consequences || []).filter(function(c) {
-                  return c.spliceai_pred
-                }).forEach(function(c) {
-                  if (splice_ai_scores.indexOf(c.spliceai_pred) == -1) {
-                    splice_ai_scores.push(c.spliceai_pred)
-                  }
-                })
-            }
-            */
-            console.log("splice_ai_scores",  splice_ai_scores)
-            if (splice_ai_scores && splice_ai_scores.length > 0) {
-              return {
-                source: "Ensembl API",
-                scores: splice_ai_scores,
-                variant: variant,
-                genome_version: genome_version,
-                chrom: chrom,
-                pos: pos,
-                ref: ref,
-                alt: alt,
-              }
-            }
 
             // call SpliceAI-lookup API
             return $.getJSON(
