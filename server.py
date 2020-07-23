@@ -22,7 +22,7 @@ SPLICEAI_DEFAULT_MASK = 0  # mask scores representing annotated acceptor/donor g
 
 SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
 
-SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&variant=chr8-140300615-C-G"
+SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&distance=50&mask=0&variant=chr8-140300615-C-G"
 
 VARIANT_RE = re.compile(
     "(chr)?(?P<chrom>[0-9XYMTt]{1,2})"
@@ -54,7 +54,7 @@ class VariantRecord:
         return f"{self.chrom}-{self.pos}-{self.ref}-{self.alts[0]}"
 
 
-def process_variant(variant, genome_version, spliceai_distance):
+def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
     try:
         chrom, pos, ref, alt = parse_variant(variant)
     except ValueError as e:
@@ -69,7 +69,7 @@ def process_variant(variant, genome_version, spliceai_distance):
             record,
             SPLICEAI_ANNOTATOR[genome_version],
             spliceai_distance,
-            SPLICEAI_DEFAULT_MASK)
+            spliceai_mask)
     except Exception as e:
         return {
             "variant": variant,
@@ -106,13 +106,6 @@ def run_spliceai():
     if 'variant' not in params:
         params.update(request.get_json(force=True, silent=True) or {})
 
-    genome_version = params.get("hg")
-    if not genome_version:
-        return f'"hg" not specified. The URL must include an "hg" arg: hg=37 or hg=38. For example: {SPLICEAI_EXAMPLE}\n', 400
-
-    if genome_version not in ("37", "38"):
-        return f'Invalid "hg" value: "{genome_version}". The value must be either "37" or "38". For example: {SPLICEAI_EXAMPLE}\n', 400
-
     variant = params.get('variant', '')
     variant = variant.strip().strip("'").strip('"').strip(",")
     if not variant:
@@ -120,6 +113,13 @@ def run_spliceai():
 
     if not isinstance(variant, str):
         return f'"variant" value must be a string rather than a {type(variant)}.\n', 400
+
+    genome_version = params.get("hg")
+    if not genome_version:
+        return f'"hg" not specified. The URL must include an "hg" arg: hg=37 or hg=38. For example: {SPLICEAI_EXAMPLE}\n', 400
+
+    if genome_version not in ("37", "38"):
+        return f'Invalid "hg" value: "{genome_version}". The value must be either "37" or "38". For example: {SPLICEAI_EXAMPLE}\n', 400
 
     spliceai_distance = params.get("distance", SPLICEAI_DEFAULT_DISTANCE)
     try:
@@ -130,13 +130,16 @@ def run_spliceai():
     if spliceai_distance > SPLICEAI_MAX_DISTANCE_LIMIT:
         return f'Invalid "distance": "{spliceai_distance}". The value must be < {SPLICEAI_MAX_DISTANCE_LIMIT}.\n', 400
 
+    spliceai_mask = params.get("mask", str(SPLICEAI_DEFAULT_MASK))
+    if spliceai_mask not in ("0", "1"):
+        return f'Invalid "mask" value: "{spliceai_mask}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n', 400
 
     start_time = datetime.now()
     print(start_time.strftime("%d/%m/%Y %H:%M:%S") + f"======================", flush=True)
     print(f"{request.remote_addr}", flush=True)
     print(f"Processing {variant}  with hg={genome_version}, distance={spliceai_distance}", flush=True)
 
-    results = process_variant(variant, genome_version, spliceai_distance)
+    results = process_variant(variant, genome_version, spliceai_distance, spliceai_mask)
 
     print(f"Done processing variant: {variant}", flush=True)
     print(f"Results: {results}", flush=True)
