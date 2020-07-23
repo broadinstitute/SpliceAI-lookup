@@ -5,3 +5,5 @@ flask
 flask-cors
 gunicorn
 markdown2
+pysam
+redis
