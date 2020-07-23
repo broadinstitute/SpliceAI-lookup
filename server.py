@@ -23,8 +23,9 @@ for filename in [
     "spliceai_scores.raw.indel.hg19.vcf.gz",
     "spliceai_scores.raw.indel.hg38.vcf.gz",
     "spliceai_scores.raw.snv.hg19.vcf.gz",
-    "spliceai_scores.raw.snv.hg38.vcf.gz"]:
-    key = filename.replace("spliceai_scores.", "").replace(".vcf.gz", "").splice(".")
+    "spliceai_scores.raw.snv.hg38.vcf.gz",
+]:
+    key = filename.replace("spliceai_scores.", "").replace(".vcf.gz", "").split(".")
     path = os.path.join(SPLICEAI_CACHE_DIR, filename)
     if os.path.isfile(path):
         SPLICEAI_CACHE_FILES[key] = pysam.TabixFile(path)
