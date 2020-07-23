@@ -27,15 +27,15 @@ if socket.gethostname() == "spliceai-lookup":
         "spliceai_scores.raw.snv.hg38.vcf.gz",
     ]:
         key = filename.replace("spliceai_scores.", "").replace(".vcf.gz", "").split(".")
-        path = os.path.join("/mnt/disks/cache", filename)
-        if os.path.isfile(path):
-            SPLICEAI_CACHE_FILES[key] = pysam.TabixFile(path)
+        full_path = os.path.join("/mnt/disks/cache", filename)
+        if os.path.isfile(full_path):
+            SPLICEAI_CACHE_FILES[key] = pysam.TabixFile(full_path)
 else:
     SPLICEAI_CACHE_FILES[("raw", "indel", "hg38")] = pysam.TabixFile("./test_data/spliceai_scores.raw.indel.hg38_subset.vcf.gz")
 
 SPLICEAI_ANNOTATOR = {
-    #"37": Annotator(os.path.expanduser("~/hg19.fa"), "grch37"),
-    #"38": Annotator(os.path.expanduser("~/hg38.fa"), "grch38"),
+    "37": Annotator(os.path.expanduser("~/hg19.fa"), "grch37"),
+    "38": Annotator(os.path.expanduser("~/hg38.fa"), "grch38"),
 }
 
 SPLICEAI_MAX_DISTANCE_LIMIT = 20000
