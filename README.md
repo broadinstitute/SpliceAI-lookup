@@ -1,7 +1,7 @@
 
 **SpliceAI Lookup API** 
 
-This API serves as the backend for [spliceailookup.broadinstitute.org](spliceailookup.broadinstitute.org) and is maintained by the [TGG](https://the-tgg.org/).   
+This API serves as the backend for [spliceailookup.broadinstitute.org](http://spliceailookup.broadinstitute.org) and is maintained by the [TGG](https://the-tgg.org/).   
 It works by using precomputed scores provided by Illumina for SNVs and small InDels, and 
 by running the [SpliceAI model](https://github.com/Illumina/SpliceAI) for all other queries - such as larger InDels or non-default **distance** values.<br/>
 
