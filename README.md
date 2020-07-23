@@ -7,7 +7,7 @@ by running the [SpliceAI model](https://github.com/Illumina/SpliceAI) for all ot
 
 For more details on **SpliceAI**, see 
 
-[Jaganathan et al, Cell 2019 in press.](https://github.com/Illumina/SpliceAI)  
+[Jaganathan et al, Cell 2019 in press.](https://doi.org/10.1016/j.cell.2018.12.015)  
 and  
 [github.com/Illumina/SpliceAI](https://github.com/Illumina/SpliceAI)
 
