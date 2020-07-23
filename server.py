@@ -135,9 +135,10 @@ def run_spliceai():
         return f'Invalid "mask" value: "{spliceai_mask}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n', 400
 
     start_time = datetime.now()
-    print(start_time.strftime("%d/%m/%Y %H:%M:%S") + f"======================", flush=True)
+    print(f"======================", flush=True)
+    print(start_time.strftime("%m/%d/%Y %H:%M:%S"), flush=True)
     print(f"{request.remote_addr}", flush=True)
-    print(f"Processing {variant}  with hg={genome_version}, distance={spliceai_distance}", flush=True)
+    print(f"Processing {variant}  with hg={genome_version}, distance={spliceai_distance}, mask={spliceai_mask}", flush=True)
 
     results = process_variant(variant, genome_version, spliceai_distance, spliceai_mask)
 
