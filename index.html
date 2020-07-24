@@ -295,8 +295,8 @@
           "<tr>" +
           "<td><b>variant</b></td>" +
           "<td><b>gene</b></td>" +
-          "<td><b>score type</b></td>" +
-          "<td><b>score</b>  " + "<i class='question circle outline icon' data-content='Delta scores range from 0 to 1 and can be interpreted as the probability of the variant affecting splicing in a window around it (+/- 50bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.5 or higher appear in yellow, and 0.8 or higher appear in red.'></i>"+"</td>" +
+          "<td><b>&#916;&nbsp; type</b></td>" +
+          "<td><b>&#916;&nbsp; score</b>  " + "<i class='question circle outline icon' data-content='Delta scores range from 0 to 1 and can be interpreted as the probability of the variant affecting splicing in a window around it (+/- 50bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.5 or higher appear in yellow, and 0.8 or higher appear in red.'></i>"+"</td>" +
           "<td><b>pre-mRNA position</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions in the pre-mRNA being splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant.'></i>"+"</td>" +
           "</tr>" + parsed_scores.map(function(scores) {
                 return "<tr class='upperBorder'>" +
