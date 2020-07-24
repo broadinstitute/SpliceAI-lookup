@@ -89,9 +89,9 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
     if (len(ref) <= 5 or len(alt) <= 2) and spliceai_distance == SPLICEAI_DEFAULT_DISTANCE:
         # examples: ("masked", "snv", "hg19")  ("raw", "indel", "hg38")
         key = (
-            "masked" if spliceai_mask == "1" else "raw",
+            "masked" if spliceai_mask == 1 else ("raw" if spliceai_mask == 0 else None),
             "snv" if len(ref) == 1 and len(alt) == 1 else "indel",
-            "hg19" if genome_version == "37" else "hg38",
+            "hg19" if genome_version == "37" else ("hg38" if genome_version == "38" else None),
         )
         try:
             results = SPLICEAI_CACHE_FILES[key].fetch(chrom, pos-1, pos+1)
@@ -101,7 +101,7 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
                 if fields[0] == chrom and int(fields[1]) == pos and fields[3] == ref and fields[4] == alt:
                     scores.append(fields[7])
             if scores:
-                print(f"fetched: ", scores, flush=True)
+                print(f"Fetched: ", scores, flush=True)
 
         except Exception as e:
             print(f"ERROR: couldn't retrieve scores using tabix: {type(e)}: {e}", flush=True)
@@ -114,7 +114,7 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
                 SPLICEAI_ANNOTATOR[genome_version],
                 spliceai_distance,
                 spliceai_mask)
-            print(f"computed: ", scores, flush=True)
+            print(f"Computed: ", scores, flush=True)
         except Exception as e:
             return {
                 "variant": variant,
