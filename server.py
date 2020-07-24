@@ -86,7 +86,7 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
         }
 
     scores = []
-    if len(ref) <= 5 or len(alt) <= 2:
+    if len(ref) <= 5 or len(alt) <= 2 and spliceai_distance == SPLICEAI_DEFAULT_DISTANCE:
         # examples: ("masked", "snv", "hg19")  ("raw", "indel", "hg38")
         key = (
             "masked" if spliceai_mask == "1" else "raw",
