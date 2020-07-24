@@ -42,7 +42,7 @@
                 Enter a variant below to see its <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf" target="_blank">SpliceAI</a> scores.
                 This can be any SNV or InDel within the exon or intron of a gene as defined by GENCODE v24 canonical transcripts.<br />
                 <br />
-                For more details on SpliceAI, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>. <br />
+                For more details on SpliceAI, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>. <br />
                 To post issues or feature requests for this web interface, please go to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">broadinstitute/SpliceAI-lookup/issues</a>.<br />
                 <br />
                 This web interface works by retrieving scores from an <a href="http://34.71.77.14/" target="_blank">API</a> maintained by the <a href="https://the-tgg.org/" target="_blank">TGG</a>.<br />
@@ -87,7 +87,7 @@
                                 <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
                                     <input type="radio" name="mask" value="0" checked /><label>raw</label>
                                 </div>
-                                <i style="margin-left:20px" class="question circle outline icon" data-content="Splicing changes corresponding to strengthening annotated splice sites and weakening unannotated splice sites are typically much less pathogenic than weakening annotated splice sites and strengthening unannotated splice sites. When this parameter is set to 'masked', the scores for such splicing changes will be masked and shown as 0. SpliceAI developers recommend using 'raw' scores for alternative splicing analysis and 'masked' scores for variant interpretation."></i>
+                                <i style="margin-left:20px" class="question circle outline icon" data-content="Splicing changes corresponding to strengthening annotated splice sites and weakening unannotated splice sites are typically much less pathogenic than weakening annotated splice sites and strengthening unannotated splice sites. Select 'masked' to hide the scores for such splicing changes and show 0 instead. Select 'raw' to see all scores. SpliceAI developers recommend using 'raw' scores for alternative splicing analysis and 'masked' scores for variant interpretation."></i>
                             </div>
                             <div class="field" style="padding-right:10px; padding-bottom:12px">
                                 <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Max distance:</b></span>
@@ -297,7 +297,7 @@
           "<td><b>gene</b></td>" +
           "<td><b>score type</b></td>" +
           "<td><b>score</b>  " + "<i class='question circle outline icon' data-content='Delta scores range from 0 to 1 and can be interpreted as the probability of the variant affecting splicing in a window around it (+/- 50bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.5 or higher appear in yellow, and 0.8 or higher appear in red'></i>"+"</td>" +
-          "<td><b>distance</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distances in this column represent positions with the biggest change in probability within the window. Negative values are upstream of the variant, and positive are downstream.'></i>"+"</td>" +
+          "<td><b>pre-mRNA position</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions in the pre-mRNA being splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant.'></i>"+"</td>" +
           "</tr>" + parsed_scores.map(function(scores) {
                 return "<tr class='upperBorder'>" +
                   "<td><a href='"+response.url+"' target='_blank'>"+response.variant+"</a></td>"+
