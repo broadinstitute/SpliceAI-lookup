@@ -8,11 +8,12 @@ import sys
 from datetime import datetime
 from flask import Flask, request, Response
 from flask_cors import CORS
+from flask_talisman import Talisman
 from spliceai.utils import Annotator, get_delta_scores
-
 
 app = Flask(__name__, template_folder='.')
 CORS(app)
+Talisman(app)
 
 SPLICEAI_CACHE_FILES = {}
 if socket.gethostname() == "spliceai-lookup":
