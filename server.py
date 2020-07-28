@@ -11,9 +11,9 @@ from flask_cors import CORS
 from flask_talisman import Talisman
 from spliceai.utils import Annotator, get_delta_scores
 
-app = Flask(__name__, template_folder='.')
-CORS(app)
+app = Flask(__name__)
 Talisman(app)
+CORS(app)
 
 SPLICEAI_CACHE_FILES = {}
 if socket.gethostname() == "spliceai-lookup":
