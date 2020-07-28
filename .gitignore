@@ -5,9 +5,7 @@
 # Data
 *.fa
 *.fai
-*.vcf
-*.vcf.gz
-*.tbi
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
