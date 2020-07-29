@@ -1,3 +1,3 @@
 set -x
 
-python3 -m unittest test_spliceai
+python3.6 -m unittest test_spliceai
