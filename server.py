@@ -32,7 +32,11 @@ if socket.gethostname() == "spliceai-lookup":
         if os.path.isfile(full_path):
             SPLICEAI_CACHE_FILES[key] = pysam.TabixFile(full_path)
 else:
-    SPLICEAI_CACHE_FILES[("raw", "indel", "hg38")] = pysam.TabixFile("./test_data/spliceai_scores.raw.indel.hg38_subset.vcf.gz")
+    SPLICEAI_CACHE_FILES = {
+        ("raw", "indel", "hg38"): pysam.TabixFile("./test_data/spliceai_scores.raw.indel.hg38_subset.vcf.gz"),
+        ("raw", "snv", "hg38"): pysam.TabixFile("./test_data/spliceai_scores.raw.snv.hg38_subset.vcf.gz"),
+        ("masked", "snv", "hg38"): pysam.TabixFile("./test_data/spliceai_scores.masked.snv.hg38_subset.vcf.gz"),
+    }
 
 SPLICEAI_ANNOTATOR = {
     "37": Annotator(os.path.expanduser("~/hg19.fa"), "grch37"),

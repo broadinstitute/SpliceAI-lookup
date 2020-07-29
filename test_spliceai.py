@@ -29,6 +29,19 @@ class Test(unittest.TestCase):
             self.assertEqual(result['source'], "lookup" if distance == SPLICEAI_DEFAULT_DISTANCE else "computed")
             self.assertListEqual(result['scores'], ["OR4F5|0.00|0.00|0.03|0.00|-15|42|2|24"])
 
+        variant = "1:69539:T:G"
+        for masked in 0, 1:
+            for distance in SPLICEAI_DEFAULT_DISTANCE, SPLICEAI_DEFAULT_DISTANCE - 1:
+                result = process_variant(variant, "38", distance, masked)
+                self.assertEqual(result['variant'], variant)
+                self.assertEqual(result['chrom'], "1")
+                self.assertEqual(result['pos'], 69539)
+                self.assertEqual(result['ref'], "T")
+                self.assertEqual(result['alt'], "G")
+                self.assertEqual(result['genome_version'], "38")
+                self.assertEqual(result['source'], "lookup" if distance == SPLICEAI_DEFAULT_DISTANCE else "computed")
+                self.assertListEqual(result['scores'], ["OR4F5|0.00|0.01|0.11|0.29|20|-2|49|-2"] if not masked else ["OR4F5|0.00|0.00|0.11|0.00|20|-2|49|-2"])
+
         #print(get_delta_scores(VariantRecord(*parse_variant("2-179531962-C-A")), SPLICEAI_ANNOTATOR["37"], SPLICEAI_DEFAULT_DISTANCE, SPLICEAI_DEFAULT_MASK))
         #print(get_delta_scores(VariantRecord(*parse_variant("2-179532167-A-G")), SPLICEAI_ANNOTATOR["37"], SPLICEAI_DEFAULT_DISTANCE, SPLICEAI_DEFAULT_MASK))
         #print(get_delta_scores(VariantRecord(*parse_variant("2-179529170-GACAGTTAAGAATGTACCTTTGACAGGTACA-G")), SPLICEAI_ANNOTATOR["37"], SPLICEAI_DEFAULT_DISTANCE, SPLICEAI_DEFAULT_MASK))
