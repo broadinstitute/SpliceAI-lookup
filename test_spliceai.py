@@ -27,6 +27,7 @@ class Test(unittest.TestCase):
             self.assertEqual(result['alt'], "AA")
             self.assertEqual(result['genome_version'], "38")
             self.assertEqual(result['source'], "lookup" if distance == SPLICEAI_DEFAULT_DISTANCE else "computed")
+            self.assertListEqual(result['scores'], ["OR4F5|0.00|0.00|0.03|0.00|-15|42|2|24"])
 
         #print(get_delta_scores(VariantRecord(*parse_variant("2-179531962-C-A")), SPLICEAI_ANNOTATOR["37"], SPLICEAI_DEFAULT_DISTANCE, SPLICEAI_DEFAULT_MASK))
         #print(get_delta_scores(VariantRecord(*parse_variant("2-179532167-A-G")), SPLICEAI_ANNOTATOR["37"], SPLICEAI_DEFAULT_DISTANCE, SPLICEAI_DEFAULT_MASK))
