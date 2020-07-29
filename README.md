@@ -13,7 +13,7 @@ For more details on **SpliceAI**, see [Jaganathan et al, Cell 2019 in press.](ht
 ---
 **API Example:**
 
-*[/spliceai/?hg=38&distance=50&variant=chr8-140300616-T-G](http://34.71.77.14/spliceai/?hg=38&variant=chr8-140300616-T-G)*
+*[/spliceai/?hg=38&distance=50&variant=chr8-140300616-T-G](http://spliceailookup-api.broadinstitute.org/spliceai/?hg=38&variant=chr8-140300616-T-G)*
   
 Returns SpliceAI scores for the given variant.   
 
