@@ -359,10 +359,10 @@
 
             var refAlleleError = errorText.match(new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
             if (refAlleleError) {
-                errorText = variant + " has unexpected reference allele. hg" + genome_version + " reference allele should be: " + refAlleleError[1]
+                errorText = variant + " has unexpected reference allele. The hg" + genome_version + " reference allele should be: " + refAlleleError[1]
             }
 
-            errorText = "ERROR: Ensembl API: " + errorText
+            errorText = "Ensembl API error: " + errorText
             console.warn(errorText)
             throw { responseText: errorText }
           }).then(function(response) {
