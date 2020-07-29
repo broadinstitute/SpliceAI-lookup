@@ -357,8 +357,7 @@
               console.warn(e)
             }
 
-
-            var refAlleleError = x.match(new RegExp("[(]([ACGT]+)[)] does not match reference allele given by HGVS notation"))
+            var refAlleleError = errorText.match(new RegExp("[(]([ACGT]+)[)] does not match reference allele given by HGVS notation"))
             if (refAlleleError) {
                 errorText = variant + " has unexpected reference allele. hg" + genome_version + " reference allele should be: " + refAlleleError[1]
             }
