@@ -16,7 +16,7 @@ Talisman(app)
 CORS(app)
 
 SPLICEAI_CACHE_FILES = {}
-if __name__ == "__main__" and socket.gethostname() == "spliceai-lookup":
+if socket.gethostname() == "spliceai-lookup":
     for filename in [
         "spliceai_scores.masked.indel.hg19.vcf.gz",
         "spliceai_scores.masked.indel.hg38.vcf.gz",
@@ -35,7 +35,7 @@ else:
     SPLICEAI_CACHE_FILES[("raw", "indel", "hg38")] = pysam.TabixFile("./test_data/spliceai_scores.raw.indel.hg38_subset.vcf.gz")
 
 SPLICEAI_ANNOTATOR = {
-    "37": Annotator(os.path.expanduser("~/hg19.fa"), "grch37") if __name__ == "__main__" else None,
+    "37": Annotator(os.path.expanduser("~/hg19.fa"), "grch37"),
     "38": Annotator(os.path.expanduser("~/hg38.fa"), "grch38"),
 }
 
