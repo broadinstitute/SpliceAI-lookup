@@ -93,7 +93,7 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
     if len(ref) > 1 and len(alt) > 1:
         return {
             "variant": variant,
-            "error": f"ERROR: SpliceAI does not currently support complex InDels.",
+            "error": f"ERROR: SpliceAI does not currently support complex InDels like {chrom}-{pos}-{ref}-{alt}",
         }
     
     source = None
