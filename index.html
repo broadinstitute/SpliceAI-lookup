@@ -42,8 +42,10 @@
                 Enter a variant below to see its <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf" target="_blank">SpliceAI</a> scores.
                 This can be any SNV or simple InDel within the exon or intron of a gene as defined by GENCODE v24 canonical transcripts.<br />
                 <br />
-                More information on SpliceAI can be found in <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>, as well as in this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by the first author of SpliceAI.<br />
                 To post issues or feature requests for this web interface, please go to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">broadinstitute/SpliceAI-lookup/issues</a>.<br />
+                For more information on SpliceAI, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>, <br />
+		as well as in this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by the first author of SpliceAI.<br />
+
                 <br />
                 This web interface works by retrieving scores from an <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">API</a> maintained by the
                 <a href="https://the-tgg.org/" target="_blank">TGG</a>.<br />
@@ -318,15 +320,22 @@
           "</table>"
       }
 
+      $.urlParam = function (name) {
+        var results = new RegExp('[\?&#]?' + name + '=([^&#]*)').exec(window.location.hash);
+        return (results !== null) ? decodeURIComponent(results[1]) || 0 : false;
+      }
+
       $(document).ready(function() {
         $('.ui.radio.checkbox').checkbox()
         $('.question').popup()
         $("#search-box").focus()
+
         $("#search-box,#max-distance-input").keydown(function (event) {
           if ((event.keyCode || event.which) == 13) {
             $("#submit-button").click()
           }
         });
+
         $("#submit-button").click(function() {
           var variant = $("#search-box").val().trim()
           if (!variant) {
@@ -397,6 +406,10 @@
             $("#error-box").hide()
             $("#response-box").html(generateResultsTable(response))
             $("#response-box").show()
+
+            // set url
+            window.location.hash = "#" + $.param({variant: variant})
+
           }).catch(function(error) {
             $("#response-box").hide()
             var errorText = error.responseText
@@ -416,7 +429,15 @@
             $('.question').popup()
           })
         })
+
+        var variantFromUrl = $.urlParam('variant')
+        if (variantFromUrl) {
+          $("#search-box").val(variantFromUrl)
+          $("#submit-button").click()
+        }
+
       })
+
     </script>
 </body>
 </html>
