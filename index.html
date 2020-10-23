@@ -65,10 +65,10 @@
                     NM_000552.4(VWF):c.3797C>A (p.Pro1266Gln)<br />
                 </div >
             </div>
-            <br />
+            <!-- br />
             <div style="font-size: large; color: darkred"><b>10/23/2020 3:30pm EST - Server is down for upgrades to handle increased demand. <br />Please check back in several hours.</b></div>
 	    <br />
-	    <br />
+	    <br / -->
 
 
             <div class="ui form" style="width:100%">
@@ -425,7 +425,7 @@
             }
 
             if (!errorText) {
-                errorText = "ERROR: An unknown error occurred."
+                errorText = "ERROR: Unable to access the SpliceAI-lookup API server."
             }
             console.warn(errorText)
             $("#error-box").html(errorText)
