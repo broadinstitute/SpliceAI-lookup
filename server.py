@@ -197,15 +197,16 @@ def run_spliceai():
     spliceai_mask = int(spliceai_mask)
 
     start_time = datetime.now()
+    prefix = start_time.strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
     if request.remote_addr != "63.143.42.242":  # ignore up-time checks
-        print(start_time.strftime("%m/%d/%Y %H:%M:%S") + f": {request.remote_addr}: ======================", flush=True)
-        print(start_time.strftime("%m/%d/%Y %H:%M:%S") + f": {request.remote_addr}: {variant} processing with hg={genome_version}, distance={spliceai_distance}, mask={spliceai_mask}", flush=True)
+        print(f"{prefix}: {request.remote_addr}: ======================", flush=True)
+        print(f"{prefix}: {request.remote_addr}: {variant} processing with hg={genome_version}, distance={spliceai_distance}, mask={spliceai_mask}", flush=True)
 
     results = process_variant(variant, genome_version, spliceai_distance, spliceai_mask)
 
     if request.remote_addr != "63.143.42.242":
-        print(start_time.strftime("%m/%d/%Y %H:%M:%S") + f": {request.remote_addr}: {variant} results: {results}", flush=True)
-        print(start_time.strftime("%m/%d/%Y %H:%M:%S") + f": {request.remote_addr}: {variant} took " + str(datetime.now() - start_time), flush=True)
+        print(f"{prefix}: {request.remote_addr}: {variant} results: {results}", flush=True)
+        print(f"{prefix}: {request.remote_addr}: {variant} took " + str(datetime.now() - start_time), flush=True)
 
     status = 400 if results.get("error") else 200
     return Response(json.dumps(results), status=status, mimetype='application/json')

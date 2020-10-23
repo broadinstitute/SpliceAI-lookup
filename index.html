@@ -65,6 +65,12 @@
                     NM_000552.4(VWF):c.3797C>A (p.Pro1266Gln)<br />
                 </div >
             </div>
+            <br />
+            <div style="font-size: large; color: darkred"><b>10/23/2020 3:30pm EST - Server is down for upgrades to handle increased demand. <br />Please check back in several hours.</b></div>
+	    <br />
+	    <br />
+
+
             <div class="ui form" style="width:100%">
                 <div class="ui input" style="padding-bottom:30px; padding-right:8px; width:100%">
                     <input id="search-box" type="text" style="width: 100%; padding: 7px 10px" placeholder="Enter a variant...">
@@ -320,15 +326,22 @@
           "</table>"
       }
 
+      $.urlParam = function (name) {
+        var results = new RegExp('[\?&#]?' + name + '=([^&#]*)').exec(window.location.hash);
+        return (results !== null) ? decodeURIComponent(results[1]) || 0 : false;
+      }
+
       $(document).ready(function() {
         $('.ui.radio.checkbox').checkbox()
         $('.question').popup()
         $("#search-box").focus()
+
         $("#search-box,#max-distance-input").keydown(function (event) {
           if ((event.keyCode || event.which) == 13) {
             $("#submit-button").click()
           }
         });
+
         $("#submit-button").click(function() {
           var variant = $("#search-box").val().trim()
           if (!variant) {
@@ -399,6 +412,10 @@
             $("#error-box").hide()
             $("#response-box").html(generateResultsTable(response))
             $("#response-box").show()
+
+            // set url
+            window.location.hash = "#" + $.param({variant: variant})
+
           }).catch(function(error) {
             $("#response-box").hide()
             var errorText = error.responseText
@@ -418,7 +435,15 @@
             $('.question').popup()
           })
         })
+
+        var variantFromUrl = $.urlParam('variant')
+        if (variantFromUrl) {
+          $("#search-box").val(variantFromUrl)
+          $("#submit-button").click()
+        }
+
       })
+
     </script>
 </body>
 </html>
