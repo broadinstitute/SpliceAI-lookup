@@ -76,7 +76,7 @@ REVERSE_COMPLEMENT_MAP = dict(zip("ACGTN", "TGCAN"))
 
 
 def reverse_complement(seq):
-    return "".join([REVERSE_COMPLEMENT_MAP[n] for n in seq])
+    return "".join([REVERSE_COMPLEMENT_MAP[n] for n in seq[::-1]])
 
 
 def parse_variant(variant_str):
