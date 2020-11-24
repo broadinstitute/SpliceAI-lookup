@@ -4,7 +4,9 @@ import os
 import pysam
 import re
 import socket
+import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from flask import Flask, request, Response
 from flask_cors import CORS
@@ -14,6 +16,10 @@ from spliceai.utils import Annotator, get_delta_scores
 app = Flask(__name__)
 Talisman(app)
 CORS(app)
+
+HG19_FASTA_PATH = os.path.expanduser("~/hg19.fa")
+HG38_FASTA_PATH = os.path.expanduser("~/hg38.fa")
+
 
 SPLICEAI_CACHE_FILES = {}
 if socket.gethostname() == "spliceai-lookup":
@@ -39,8 +45,8 @@ else:
     }
 
 SPLICEAI_ANNOTATOR = {
-    "37": Annotator(os.path.expanduser("~/hg19.fa"), "grch37"),
-    "38": Annotator(os.path.expanduser("~/hg38.fa"), "grch38"),
+    "37": Annotator(HG19_FASTA_PATH, "grch37"),
+    "38": Annotator(HG38_FASTA_PATH, "grch38"),
 }
 
 SPLICEAI_MAX_DISTANCE_LIMIT = 10000
@@ -60,6 +66,17 @@ VARIANT_RE = re.compile(
     "[-\s:>]+"
     "(?P<alt>[ACGT]+)"
 )
+
+
+def error_response(error_message):
+    return Response(json.dumps({"error": str(error_message)}), status=400, mimetype='application/json')
+
+
+REVERSE_COMPLEMENT_MAP = dict(zip("ACGTN", "TGCAN"))
+
+
+def reverse_complement(seq):
+    return "".join([REVERSE_COMPLEMENT_MAP[n] for n in seq])
 
 
 def parse_variant(variant_str):
@@ -95,7 +112,7 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
             "variant": variant,
             "error": f"ERROR: SpliceAI does not currently support complex InDels like {chrom}-{pos}-{ref}-{alt}",
         }
-    
+
     source = None
     scores = []
     if (len(ref) <= 5 or len(alt) <= 2) and spliceai_distance == SPLICEAI_DEFAULT_DISTANCE:
@@ -169,30 +186,30 @@ def run_spliceai():
     variant = params.get('variant', '')
     variant = variant.strip().strip("'").strip('"').strip(",")
     if not variant:
-        return f'"variant" not specified. For example: {SPLICEAI_EXAMPLE}\n', 400
+        return error_response(f'"variant" not specified. For example: {SPLICEAI_EXAMPLE}\n')
 
     if not isinstance(variant, str):
-        return f'"variant" value must be a string rather than a {type(variant)}.\n', 400
+        return error_response(f'"variant" value must be a string rather than a {type(variant)}.\n')
 
     genome_version = params.get("hg")
     if not genome_version:
-        return f'"hg" not specified. The URL must include an "hg" arg: hg=37 or hg=38. For example: {SPLICEAI_EXAMPLE}\n', 400
+        return error_response(f'"hg" not specified. The URL must include an "hg" arg: hg=37 or hg=38. For example: {SPLICEAI_EXAMPLE}\n')
 
     if genome_version not in ("37", "38"):
-        return f'Invalid "hg" value: "{genome_version}". The value must be either "37" or "38". For example: {SPLICEAI_EXAMPLE}\n', 400
+        return error_response(f'Invalid "hg" value: "{genome_version}". The value must be either "37" or "38". For example: {SPLICEAI_EXAMPLE}\n')
 
     spliceai_distance = params.get("distance", SPLICEAI_DEFAULT_DISTANCE)
     try:
         spliceai_distance = int(spliceai_distance)
     except Exception as e:
-        return f'Invalid "distance": "{spliceai_distance}". The value must be an integer.\n', 400
+        return error_response(f'Invalid "distance": "{spliceai_distance}". The value must be an integer.\n')
 
     if spliceai_distance > SPLICEAI_MAX_DISTANCE_LIMIT:
-        return f'Invalid "distance": "{spliceai_distance}". The value must be < {SPLICEAI_MAX_DISTANCE_LIMIT}.\n', 400
+        return error_response(f'Invalid "distance": "{spliceai_distance}". The value must be < {SPLICEAI_MAX_DISTANCE_LIMIT}.\n')
 
     spliceai_mask = params.get("mask", str(SPLICEAI_DEFAULT_MASK))
     if spliceai_mask not in ("0", "1"):
-        return f'Invalid "mask" value: "{spliceai_mask}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n', 400
+        return error_response(f'Invalid "mask" value: "{spliceai_mask}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n')
 
     spliceai_mask = int(spliceai_mask)
 
@@ -210,6 +227,124 @@ def run_spliceai():
 
     status = 400 if results.get("error") else 200
     return Response(json.dumps(results), status=status, mimetype='application/json')
+
+
+LIFTOVER_EXAMPLE = f"/liftover/?hg=hg19-to-hg38&format=interval&chrom=chr8&start=140300615&end=140300620"
+
+CHAIN_FILE_PATHS = {
+    "hg19-to-hg38": "hg19ToHg38.over.chain.gz",
+    "hg38-to-hg19": "hg38ToHg19.over.chain.gz",
+}
+
+
+def run_UCSC_liftover_tool(hg, chrom, start, end):
+    if hg not in CHAIN_FILE_PATHS:
+        raise ValueError(f"Unexpected hg arg value: {hg}")
+    chain_file_path = CHAIN_FILE_PATHS[hg]
+
+    reason_liftover_failed = ""
+    with tempfile.NamedTemporaryFile(suffix=".bed", mode="wt", encoding="UTF-8") as input_file, \
+        tempfile.NamedTemporaryFile(suffix=".bed", mode="rt", encoding="UTF-8") as output_file, \
+        tempfile.NamedTemporaryFile(suffix=".bed", mode="rt", encoding="UTF-8") as unmapped_output_file:
+
+        #  command syntax: liftOver oldFile map.chain newFile unMapped
+        chrom = "chr" + chrom.replace("chr", "")
+        input_file.write("\t".join(map(str, [chrom, start, end, ".", "0", "+"])) + "\n")
+        input_file.flush()
+        command = f"liftOver {input_file.name} {chain_file_path} {output_file.name} {unmapped_output_file.name}"
+
+        try:
+            subprocess.check_output(command, shell=True, encoding="UTF-8")
+            results = output_file.read()
+
+            print(f"{hg} liftover on {chrom}:{start}-{end} returned: {results}")
+
+            result_fields = results.strip().split("\t")
+            if len(result_fields) > 5:
+                result_fields[1] = int(result_fields[1])
+                result_fields[2] = int(result_fields[2])
+
+                return {
+                    "hg": hg,
+                    "chrom": chrom,
+                    "start": start,
+                    "end": end,
+                    "output_chrom": result_fields[0],
+                    "output_start": result_fields[1],
+                    "output_end": result_fields[2],
+                    "output_strand": result_fields[5],
+                }
+            else:
+                reason_liftover_failed = unmapped_output_file.readline().replace("#", "").strip()
+        except Exception as e:
+            raise ValueError(f"liftOver command failed: {e}")
+
+    if reason_liftover_failed:
+        raise ValueError(f"Lift over failed: {reason_liftover_failed}")
+    else:
+        raise ValueError(f"Lift over failed for unknown reasons")
+
+
+@app.route("/liftover/", methods=['POST', 'GET'])
+def run_liftover():
+
+    # check params
+    params = {}
+    if request.values:
+        params.update(request.values)
+
+    if "format" not in params:
+        params.update(request.get_json(force=True, silent=True) or {})
+
+    VALID_HG_VALUES = ("hg19-to-hg38", "hg38-to-hg19")
+    hg = params.get("hg")  # "hg19-to-hg38"
+    if not hg or hg not in VALID_HG_VALUES:
+        return error_response(f'"hg" param error. It should be set to {" or ".join(VALID_HG_VALUES)}. For example: {LIFTOVER_EXAMPLE}\n')
+
+    VALID_FORMAT_VALUES = ("interval", "variant", "position")
+    format = params.get("format", "")
+    if not format or format not in VALID_FORMAT_VALUES:
+        return error_response(f'"format" param error. It should be set to {" or ".join(VALID_FORMAT_VALUES)}. For example: {LIFTOVER_EXAMPLE}\n')
+
+    chrom = params.get("chrom")
+    if not chrom:
+        return error_response(f'"chrom" param not specified')
+    if format == "interval":
+        start = params.get("start")
+        end = params.get("end")
+        if not start:
+            return error_response(f'"start" param not specified')
+        if not end:
+            return error_response(f'"end" param not specified')
+    elif format == "position" or format == "variant":
+        pos = params.get("pos")
+        if not pos:
+            return error_response(f'"pos" param not specified')
+
+        pos = int(pos)
+        start = pos - 1
+        end = pos
+
+    try:
+        result = run_UCSC_liftover_tool(hg, chrom, start, end)
+    except Exception as e:
+        return error_response(str(e))
+
+    result["format"] = format
+    if format == "position" or format == "variant":
+        result["pos"] = pos
+        result["output_pos"] = result["output_end"]
+
+    if format == "variant":
+        result["ref"] = params.get("ref")
+        result["alt"] = params.get("alt")
+        result["output_ref"] = result["ref"]
+        result["output_alt"] = result["alt"]
+        if result["output_strand"] == "-":
+            result["output_ref"] = reverse_complement(result["output_ref"])
+            result["output_alt"] = reverse_complement(result["output_alt"])
+
+    return Response(json.dumps(result), mimetype='application/json')
 
 
 @app.route('/', defaults={'path': ''})
