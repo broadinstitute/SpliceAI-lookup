@@ -257,7 +257,7 @@ def run_UCSC_liftover_tool(hg, chrom, start, end):
             subprocess.check_output(command, shell=True, encoding="UTF-8")
             results = output_file.read()
 
-            print(f"{hg} liftover on {chrom}:{start}-{end} returned: {results}")
+            print(f"{hg} liftover on {chrom}:{start}-{end} returned: {results}", flush=True)
 
             result_fields = results.strip().split("\t")
             if len(result_fields) > 5:
@@ -265,7 +265,6 @@ def run_UCSC_liftover_tool(hg, chrom, start, end):
                 result_fields[2] = int(result_fields[2])
 
                 return {
-                    "hg": hg,
                     "chrom": chrom,
                     "start": start,
                     "end": end,
@@ -309,6 +308,7 @@ def run_liftover():
     chrom = params.get("chrom")
     if not chrom:
         return error_response(f'"chrom" param not specified')
+    
     if format == "interval":
         start = params.get("start")
         end = params.get("end")
@@ -316,6 +316,8 @@ def run_liftover():
             return error_response(f'"start" param not specified')
         if not end:
             return error_response(f'"end" param not specified')
+        variant_log_string = f"{start}-{end}"
+        
     elif format == "position" or format == "variant":
         pos = params.get("pos")
         if not pos:
@@ -324,20 +326,24 @@ def run_liftover():
         pos = int(pos)
         start = pos - 1
         end = pos
+        variant_log_string = f"{pos} "
+        if params.get('ref') and params.get('alt'):
+            variant_log_string += f"{params.get('ref')}>{params.get('alt')}"
+
+    print(f"{prefix}: {request.remote_addr}: ======================", flush=True)
+    print(f"{prefix}: {request.remote_addr}: {hg} liftover {format}: {chrom}:{variant_log_string}", flush=True)    
 
     try:
         result = run_UCSC_liftover_tool(hg, chrom, start, end)
     except Exception as e:
         return error_response(str(e))
 
-    result["format"] = format
+    result.update(params)
     if format == "position" or format == "variant":
         result["pos"] = pos
         result["output_pos"] = result["output_end"]
 
     if format == "variant":
-        result["ref"] = params.get("ref")
-        result["alt"] = params.get("alt")
         result["output_ref"] = result["ref"]
         result["output_alt"] = result["alt"]
         if result["output_strand"] == "-":
