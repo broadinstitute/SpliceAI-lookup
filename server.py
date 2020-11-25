@@ -20,7 +20,6 @@ CORS(app)
 HG19_FASTA_PATH = os.path.expanduser("~/hg19.fa")
 HG38_FASTA_PATH = os.path.expanduser("~/hg38.fa")
 
-
 SPLICEAI_CACHE_FILES = {}
 if socket.gethostname() == "spliceai-lookup":
     for filename in [
@@ -330,6 +329,7 @@ def run_liftover():
         if params.get('ref') and params.get('alt'):
             variant_log_string += f"{params.get('ref')}>{params.get('alt')}"
 
+    prefix = datetime.now().strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
     print(f"{prefix}: {request.remote_addr}: ======================", flush=True)
     print(f"{prefix}: {request.remote_addr}: {hg} liftover {format}: {chrom}:{variant_log_string}", flush=True)    
 
