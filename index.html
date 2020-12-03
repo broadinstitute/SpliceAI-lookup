@@ -132,7 +132,7 @@
       var VARIANT_RE = new RegExp(
         "(chr)?([0-9XYMTt]{1,2})" +
         "[-\\s:]+" +
-        "([0-9]{1,9})" +
+        "([0-9,]{1,9})" +
         "[-\\s:]+" +
         "([ACGT]+)" +
         "[-\\s:>]+" +
@@ -206,7 +206,7 @@
           var chrom = m[2].toUpperCase()
           return {
             chrom: chrom,
-            pos: m[3],
+            pos: m[3].replace(/,/g, ""),
             ref: m[4],
             alt: m[5],
           }
@@ -228,7 +228,7 @@
             throw "Invalid genome_version: " + genome_version
           }
 
-          var pos = parseInt(m[3])
+          var pos = parseInt(m[3].replace(/,/g, ""))
           var ref = m[4]
           var alt = m[5]
 
