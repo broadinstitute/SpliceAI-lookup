@@ -275,12 +275,12 @@ def run_UCSC_liftover_tool(hg, chrom, start, end):
             else:
                 reason_liftover_failed = unmapped_output_file.readline().replace("#", "").strip()
         except Exception as e:
-            raise ValueError(f"liftOver command failed: {e}")
+            raise ValueError(f"{hg} liftOver command failed for {chrom}:{start}-{end}: {e}")
 
     if reason_liftover_failed:
-        raise ValueError(f"Lift over failed: {reason_liftover_failed}")
+        raise ValueError(f"{hg} liftover failed for {chrom}:{start}-{end} {reason_liftover_failed}")
     else:
-        raise ValueError(f"Lift over failed for unknown reasons")
+        raise ValueError(f"{hg} liftover failed for {chrom}:{start}-{end} for unknown reasons")
 
 
 @app.route("/liftover/", methods=['POST', 'GET'])
