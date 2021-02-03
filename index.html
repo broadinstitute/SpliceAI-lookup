@@ -1,6 +1,6 @@
 <html>
 <head>
-    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1" charset="utf-8" name="viewport" />
     <title>SpliceAI Lookup</title>
     <link rel="shortcut icon" href="/icon.png">
 
@@ -29,103 +29,193 @@
             border-top: 1px solid black;
         }
         table {
+            font-size: 11pt !important;
             border-collapse: collapse;
+            border-left: 0px !important;
+            border-right: 0px !important;
         }
+        .smallLink {
+            font-size: 10pt;
+            margin-left: 5px;
+            margin-top: 3px;
+        }
+
+        .only-large-screen {
+            display: none;
+        }
+
+        @media screen and (min-width: 770px) {
+            .only-large-screen {
+                display: block;
+            }
+        }
+
+        .results-div {
+            width: 100%;
+            position: static;
+        }
+
+        @media screen and (max-width: 1400px) {
+            .results-div {
+                width: 85vw;
+                position: relative;
+            }
+        }
+
     </style>
 </head>
 <body>
     <div class="ui stackable grid">
-        <div class="row">
+      <div class="row">
         <div class="one wide column"></div>
-        <div class="seven wide column">
-            <div style="padding:25px 0px">
-                Enter a variant below to see its <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf" target="_blank">SpliceAI</a> scores.
-                This can be any SNV or simple InDel within the exon or intron of a gene as defined by GENCODE v24 canonical transcripts.<br />
-                <br />
-                To post issues or feature requests for this web interface, please go to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">broadinstitute/SpliceAI-lookup/issues</a>.<br />
-                For more information on SpliceAI, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>, <br />
-		as well as in this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by the first author of SpliceAI.<br />
+        <div class="nine wide column">
+            <div class="ui grid">
+                <div class="row">
+                    <div class="twelve wide column">
+                        <div style="padding:25px 0px">
+                            <div>
+                                Enter a variant below to see its <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf" target="_blank">SpliceAI</a> scores.
+                                This can be any SNV or simple InDel within an exon or intron defined by GENCODE v36.<br />
+                            </div>
+                            <div>
+                                <br />
+                                <a id="more-details1-button" href="#" onclick="$('#more-details1').show();$('#more-details1-button').hide();">more details...</a>
 
-                <br />
-                This web interface works by retrieving scores from an <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">API</a> maintained by the
-                <a href="https://the-tgg.org/" target="_blank">TGG</a>.<br />
-                The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">API</a> uses precomputed
-                scores provided by Illumina for SNVs and small InDels, and runs the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
-                directly to compute scores for any other queries - such as larger InDels or non-default "Max distance" values.<br/>
-                <br />
-                Examples: &nbsp; (on hg38) <br />
-                <br />
-                <div style="padding-left: 30px; color: gray">
-                    chr8-140300616-T-G  &nbsp; &nbsp; (<i>the</i> chr <i>prefix is optional</i>)<br />
-                    8:140300616 T&gt;G<br />
-                    chr8 &nbsp; 140300616 &nbsp; T &nbsp; G<br />
-		    1:930130:C:G  (<i>position with overlapping genes</i>)<br />
-                    1-1042601-A-AGAGAG  (<i>insertion of GAGAG</i>) <br />
-                    1-1042466-GGGC-G  (<i>deletion of GGC</i>) <br />
-                    NM_000552.4(VWF):c.3797C>A (p.Pro1266Gln)<br />
-                </div >
-            </div>
-            <!-- br />
-            <div style="font-size: large; color: darkred"><b>10/23/2020 3:30pm EST - Server is down for upgrades to handle increased demand. <br />Please check back in several hours.</b></div>
-	    <br />
-	    <br / -->
-
-
-            <div class="ui form" style="width:100%">
-                <div class="ui input" style="padding-bottom:30px; padding-right:8px; width:100%">
-                    <input id="search-box" type="text" style="width: 100%; padding: 7px 10px" placeholder="Enter a variant...">
-                </div>
-                <!-- div class="field" style="padding-bottom: 10px;">
-                    <textarea id="search-box2" rows="1" style="width: 100%" placeholder="Enter variant..."></textarea>
-                </div -->
-                <div class="ui stackable grid">
-                    <div class="row">
-                        <div class="thirteen wide column">
-                            <div class="field" style="padding-right:10px">
-                                <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Genome version:</b></span>
-                                <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                    <input type="radio" name="hg" value="37" /><label>hg19</label>
-                                </div>
-                                <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                    <input type="radio" name="hg" value="38" checked /><label>hg38</label>
+                                <div id="more-details1" style="display:none">
+                                    This web interface works by retrieving scores from an <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">API</a> maintained by the
+                                    <a href="https://the-tgg.org/" target="_blank">TGG</a>.<br />
+                                    The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">API</a> uses precomputed
+                                    scores provided by Illumina for SNVs and small InDels, and runs the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
+                                    directly to compute scores for any other queries - such as larger InDels or non-default "Max distance" values.<br/>
+                                    <br />
+                                    For more information on SpliceAI, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>,
+                                    as well as in this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.<br />
+                                    <br />
                                 </div>
                             </div>
-                            <div class="field" style="padding-right:10px">
-                                <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Score type:</b></span>
-                                <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                    <input type="radio" name="mask" value="1" /><label>masked</label>
-                                </div>
-                                <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                    <input type="radio" name="mask" value="0" checked /><label>raw</label>
-                                </div>
-                                <i style="margin-left:20px" class="question circle outline icon" data-position="right center" data-content="Splicing changes corresponding to strengthening annotated splice sites and weakening unannotated splice sites are typically much less pathogenic than weakening annotated splice sites and strengthening unannotated splice sites. Selecting 'masked' will hide the score for such splicing changes and show 0 instead. Selecting 'raw' will show all scores. SpliceAI developers recommend using 'raw' scores for alternative splicing analysis and 'masked' scores for variant interpretation."></i>
+                            <br />
+                            <div style="padding-left: 15px; color: gray">
+                                <table>
+                                    <thead style="text-align: left">
+                                        <tr>
+                                            <th style="padding-bottom: 20px">Examples &nbsp; (on hg38): </th>
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>chr8-140300616-T-G</td>
+                                            <td></td>
+                                        </tr>
+                                        <tr>
+                                            <td>chr8 &nbsp; 140300616 &nbsp; T &nbsp; G</td>
+                                            <td></td>
+                                        </tr>
+                                        <tr>
+                                            <td>NM_000552.4(VWF):c.3797C>A (p.Pro1266Gln)</td>
+                                            <td></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
-                            <div class="field" style="padding-right:10px; padding-bottom:12px">
-                                <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Max distance:</b></span>
-                                <div class="ui input" style="padding-left:15px; padding-bottom:10px; padding-right:8px; width:80px">
-                                    <input id="max-distance-input" type="text" value="50" style="padding:7px 10px">
-                                </div>
-                                <i class="question circle outline icon" data-position="right center" data-content="For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distance specified here controls the size of this window. The maximum allowed value is 10,000bp."></i>
+                            <br />
+                            <a id="more-details2-button" href="#" onclick="$('#more-details2').show();$('#more-details2-button').hide();">more examples...</a>
+                            <div id="more-details2" style="display:none; padding-left: 15px; color: gray">
+                                <table>
+                                    <thead></thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>8:140300616 T&gt;G</td>
+                                            <td>'chr' <i>prefix is optional</i></td>
+                                        </tr>
+                                        <tr>
+                                            <td>1:930130:C:G </td>
+                                            <td><i>position with overlapping genes</i></td>
+                                        </tr>
+                                        <tr>
+                                            <td>1-1042601-A-AGAGAG </td>
+                                            <td><i>insertion of GAGAG</i></td>
+                                        </tr>
+                                        <tr>
+                                            <td>1-1042466-GGGC-G</td>
+                                            <td><i>deletion of GGC</i></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
-                        <div class="three wide column">
-                            <button id="submit-button" class="ui primary button">Submit</button>
+                        <!-- br />
+                        <div style="font-size: large; color: darkred"><b>10/23/2020 3:30pm EST - Server is down for upgrades to handle increased demand. <br />Please check back in several hours.</b></div>
+                        <br />
+                        <br / -->
+
+                        <div class="ui form" style="width:100%">
+                            <div class="ui input" style="padding-bottom:30px; padding-right:8px; width:100%">
+                                <input id="search-box" type="text" style="width: 100%; padding: 7px 10px" placeholder="Enter a variant...">
+                            </div>
+                            <!-- div class="field" style="padding-bottom: 10px;">
+                                <textarea id="search-box2" rows="1" style="width: 100%" placeholder="Enter variant..."></textarea>
+                            </div -->
+                            <div class="ui stackable grid">
+                                <div class="row">
+                                    <div class="thirteen wide column">
+                                        <div class="field" style="padding-right:10px">
+                                            <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Genome version:</b></span>
+                                            <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                                <input type="radio" name="hg" value="37" /><label>hg19</label>
+                                            </div>
+                                            <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                                <input type="radio" name="hg" value="38" checked /><label>hg38</label>
+                                            </div>
+                                        </div>
+                                        <div class="field" style="padding-right:10px">
+                                            <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Score type:</b></span>
+                                            <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                                <input type="radio" name="mask" value="1" /><label>masked</label>
+                                            </div>
+                                            <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                                <input type="radio" name="mask" value="0" checked /><label>raw</label>
+                                            </div>
+                                            <i style="margin-left:20px" class="question circle outline icon" data-position="right center" data-content="Splicing changes corresponding to strengthening annotated splice sites and weakening unannotated splice sites are typically much less pathogenic than weakening annotated splice sites and strengthening unannotated splice sites. Selecting 'masked' will hide the score for such splicing changes and show 0 instead. Selecting 'raw' will show all scores. SpliceAI developers recommend using 'raw' scores for alternative splicing analysis and 'masked' scores for variant interpretation."></i>
+                                        </div>
+                                        <div class="field" style="padding-right:10px; padding-bottom:12px">
+                                            <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Max distance:</b></span>
+                                            <div class="ui input" style="padding-left:15px; padding-bottom:10px; padding-right:8px; width:80px">
+                                                <input id="max-distance-input" type="text" value="50" style="padding:7px 10px">
+                                            </div>
+                                            <i class="question circle outline icon" data-position="right center" data-content="For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distance specified here controls the size of this window. The maximum allowed value is 10,000bp."></i>
+                                        </div>
+                                    </div>
+                                    <div class="three wide column">
+                                        <button id="submit-button" class="ui primary button" style="margin-bottom: 15px">Submit</button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
-            </div>
-            </div>
-        </div>
-        <div class="eight wide column"></div>
-    </div>
-        <div class="row">
-            <div class="one wide column"></div>
-            <div class="fifteen wide column">
-                <div>
-                    <div id="error-box" style="color:darkred"></div>
-                    <div id="response-box"></div>
                 </div>
             </div>
+            <div class="results-div">
+                <div id="error-box" style="color:darkred"></div>
+                <div id="response-box"></div>
+            </div>
         </div>
+        <div class="five wide column">
+            <div style="padding:25px 0px">
+                <div><i>What's New</i></div>
+                <br />
+                To post issues or feature requests, please use <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>.<br />
+                <br />
+                <b>2021-2-2</b><br />
+                - added support for scoring variants in Gencode v36 transcripts (previously <br />only v24 transcripts were supported).<br />
+                - added gene & variant links out to OMIM, GTEx, gnomAD, etc.<br />
+                <br />
+                Related web tools: &nbsp; <a href="https://liftover.broadinstitute.org">liftover</a>, &nbsp; <a href="https://cma-search.broadinstitute.org/">CMA search</a>
+
+            </div>
+        </div>
+          <div class="one wide column"></div>
+      </div>
     </div>
 
     <script>
@@ -302,7 +392,7 @@
 
         console.log("Parsed scores", parsed_scores)
 
-        return "<table>" +
+        return "<table class='ui stackable table'>" +
           "<tr>" +
           "<td><b>variant</b></td>" +
           "<td><b>gene</b></td>" +
@@ -310,15 +400,32 @@
           "<td><b>&#916;&nbsp; score</b>  " + "<i class='question circle outline icon' data-content='Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 50bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.2 or higher appear in green, 0.5 or higher appear in yellow, and 0.8 or higher appear in red.'></i>"+"</td>" +
           "<td><b>pre-mRNA position</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions in the pre-mRNA being splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant.'></i>"+"</td>" +
           "</tr>" + parsed_scores.map(function(scores) {
+                const variant_ucsc_url = response.url
+                const gnomAD_version = response.genome_version === "38"? "gnomad_r3" : "gnomad_r2_1"
+                const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + response.variant + "?dataset=" + gnomAD_version
+
                 return "<tr class='upperBorder'>" +
-                  "<td><a href='"+response.url+"' target='_blank'>"+response.variant+"</a></td>"+
-                  "<td><a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+scores.SYMBOL+"' target='_blank'>"+scores.SYMBOL+"</a></td>" +
+                  "<td rowspan='4' style='vertical-align: top'>" +
+                  "<div style='margin-right:10px; display: inline-block'>" + response.variant + "</div><br class='only-large-screen'/><br class='only-large-screen'/>" +
+                    "<a href='"+variant_ucsc_url+"' class='smallLink' target='_blank'>UCSC</a>, " +
+                    "<a href='"+variant_gnomAD_url+"' class='smallLink' target='_blank'>gnomAD</a>" +
+                  "</td>"+
+                  "<td rowspan='4' style='vertical-align: top'>" +
+                    "<div style='margin-right:10px; display: inline-block'>" + scores.SYMBOL + "</div><br class='only-large-screen'/><br class='only-large-screen'/>" +
+                    "<a href='https://www.omim.org/search?search="+scores.SYMBOL+"' class='smallLink' target='_blank'>OMIM</a>, " +
+                    "<a href='https://gtexportal.org/home/gene/"+scores.SYMBOL+"' class='smallLink' target='_blank'>GTEx</a>, " +
+                    "<a href='https://gnomad.broadinstitute.org/gene/"+scores.SYMBOL+"?dataset="+gnomAD_version+"' class='smallLink' target='_blank'>gnomAD</a>, " +
+                    "<a href='https://search.clinicalgenome.org/kb/genes?page=1&size=25&search="+scores.SYMBOL+"' class='smallLink' target='_blank'>ClinGen</a>, <br class='only-large-screen'/>" +
+                    "<a href='https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g="+scores.SYMBOL+"' class='smallLink' target='_blank'>Ensembl</a>, " +
+                    "<a href='https://decipher.sanger.ac.uk/gene/"+scores.SYMBOL+"' class='smallLink' target='_blank'>Decipher</a>, " +
+                    "<a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+scores.SYMBOL+"' class='smallLink' target='_blank'>GeneCards</a>" +
+                  "</td>" +
                   "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL+"</td><td>" + (parseFloat(scores.DS_AL) == 0 ? "" : /*"<a href='"+scores.AL_url+"' target='_blank'>"+ */scores.DP_AL+" bp"/*+</a>"*/) + "</td>"+
-                  "</tr><tr><td></td><td></td>"+
+                  "</tr><tr>"+
                   "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL)+">"+scores.DS_DL+"</td><td>" + (parseFloat(scores.DS_DL) == 0 ? "" : /*"<a href='"+scores.DL_url+"' target='_blank'>"+ */scores.DP_DL+" bp"/*+"</a>"*/) + "</td>"+
-                  "</tr><tr><td></td><td></td>"+
+                  "</tr><tr>"+
                   "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG)+">"+scores.DS_AG+"</td><td>" + (parseFloat(scores.DS_AG) == 0 ? "" : /*"<a href='"+scores.AG_url+"' target='_blank'>"+ */scores.DP_AG+" bp"/*+"</a>"*/) + "</td>"+
-                  "</tr><tr><td></td><td></td>"+
+                  "</tr><tr>"+
                   "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">"+scores.DS_DG+"</td><td>" + (parseFloat(scores.DS_DG) == 0 ? "" : /*"<a href='"+scores.DG_url+"' target='_blank'>"+ */scores.DP_DG+" bp"/*+"</a>"*/) + "</td>"+
                   "</tr>"
 
