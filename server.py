@@ -1,3 +1,4 @@
+from collections import defaultdict
 import json
 import markdown2
 import os
@@ -11,6 +12,8 @@ from datetime import datetime
 from flask import Flask, request, Response
 from flask_cors import CORS
 from flask_talisman import Talisman
+from intervaltree import IntervalTree, Interval
+import pandas as pd
 from spliceai.utils import Annotator, get_delta_scores
 
 app = Flask(__name__)
@@ -43,9 +46,24 @@ else:
         ("masked", "snv", "hg38"): pysam.TabixFile("./test_data/spliceai_scores.masked.snv.hg38_subset.vcf.gz"),
     }
 
+GRCH37_ANNOTATIONS = "./annotations/gencode.v36lift37.annotation.txt.gz"
+GRCH38_ANNOTATIONS = "./annotations/gencode.v36.annotation.txt.gz"
+
+ANNOTATION_INTERVAL_TREES = {
+    "37": defaultdict(IntervalTree),
+    "38": defaultdict(IntervalTree),
+}
+
+for genome_version, annotation_path in ("37", GRCH37_ANNOTATIONS), ("38", GRCH38_ANNOTATIONS):
+    print(f"Loading {annotation_path}", flush=True)
+    df = pd.read_table(annotation_path, dtype={"TX_START": int, "TX_END": int})
+    for _, row in df.iterrows():
+        chrom = row["CHROM"].replace("chr", "")
+        ANNOTATION_INTERVAL_TREES[genome_version][chrom].add(Interval(row["TX_START"], row["TX_END"] + 0.1, row["#NAME"]))
+
 SPLICEAI_ANNOTATOR = {
-    "37": Annotator(HG19_FASTA_PATH, "grch37"),
-    "38": Annotator(HG38_FASTA_PATH, "grch38"),
+    "37": Annotator(HG19_FASTA_PATH, GRCH37_ANNOTATIONS),
+    "38": Annotator(HG38_FASTA_PATH, GRCH38_ANNOTATIONS),
 }
 
 SPLICEAI_MAX_DISTANCE_LIMIT = 10000
@@ -112,6 +130,37 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
             "error": f"ERROR: SpliceAI does not currently support complex InDels like {chrom}-{pos}-{ref}-{alt}",
         }
 
+    # generate error message if variant falls outside annotated exons or introns
+    OTHER_GENOME_VERSION = {"37": "38", "38": "37"}
+    chrom_without_chr = chrom.replace("chr", "")
+    if not ANNOTATION_INTERVAL_TREES[genome_version][chrom_without_chr].at(pos):
+        other_genome_version = OTHER_GENOME_VERSION[genome_version]
+        other_genome_overlapping_intervals = ANNOTATION_INTERVAL_TREES[other_genome_version][chrom_without_chr].at(pos)
+        if other_genome_overlapping_intervals:
+            other_genome_genes = " and ".join([str(i.data) for i in other_genome_overlapping_intervals])
+            return {
+                "variant": variant,
+                "error": f"ERROR: {chrom}-{pos}-{ref}-{alt} falls outside all Gencode exons and introns on "
+                         f"GRCh{genome_version}. SpliceAI only works for variants that are within known "
+                         f"exons or introns. However, checking on GRCh{other_genome_version}, {chrom}:{pos} falls within "
+                         f"{other_genome_genes}, so perhaps GRCh{genome_version} is not the correct genome version?"
+            }
+        else:
+            return {
+                "variant": variant,
+                "error": f"ERROR: {chrom}-{pos}-{ref}-{alt} falls outside all Gencode exons and introns on "
+                f"GRCh{genome_version}. SpliceAI only works for variants that are within known exons or introns.",
+            }
+
+            """
+            NOTE: The reason SpliceAI currently works only for variants "
+                         f"within annotated exons or introns is that, although the SpliceAI neural net takes any "
+                         f"arbitrary nucleotide sequence as input, SpliceAI needs 1) the transcript strand "
+                         f"to determine whether to reverse-complement the reference genome sequence before passing it "
+                         f"to the neural net, and 2) transcript start and end positions to determine where to truncate "
+                         f"the reference genome sequence.
+            """
+
     source = None
     scores = []
     if (len(ref) <= 5 or len(alt) <= 2) and spliceai_distance == SPLICEAI_DEFAULT_DISTANCE:
@@ -154,7 +203,8 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
     if not scores:
         return {
             "variant": variant,
-            "error": f"ERROR: Unable to compute scores for {variant}. Please check that the genome version and reference allele are correct, and the variant is either exonic or intronic in Gencode v24.",
+            "error": f"ERROR: The SpliceAI model did not return any scores for {variant}. This is typically due to the "
+                     f"variant not being within any exon or intron as defined in Gencode v36",
         }
 
     scores = [s[s.index("|")+1:] for s in scores]  # drop allele field
@@ -307,7 +357,7 @@ def run_liftover():
     chrom = params.get("chrom")
     if not chrom:
         return error_response(f'"chrom" param not specified')
-    
+
     if format == "interval":
         start = params.get("start")
         end = params.get("end")
@@ -316,7 +366,7 @@ def run_liftover():
         if not end:
             return error_response(f'"end" param not specified')
         variant_log_string = f"{start}-{end}"
-        
+
     elif format == "position" or format == "variant":
         pos = params.get("pos")
         if not pos:
@@ -331,7 +381,7 @@ def run_liftover():
 
     prefix = datetime.now().strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
     print(f"{prefix}: {request.remote_addr}: ======================", flush=True)
-    print(f"{prefix}: {request.remote_addr}: {hg} liftover {format}: {chrom}:{variant_log_string}", flush=True)    
+    print(f"{prefix}: {request.remote_addr}: {hg} liftover {format}: {chrom}:{variant_log_string}", flush=True)
 
     try:
         result = run_UCSC_liftover_tool(hg, chrom, start, end)
