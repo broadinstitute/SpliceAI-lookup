@@ -109,10 +109,10 @@ output_df = pd.DataFrame(output_records)
 output_df = output_df[["#NAME", "CHROM", "STRAND", "TX_START", "TX_END", "EXON_START", "EXON_END"]]
 
 #output_df[output_df['#NAME'] == "FGF16"]
-output_path = re.sub(".gtf.gz$", "", os.path.basename(args.gtf_gz_path)) + ".txt"
+output_path = re.sub(".gtf.gz$", "", os.path.basename(args.gtf_gz_path)) + ".txt.gz"
 
 output_df.to_csv(output_path, index=False, sep="\t")
 
-print(f"Wrote {os.path.abspath(output_path)}")
+print(f"Wrote {len(output_df)} records to {os.path.abspath(output_path)}")
 
 #%%
