@@ -5,6 +5,8 @@ flask
 flask-cors
 flask-talisman
 gunicorn
+intervaltree
 markdown2
+pandas
 pysam
 redis

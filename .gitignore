@@ -5,7 +5,10 @@
 # Data
 *.fa
 *.fai
-
+*.bed
+*.bed.gz
+*.gtf.gz
+*.tbi
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
