@@ -144,10 +144,11 @@
                                 </table>
                             </div>
                         </div>
-                        <!-- br />
-                        <div style="font-size: large; color: darkred"><b>10/23/2020 3:30pm EST - Server is down for upgrades to handle increased demand. <br />Please check back in several hours.</b></div>
+
                         <br />
-                        <br / -->
+                        <div style="font-size: large; color: darkred"><b>2/3/2021 8:30pm EST - Server will be down for updates later tonight to add support for Gencode v36 transcripts. <!--br />Please check back in several hours.</b--></div>
+                        <br />
+                        <br />
 
                         <div class="ui form" style="width:100%">
                             <div class="ui input" style="padding-bottom:30px; padding-right:8px; width:100%">
@@ -401,11 +402,11 @@
 
         return "<table class='ui stackable table'>" +
           "<tr>" +
-          "<td><b>variant</b></td>" +
-          "<td><b>gene</b></td>" +
-          "<td><b>&#916;&nbsp; type</b></td>" +
-          "<td><b>&#916;&nbsp; score</b>  " + "<i class='question circle outline icon' data-content='Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 50bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.2 or higher appear in green, 0.5 or higher appear in yellow, and 0.8 or higher appear in red.'></i>"+"</td>" +
-          "<td><b>pre-mRNA position</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions in the pre-mRNA being splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant.'></i>"+"</td>" +
+              "<td><b>variant</b></td>" +
+              "<td><b>gene</b></td>" +
+              "<td><b>&#916;&nbsp; type</b></td>" +
+              "<td><b>&#916;&nbsp; score</b>  " + "<i class='question circle outline icon' data-content='Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 50bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.2 or higher appear in green, 0.5 or higher appear in yellow, and 0.8 or higher appear in red.'></i>"+"</td>" +
+              "<td><b>pre-mRNA position</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions in the pre-mRNA being splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant.'></i>"+"</td>" +
           "</tr>" + parsed_scores.map(function(scores) {
                 const variant_ucsc_url = response.url
                 const gnomAD_version = response.genome_version === "38"? "gnomad_r3" : "gnomad_r2_1"
