@@ -562,7 +562,7 @@
             }
 
             if (!errorText) {
-                errorText = "ERROR: Unable to access the SpliceAI-lookup API server."
+                errorText = "ERROR: Unable to reach the SpliceAI-lookup API server. Either the server or your internet may be down."
             }
             console.warn(errorText)
             $("#error-box").html(errorText)
