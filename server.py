@@ -4,6 +4,7 @@ import markdown2
 import os
 import pysam
 import re
+import redis
 import socket
 import subprocess
 import sys
@@ -84,6 +85,8 @@ VARIANT_RE = re.compile(
     "(?P<alt>[ACGT]+)"
 )
 
+REDIS = redis.Redis(host='localhost', port=6379, db=0)  # in-memory cache server which may or may not be running
+
 
 def error_response(error_message):
     return Response(json.dumps({"error": str(error_message)}), status=400, mimetype='application/json')
@@ -113,6 +116,33 @@ class VariantRecord:
 
     def __repr__(self):
         return f"{self.chrom}-{self.pos}-{self.ref}-{self.alts[0]}"
+
+
+def get_redis_key(variant, genome_version, spliceai_distance, spliceai_mask):
+    return f"{variant}__hg{genome_version}__d{spliceai_distance}__m{spliceai_mask}"
+
+
+def get_from_redis(variant, genome_version, spliceai_distance, spliceai_mask):
+    key = get_redis_key(variant, genome_version, spliceai_distance, spliceai_mask)
+    results = None
+    try:
+        results_string = REDIS.get(key)
+        if results_string:
+            results = json.loads(results_string)
+            results["source"] += ":redis"
+    except Exception as e:
+        print(f"Redis error: {e}", flush=True)
+
+    return results
+
+
+def add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, results):
+    key = get_redis_key(variant, genome_version, spliceai_distance, spliceai_mask)
+    try:
+        results_string = json.dumps(results)
+        REDIS.set(key, results_string)
+    except Exception as e:
+        print(f"Redis error: {e}", flush=True)
 
 
 def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
@@ -268,7 +298,11 @@ def run_spliceai():
         print(f"{prefix}: {request.remote_addr}: ======================", flush=True)
         print(f"{prefix}: {request.remote_addr}: {variant} processing with hg={genome_version}, distance={spliceai_distance}, mask={spliceai_mask}", flush=True)
 
-    results = process_variant(variant, genome_version, spliceai_distance, spliceai_mask)
+    # check REDIS cache before processing the variant
+    results = get_from_redis(variant, genome_version, spliceai_distance, spliceai_mask)
+    if not results:
+        results = process_variant(variant, genome_version, spliceai_distance, spliceai_mask)
+        add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, results)
 
     if request.remote_addr != "63.143.42.242":
         print(f"{prefix}: {request.remote_addr}: {variant} results: {results}", flush=True)
