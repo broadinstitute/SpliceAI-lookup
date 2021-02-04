@@ -194,7 +194,7 @@ for priority in all_exons_by_priority:
 
             if priority != "primary" and interval_trees[chrom].overlaps(Interval(tx_start_0based, tx_end_1based)):
                 # skip any secondary transcripts that overlap already-added primary transcripts
-                overlapping_genes = [i.data for i in interval_trees[chrom][tx_start_0based:tx_end_1based]]
+                overlapping_genes = sorted(set([i.data for i in interval_trees[chrom][tx_start_0based:tx_end_1based]]))
                 print(f"Skipping {priority} {transcript_type} gene {gene_name} since it overlaps {len(overlapping_genes)} gene(s): " +
                     ", ".join(overlapping_genes[:5]) + ("..." if len(overlapping_genes) > 5 else ""))
                 continue
