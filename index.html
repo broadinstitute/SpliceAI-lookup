@@ -98,11 +98,11 @@
                                 <a id="more-details1-button" href="#" onclick="$('#more-details1').show();$('#more-details1-button').hide();">more details...</a>
 
                                 <div id="more-details1" style="display:none">
-                                    This web interface works by retrieving scores from an <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">API</a> maintained by the
-                                    <a href="https://the-tgg.org/" target="_blank">TGG</a>.<br />
-                                    The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">API</a> uses precomputed
+                                    This web interface and underlying <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> are being developed by the <a href="https://the-tgg.org/" target="_blank">TGG</a>.
+                                    The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> uses precomputed
                                     scores provided by Illumina for SNVs and small InDels, and runs the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
                                     directly to compute scores for any other queries - such as larger InDels or non-default "Max distance" values.<br/>
+                                    All code is available at <a href="https://github.com/broadinstitute/SpliceAI-lookup" target="_blank">github.com/broadinstitute/SpliceAI-lookup</a>.<br />
                                     <br />
                                     For more information on SpliceAI, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>,
                                     as well as in this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.<br />
@@ -203,7 +203,7 @@
                                         </div>
                                         <div class="field" style="padding-right:10px; padding-bottom:12px; white-space:nowrap">
                                             <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Max distance:</b></span>
-                                            <div class="ui input" style="padding-left:15px; padding-bottom:10px; padding-right:8px; width:80px">
+                                            <div class="ui input" style="padding-left:15px; padding-bottom:10px; padding-right:8px; width:100px">
                                                 <input id="max-distance-input" type="text" value="50" style="padding:7px 10px">
                                             </div>
                                             <i class="question circle outline icon" data-position="right center" data-content="For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distance specified here controls the size of this window. The maximum allowed value is 10,000bp."></i>
@@ -230,8 +230,10 @@
                 <div>
                     To post issues or feature requests, please use <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>.<br />
                     <br />
+                    <b>2021-2-9</b><br />
+                    - show Gencode gene & transcript ids beside gene names<br />
                     <b>2021-2-2</b><br />
-                    - added support for scoring variants in Gencode v36 transcripts (previously <br />only v24 transcripts were supported).<br />
+                    - updated to Gencode v36 (was previously on v24).<br />
                     - added gene & variant links for OMIM, GTEx, gnomAD, etc.<br />
                     - improved layout on small screens<br />
                 </div>
@@ -433,6 +435,9 @@
                 const variant_ucsc_url = response.url
                 const gnomAD_version = response.genome_version === "38"? "gnomad_r3" : "gnomad_r2_1"
                 const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + response.variant + "?dataset=" + gnomAD_version
+                const gene_name_fields = (scores.SYMBOL || "").split("---")
+                const gene_name = gene_name_fields[0]
+                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (${gene_name_fields[1]} / ${gene_name_fields[2]})` : ""
 
                 return "<tr class='upperBorder'>" +
                   "<td rowspan='4' style='vertical-align: top'>" +
@@ -441,14 +446,14 @@
                     "<a href='"+variant_gnomAD_url+"' class='smallLink' target='_blank'>gnomAD</a>" +
                   "</td>"+
                   "<td rowspan='4' style='vertical-align: top'>" +
-                    "<div style='margin-right:10px; display: inline-block'>" + scores.SYMBOL + "</div><br class='only-large-screen'/><br class='only-large-screen'/>" +
-                    "<a href='https://www.omim.org/search?search="+scores.SYMBOL+"' class='smallLink' target='_blank'>OMIM</a>, " +
-                    "<a href='https://gtexportal.org/home/gene/"+scores.SYMBOL+"' class='smallLink' target='_blank'>GTEx</a>, " +
-                    "<a href='https://gnomad.broadinstitute.org/gene/"+scores.SYMBOL+"?dataset="+gnomAD_version+"' class='smallLink' target='_blank'>gnomAD</a>, " +
-                    "<a href='https://search.clinicalgenome.org/kb/genes?page=1&size=25&search="+scores.SYMBOL+"' class='smallLink' target='_blank'>ClinGen</a>, <br class='only-large-screen'/>" +
-                    "<a href='https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g="+scores.SYMBOL+"' class='smallLink' target='_blank'>Ensembl</a>, " +
-                    "<a href='https://decipher.sanger.ac.uk/gene/"+scores.SYMBOL+"' class='smallLink' target='_blank'>Decipher</a>, " +
-                    "<a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+scores.SYMBOL+"' class='smallLink' target='_blank'>GeneCards</a>" +
+                    "<div style='margin-right:10px; display: inline-block'>"+gene_name+gene_and_transcript_id+"</div><br class='only-large-screen'/><br class='only-large-screen'/>" +
+                    "<a href='https://www.omim.org/search?search="+gene_name+"' class='smallLink' target='_blank'>OMIM</a>, " +
+                    "<a href='https://gtexportal.org/home/gene/"+gene_name+"' class='smallLink' target='_blank'>GTEx</a>, " +
+                    "<a href='https://gnomad.broadinstitute.org/gene/"+gene_name+"?dataset="+gnomAD_version+"' class='smallLink' target='_blank'>gnomAD</a>, " +
+                    "<a href='https://search.clinicalgenome.org/kb/genes?page=1&size=25&search="+gene_name+"' class='smallLink' target='_blank'>ClinGen</a>, <br class='only-large-screen'/>" +
+                    "<a href='https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g="+gene_name+"' class='smallLink' target='_blank'>Ensembl</a>, " +
+                    "<a href='https://decipher.sanger.ac.uk/gene/"+gene_name+"' class='smallLink' target='_blank'>Decipher</a>, " +
+                    "<a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+gene_name+"' class='smallLink' target='_blank'>GeneCards</a>" +
                   "</td>" +
                   "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL+"</td><td>" + (parseFloat(scores.DS_AL) == 0 ? "" : /*"<a href='"+scores.AL_url+"' target='_blank'>"+ */scores.DP_AL+" bp"/*+</a>"*/) + "</td>"+
                   "</tr><tr>"+
