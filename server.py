@@ -70,7 +70,7 @@ SPLICEAI_ANNOTATOR = {
 SPLICEAI_MAX_DISTANCE_LIMIT = 10000
 SPLICEAI_DEFAULT_DISTANCE = 50  # maximum distance between the variant and gained/lost splice site, defaults to 50
 SPLICEAI_DEFAULT_MASK = 0  # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
-USE_PRECOMPUTED_SCORES = 0  # whether to use precomputed scores by default
+USE_PRECOMPUTED_SCORES = 1  # whether to use precomputed scores by default
 
 SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
 
