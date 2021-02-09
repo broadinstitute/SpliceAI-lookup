@@ -163,9 +163,11 @@ all_exons_by_priority = {
 }
 
 for record in parse_gencode_file(args.gtf_gz_path):
-    key = (record["chrom"], record["gene_name"], record["strand"])
     priority = record["priority"]
     transcript_type = record["transcript_type"]
+
+    name = "---".join([record["gene_name"], record["gene_id"], record["transcript_id"]])
+    key = (record["chrom"], name, record["strand"])
 
     all_exons_by_priority[priority][transcript_type][key].add((int(record['start_1based']), int(record['end_1based'])))
 
@@ -192,6 +194,7 @@ for priority in all_exons_by_priority:
             tx_start_0based = min([start_1based - 1 for start_1based, _ in exons_set])
             tx_end_1based = max([end_1based for _, end_1based in exons_set])
 
+            # check for overlap with previously-added transcripts
             if priority != "primary" and interval_trees[chrom].overlaps(Interval(tx_start_0based, tx_end_1based)):
                 # skip any secondary transcripts that overlap already-added primary transcripts
                 overlapping_genes = sorted(set([i.data for i in interval_trees[chrom][tx_start_0based:tx_end_1based]]))
