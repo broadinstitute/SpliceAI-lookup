@@ -99,9 +99,9 @@
 
                                 <div id="more-details1" style="display:none">
                                     This web interface and the underlying <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> are being developed by the <a href="https://the-tgg.org/" target="_blank">TGG</a>.<br />
-                                    The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> optionally uses precomputed
+                                    The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> optionally uses pre-computed
                                     scores provided by Illumina for SNVs and small InDels, but resorts to running the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
-                                    directly to compute scores for variants not found in the precomputed files - such as larger InDels or non-default "Max distance" values.<br/>
+                                    directly to compute scores for variants not found in the pre-computed files - such as larger InDels or non-default "Max distance" values.<br/>
                                     All code is available at <a href="https://github.com/broadinstitute/SpliceAI-lookup" target="_blank">github.com/broadinstitute/SpliceAI-lookup</a>.<br />
                                     <br />
                                     For more information on SpliceAI, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>,
@@ -209,14 +209,14 @@
                                             <i class="question circle outline icon" data-position="right center" data-content="For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distance specified here controls the size of this window. The maximum allowed value is 10,000bp."></i>
                                         </div>
                                         <div class="field" style="padding-right:10px; padding-bottom:12px; white-space:nowrap">
-                                            <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Use Illumina's precomputed scores:</b></span>
+                                            <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Use Illumina's pre-computed scores:</b></span>
                                             <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
                                                 <input type="radio" name="use-precomputed-scores" value="1" checked /><label>yes</label>
                                             </div>
                                             <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
                                                 <input type="radio" name="use-precomputed-scores" value="0" /><label>no</label>
                                             </div>
-                                            <i style="margin-left:20px" class="question circle outline icon" data-position="right center" data-content="Illumina provides precomputed SpliceAI scores for all SNPs and small InDels within Gencode v24 canonical transcripts. If 'yes' is selected here, the server will quickly check these precomputed files to see if it can avoid the relatively slow step of running the SpliceAI model. Selecting 'no' will cause the server to skip the precomputed files and run the model. The benefit of this is that, although the scores may take longer, they will always be based on Gencode v36 transcripts and will include ENSG and ENST ids in addition to the gene name."></i>
+                                            <i style="margin-left:20px" class="question circle outline icon" data-position="right center" data-content="Illumina provides pre-computed SpliceAI scores for all SNPs and small InDels within Gencode v24 canonical transcripts. If 'yes' is selected here, the server will quickly check these pre-computed files to see if it can avoid the relatively slow step of running the SpliceAI model. Selecting 'no' will cause the server to skip the pre-computed files and run the model. The benefit of this is that, although the scores may take longer, they will always be based on Gencode v36 transcripts and will include ENSG and ENST ids in addition to the gene name."></i>
                                         </div>
                                     </div>
                                     <div class="three wide column">
@@ -241,8 +241,8 @@
                     To post issues or feature requests, please use<br /><a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>.<br />
                     <br />
                     <b>2021-2-9</b><br />
-                    - show ENSG & ENST ids (unless using precomputed scores)<br />
-                    - added option to not use precomputed scores<br />
+                    - show ENSG & ENST ids (unless using pre-computed scores)<br />
+                    - added option to not use pre-computed scores<br />
                     <br />
                     <b>2021-2-2</b><br />
                     - updated to Gencode v36 (was previously on v24).<br />
