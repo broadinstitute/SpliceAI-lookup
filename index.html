@@ -84,7 +84,7 @@
     <div class="ui stackable grid">
       <div class="row">
         <div class="one wide column"></div>
-        <div class="nine wide column">
+        <div class="ten wide column">
             <div class="ui grid">
                 <div class="row">
                     <div class="twelve wide column">
@@ -98,8 +98,8 @@
                                 <a id="more-details1-button" href="#" onclick="$('#more-details1').show();$('#more-details1-button').hide();">more details...</a>
 
                                 <div id="more-details1" style="display:none">
-                                    This web interface and underlying <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> are being developed by the <a href="https://the-tgg.org/" target="_blank">TGG</a>.
-                                    The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> uses precomputed
+                                    This web interface and underlying <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> are being developed by the <a href="https://the-tgg.org/" target="_blank">TGG</a>.<br />
+                                    The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> optionally uses precomputed
                                     scores provided by Illumina for SNVs and small InDels, and runs the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
                                     directly to compute scores for any other queries - such as larger InDels or non-default "Max distance" values.<br/>
                                     All code is available at <a href="https://github.com/broadinstitute/SpliceAI-lookup" target="_blank">github.com/broadinstitute/SpliceAI-lookup</a>.<br />
@@ -201,12 +201,22 @@
                                             </div>
                                             <i style="margin-left:20px" class="question circle outline icon" data-position="right center" data-content="Splicing changes corresponding to strengthening annotated splice sites and weakening unannotated splice sites are typically much less pathogenic than weakening annotated splice sites and strengthening unannotated splice sites. Selecting 'masked' will hide the score for such splicing changes and show 0 instead. Selecting 'raw' will show all scores. SpliceAI developers recommend using 'raw' scores for alternative splicing analysis and 'masked' scores for variant interpretation."></i>
                                         </div>
-                                        <div class="field" style="padding-right:10px; padding-bottom:12px; white-space:nowrap">
+                                        <div class="field" style="padding-right:10px; white-space:nowrap">
                                             <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Max distance:</b></span>
                                             <div class="ui input" style="padding-left:15px; padding-bottom:10px; padding-right:8px; width:100px">
                                                 <input id="max-distance-input" type="text" value="50" style="padding:7px 10px">
                                             </div>
                                             <i class="question circle outline icon" data-position="right center" data-content="For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distance specified here controls the size of this window. The maximum allowed value is 10,000bp."></i>
+                                        </div>
+                                        <div class="field" style="padding-right:10px; padding-bottom:12px; white-space:nowrap">
+                                            <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Use Illumina's pre-computed scores:</b></span>
+                                            <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                                <input type="radio" name="use-precomputed-scores" value="1" /><label>yes</label>
+                                            </div>
+                                            <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                                <input type="radio" name="use-precomputed-scores" value="0" checked /><label>no</label>
+                                            </div>
+                                            <i style="margin-left:20px" class="question circle outline icon" data-position="right center" data-content="Illumina provides precomputed SpliceAI scores for all SNPs and small InDels within Gencode v24 canonical transcripts. If 'yes' is selected here, the server will quickly check these precomputed files to see if it can avoid the relatively slow step of running the SpliceAI model. Selecting 'no' will cause the server to skip the precomputed files and run the model. The benefit of this is that, although the scores may take longer, they will be based on Gencode v36 transcripts and will include ENSG and ENST ids in addition to the gene name."></i>
                                         </div>
                                     </div>
                                     <div class="three wide column">
@@ -223,15 +233,16 @@
                 <div id="response-box"></div>
             </div>
         </div>
-        <div class="five wide column">
+        <div class="four wide column">
             <div style="padding:25px 0px">
                 <div><i>What's New</i></div>
                 <br />
                 <div>
-                    To post issues or feature requests, please use <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>.<br />
+                    To post issues or feature requests, please use<br /><a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>.<br />
                     <br />
                     <b>2021-2-9</b><br />
                     - also show Gencode gene & transcript ids<br />
+                    - added option to skip precomputed scores<br />
                     <br />
                     <b>2021-2-2</b><br />
                     - updated to Gencode v36 (was previously on v24).<br />
@@ -438,7 +449,7 @@
                 const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + response.variant + "?dataset=" + gnomAD_version
                 const gene_name_fields = (scores.SYMBOL || "").split("---")
                 const gene_name = gene_name_fields[0]
-                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (${gene_name_fields[1]} / ${gene_name_fields[2]})` : ""
+                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}">${gene_name_fields[2]}</a>)` : ""
 
                 return "<tr class='upperBorder'>" +
                   "<td rowspan='4' style='vertical-align: top'>" +
@@ -494,7 +505,7 @@
           var genome_version = $("input[name='hg']:checked").val().trim()
           var mask = $("input[name='mask']:checked").val().trim()
           var max_distance = $("#max-distance-input").val().trim()
-
+          var use_precomputed_scores = $("input[name='use-precomputed-scores']:checked").val().trim()
           var variant_hgvs = parseVariantToHGVS(variant, genome_version)
 
           $("#error-box").hide()
@@ -548,6 +559,7 @@
                 hg: genome_version,
                 distance: max_distance,
                 mask: mask,
+                precomputed: use_precomputed_scores,
                 variant: chrom+'-'+pos+'-'+ref+'-'+alt,
               }
             )

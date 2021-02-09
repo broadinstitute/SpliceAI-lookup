@@ -70,10 +70,11 @@ SPLICEAI_ANNOTATOR = {
 SPLICEAI_MAX_DISTANCE_LIMIT = 10000
 SPLICEAI_DEFAULT_DISTANCE = 50  # maximum distance between the variant and gained/lost splice site, defaults to 50
 SPLICEAI_DEFAULT_MASK = 0  # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
+USE_PRECOMPUTED_SCORES = 0  # whether to use precomputed scores by default
 
 SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
 
-SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&distance=50&mask=0&variant=chr8-140300615-C-G"
+SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&distance=50&mask=0&precomputed=1&variant=chr8-140300615-C-G"
 
 VARIANT_RE = re.compile(
     "(chr)?(?P<chrom>[0-9XYMTt]{1,2})"
@@ -118,12 +119,12 @@ class VariantRecord:
         return f"{self.chrom}-{self.pos}-{self.ref}-{self.alts[0]}"
 
 
-def get_redis_key(variant, genome_version, spliceai_distance, spliceai_mask):
-    return f"{variant}__hg{genome_version}__d{spliceai_distance}__m{spliceai_mask}"
+def get_redis_key(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores):
+    return f"{variant}__hg{genome_version}__d{spliceai_distance}__m{spliceai_mask}__pre{use_precomputed_scores}"
 
 
-def get_from_redis(variant, genome_version, spliceai_distance, spliceai_mask):
-    key = get_redis_key(variant, genome_version, spliceai_distance, spliceai_mask)
+def get_from_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores):
+    key = get_redis_key(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
     results = None
     try:
         results_string = REDIS.get(key)
@@ -136,8 +137,8 @@ def get_from_redis(variant, genome_version, spliceai_distance, spliceai_mask):
     return results
 
 
-def add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, results):
-    key = get_redis_key(variant, genome_version, spliceai_distance, spliceai_mask)
+def add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores, results):
+    key = get_redis_key(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
     try:
         results_string = json.dumps(results)
         REDIS.set(key, results_string)
@@ -145,7 +146,7 @@ def add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, resu
         print(f"Redis error: {e}", flush=True)
 
 
-def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
+def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores):
     try:
         chrom, pos, ref, alt = parse_variant(variant)
     except ValueError as e:
@@ -193,7 +194,7 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask):
 
     source = None
     scores = []
-    if (len(ref) <= 5 or len(alt) <= 2) and spliceai_distance == SPLICEAI_DEFAULT_DISTANCE:
+    if (len(ref) <= 5 or len(alt) <= 2) and spliceai_distance == SPLICEAI_DEFAULT_DISTANCE and str(use_precomputed_scores) == "1":
         # examples: ("masked", "snv", "hg19")  ("raw", "indel", "hg38")
         key = (
             "masked" if spliceai_mask == 1 else ("raw" if spliceai_mask == 0 else None),
@@ -292,17 +293,23 @@ def run_spliceai():
 
     spliceai_mask = int(spliceai_mask)
 
+    use_precomputed_scores = params.get("precomputed", str(USE_PRECOMPUTED_SCORES))
+    if use_precomputed_scores not in ("0", "1"):
+        return error_response(f'Invalid "precomputed" value: "{use_precomputed_scores}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n')
+
+    use_precomputed_scores = int(use_precomputed_scores)
+
     start_time = datetime.now()
     prefix = start_time.strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
     if request.remote_addr != "63.143.42.242":  # ignore up-time checks
         print(f"{prefix}: {request.remote_addr}: ======================", flush=True)
-        print(f"{prefix}: {request.remote_addr}: {variant} processing with hg={genome_version}, distance={spliceai_distance}, mask={spliceai_mask}", flush=True)
+        print(f"{prefix}: {request.remote_addr}: {variant} processing with hg={genome_version}, distance={spliceai_distance}, mask={spliceai_mask}, precomputed={use_precomputed_scores}", flush=True)
 
     # check REDIS cache before processing the variant
-    results = get_from_redis(variant, genome_version, spliceai_distance, spliceai_mask)
+    results = get_from_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
     if not results:
-        results = process_variant(variant, genome_version, spliceai_distance, spliceai_mask)
-        add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, results)
+        results = process_variant(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
+        add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores, results)
 
     if request.remote_addr != "63.143.42.242":
         print(f"{prefix}: {request.remote_addr}: {variant} results: {results}", flush=True)
