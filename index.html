@@ -449,7 +449,7 @@
                 const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + response.variant + "?dataset=" + gnomAD_version
                 const gene_name_fields = (scores.SYMBOL || "").split("---")
                 const gene_name = gene_name_fields[0]
-                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}">${gene_name_fields[2]}</a>)` : ""
+                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>)` : ""
 
                 return "<tr class='upperBorder'>" +
                   "<td rowspan='4' style='vertical-align: top'>" +
