@@ -309,7 +309,9 @@ def run_spliceai():
     results = get_from_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
     if not results:
         results = process_variant(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
-        add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores, results)
+        if "error" not in results:
+            used_precomputed_scores = "1" if results["source"] == "lookup" else "0"
+            add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, used_precomputed_scores, results)
 
     if request.remote_addr != "63.143.42.242":
         print(f"{prefix}: {request.remote_addr}: {variant} results: {results}", flush=True)
