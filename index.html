@@ -98,10 +98,10 @@
                                 <a id="more-details1-button" href="#" onclick="$('#more-details1').show();$('#more-details1-button').hide();">more details...</a>
 
                                 <div id="more-details1" style="display:none">
-                                    This web interface and the underlying <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> are being developed by the <a href="https://the-tgg.org/" target="_blank">TGG</a>.<br />
+                                    This web interface and the underlying <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> are being developed by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institue</a>.<br />
                                     The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> optionally uses pre-computed
-                                    scores provided by Illumina for SNVs and small InDels, but resorts to running the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
-                                    directly to compute scores for variants not found in the pre-computed files - such as larger InDels or non-default "Max distance" values.<br/>
+                                    scores provided by Illumina for SNVs and small InDels, but falls back on running the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
+                                    directly for scores not available in the pre-computed files - such as larger InDels or non-default "Max distance" values.<br/>
                                     All code is available at <a href="https://github.com/broadinstitute/SpliceAI-lookup" target="_blank">github.com/broadinstitute/SpliceAI-lookup</a>.<br />
                                     <br />
                                     For more information on SpliceAI, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>,
@@ -238,7 +238,7 @@
                 <div><i>What's New</i></div>
                 <br />
                 <div>
-                    To post issues or feature requests, please use<br /><a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>.<br />
+                    To post issues or feature requests, please use<br /><a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a><br />
                     <br />
                     <b>2021-2-9</b><br />
                     - show ENSG & ENST ids (unless using pre-computed scores)<br />
