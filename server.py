@@ -168,12 +168,12 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
         other_genome_version = OTHER_GENOME_VERSION[genome_version]
         other_genome_overlapping_intervals = ANNOTATION_INTERVAL_TREES[other_genome_version][chrom_without_chr].at(pos)
         if other_genome_overlapping_intervals:
-            other_genome_genes = " and ".join([str(i.data) for i in other_genome_overlapping_intervals])
+            other_genome_genes = " and ".join([str(i.data).split("---")[0] for i in other_genome_overlapping_intervals])
             return {
                 "variant": variant,
                 "error": f"ERROR: {chrom}-{pos}-{ref}-{alt} falls outside all Gencode exons and introns on "
                          f"GRCh{genome_version}. SpliceAI only works for variants that are within known "
-                         f"exons or introns. However, checking on GRCh{other_genome_version}, {chrom}:{pos} falls within "
+                         f"exons or introns. However, checking in GRCh{other_genome_version}, {chrom}:{pos} falls within "
                          f"{other_genome_genes}, so perhaps GRCh{genome_version} is not the correct genome version?"
             }
         else:
@@ -318,7 +318,11 @@ def run_spliceai():
         print(f"{prefix}: {request.remote_addr}: {variant} took " + str(datetime.now() - start_time), flush=True)
 
     status = 400 if results.get("error") else 200
-    return Response(json.dumps(results), status=status, mimetype='application/json')
+
+    response_json = {}
+    response_json.update(params)  # copy input params to output
+    response_json.update(results)
+    return Response(response_json, status=status, mimetype='application/json')
 
 
 LIFTOVER_EXAMPLE = f"/liftover/?hg=hg19-to-hg38&format=interval&chrom=chr8&start=140300615&end=140300620"

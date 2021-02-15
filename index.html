@@ -161,16 +161,16 @@
                             </div>
                         </div>
 
-                        <!-- br />
-                        <div style="font-size: large; color: darkred">
-			  Feb. 9, 2021 10:30am EST<br />
-			  <br />
-			  <b>The server is briefly down for updates</b><br />
-			  <br />
-			  Please check back in 1 hour
-			</div>
                         <br />
-                        <br /-->
+                        <div style="font-size: large; color: darkred">
+                          Feb. 15, 2021 1:30pm EST<br />
+                          <br />
+                          <b>The server is briefly down for updates</b><br />
+                          <br />
+                          Please check back in 1 hour
+                        </div>
+                        <br />
+                        <br />
 
                         <div class="ui form" style="width:100%">
                             <div class="ui input" style="padding-bottom:30px; padding-right:8px; width:100%">
@@ -239,6 +239,10 @@
                 <br />
                 <div>
                     To post issues or feature requests, please use<br /><a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a><br />
+                    <br />
+		    <b>2021-2-9</b><br />
+                    - highlight canonical transcript in blue<br />
+                    - save all choices in url to enable link sharing<br />
                     <br />
                     <b>2021-2-9</b><br />
                     - compute scores separately for each transcript and show ENSG & ENST ids (unless using pre-computed scores)<br />
@@ -409,7 +413,7 @@
         console.log("Processing result:", response)
 
         try {
-          response["url"] = getUCSCBrowserUrl(response.genome_version, response.chrom, response.pos)
+          response["url"] = getUCSCBrowserUrl(response.hg, response.chrom, response.pos)
         } catch(e) {
           response["url"] = "#"
         }
@@ -425,7 +429,7 @@
           var score_types = ["DG", "DL", "AG", "AL"]
           score_types.forEach(function(score_type) {
             try {
-              splice_ai_dict[score_type + "_url"] = getUCSCBrowserUrl(response.genome_version, response.chrom, response.pos + parseInt(splice_ai_dict["DP_" + score_type]))
+              splice_ai_dict[score_type + "_url"] = getUCSCBrowserUrl(response.hg, response.chrom, response.pos + parseInt(splice_ai_dict["DP_" + score_type]))
             } catch(e) {
               splice_ai_dict[score_type + "_url"] = "#"
             }
@@ -445,13 +449,16 @@
               "<td><b>pre-mRNA position</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions in the pre-mRNA being splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant.'></i>"+"</td>" +
           "</tr>" + parsed_scores.map(function(scores) {
                 const variant_ucsc_url = response.url
-                const gnomAD_version = response.genome_version === "38"? "gnomad_r3" : "gnomad_r2_1"
+                const gnomAD_version = response.hg === "38"? "gnomad_r3" : "gnomad_r2_1"
                 const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + response.variant + "?dataset=" + gnomAD_version
                 const gene_name_fields = (scores.SYMBOL || "").split("---")
                 const gene_name = gene_name_fields[0]
-                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>)` : ""
 
-                return "<tr class='upperBorder'>" +
+                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>)` : ""
+                const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes")
+                const background_color = is_canonical_transcript ? "#aaddff" : "white"
+
+                return "<tr class='upperBorder' style='background-color:" + background_color+";'>" +
                   "<td rowspan='4' style='vertical-align: top'>" +
                   "<div style='margin-right:10px; display: inline-block'>" + response.variant + "</div><br class='only-large-screen'/><br class='only-large-screen'/>" +
                     "<a href='"+variant_ucsc_url+"' class='smallLink' target='_blank'>UCSC</a>, " +
@@ -569,7 +576,13 @@
             $("#response-box").show()
 
             // set url
-            window.location.hash = "#" + $.param({variant: variant})
+            window.location.hash = "#" + $.param({
+              variant: variant,
+              hg: genome_version,
+              distance: max_distance,
+              mask: mask,
+              precomputed: use_precomputed_scores,
+            })
 
           }).catch(function(error) {
             $("#response-box").hide()
@@ -591,12 +604,31 @@
           })
         })
 
-        var variantFromUrl = $.urlParam('variant')
+        const hgFromUrl = $.urlParam('hg')
+        if (hgFromUrl) {
+          $("input[name='hg'][value='"+hgFromUrl+"']").prop("checked", true)
+        }
+
+        const maxDistanceFromUrl = $.urlParam('distance')
+        if (maxDistanceFromUrl) {
+            $("#max-distance-input").val(maxDistanceFromUrl)
+        }
+
+        const maskFromUrl = $.urlParam('mask')
+        if (maskFromUrl) {
+          $("input[name='mask'][value='"+maskFromUrl+"']").prop("checked", true)
+        }
+
+        const precomputedFromUrl = $.urlParam('precomputed')
+        if (precomputedFromUrl) {
+          $("input[name='use-precomputed-scores'][value='"+precomputedFromUrl+"']").prop("checked", true)
+        }
+
+        const variantFromUrl = $.urlParam('variant')
         if (variantFromUrl) {
           $("#search-box").val(variantFromUrl)
           $("#submit-button").click()
         }
-
       })
 
     </script>
