@@ -168,13 +168,12 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
         other_genome_version = OTHER_GENOME_VERSION[genome_version]
         other_genome_overlapping_intervals = ANNOTATION_INTERVAL_TREES[other_genome_version][chrom_without_chr].at(pos)
         if other_genome_overlapping_intervals:
-            other_genome_genes = " and ".join([str(i.data).split("---")[0] for i in other_genome_overlapping_intervals])
+            other_genome_genes = " and ".join(sorted(set([str(i.data).split("---")[0] for i in other_genome_overlapping_intervals])))
             return {
                 "variant": variant,
-                "error": f"ERROR: {chrom}-{pos}-{ref}-{alt} falls outside all Gencode exons and introns on "
-                         f"GRCh{genome_version}. SpliceAI only works for variants that are within known "
-                         f"exons or introns. However, checking in GRCh{other_genome_version}, {chrom}:{pos} falls within "
-                         f"{other_genome_genes}, so perhaps GRCh{genome_version} is not the correct genome version?"
+                "error": f"ERROR: In GRCh{genome_version}, {chrom}-{pos}-{ref}-{alt} falls outside all gencode exons and introns."
+                         f"SpliceAI only works for variants within known exons or introns. However, in GRCh{other_genome_version}, "
+                         f"{chrom}:{pos} falls within {other_genome_genes}, so perhaps GRCh{genome_version} is not the correct genome version?"
             }
         else:
             return {
