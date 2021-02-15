@@ -1,4 +1,5 @@
 #%%
+
 import argparse
 from collections import defaultdict, Counter
 import gzip
@@ -9,6 +10,7 @@ from pprint import pprint
 import re
 import spliceai
 
+from annotations.get_ensembl_db_info import get_canonical_transcripts, CURRENT_ENSEMBL_DATABASE
 
 #%%
 official_annotations_gene_names = set()
@@ -162,11 +164,20 @@ all_exons_by_priority = {
     "secondary": defaultdict(lambda: defaultdict(set)),
 }
 
+print(f"Getting canonical transcripts from {CURRENT_ENSEMBL_DATABASE}")
+gene_id_to_canonical_transcript_id = get_canonical_transcripts()
+
 for record in parse_gencode_file(args.gtf_gz_path):
     priority = record["priority"]
     transcript_type = record["transcript_type"]
 
-    name = "---".join([record["gene_name"], record["gene_id"], record["transcript_id"]])
+    is_canonical_transcript = "no"
+    if record["gene_id"] not in gene_id_to_canonical_transcript_id:
+        print(f"WARNING: no canonical transcript for " + record["gene_id"])
+    elif record["transcript_id"] == gene_id_to_canonical_transcript_id[record["gene_id"]]:
+        is_canonical_transcript = "yes"
+
+    name = "---".join([record["gene_name"], record["gene_id"], record["transcript_id"], is_canonical_transcript])
     key = (record["chrom"], name, record["strand"])
 
     all_exons_by_priority[priority][transcript_type][key].add((int(record['start_1based']), int(record['end_1based'])))
@@ -179,6 +190,7 @@ def transcript_type_order(transcript_type):
         return TRANSCRIPT_TYPES_BY_PRIORITY.index(transcript_type)
     except ValueError:
         return len(TRANSCRIPT_TYPES_BY_PRIORITY) + 1
+
 
 # reformat the aggregated records into a list which can be turned into a pandas DataFrame
 output_records = []
