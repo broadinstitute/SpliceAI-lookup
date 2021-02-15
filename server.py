@@ -312,15 +312,16 @@ def run_spliceai():
             used_precomputed_scores = "1" if results["source"] == "lookup" else "0"
             add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, used_precomputed_scores, results)
 
-    if request.remote_addr != "63.143.42.242":
-        print(f"{prefix}: {request.remote_addr}: {variant} results: {results}", flush=True)
-        print(f"{prefix}: {request.remote_addr}: {variant} took " + str(datetime.now() - start_time), flush=True)
-
     status = 400 if results.get("error") else 200
 
     response_json = {}
     response_json.update(params)  # copy input params to output
     response_json.update(results)
+
+    if request.remote_addr != "63.143.42.242":
+        print(f"{prefix}: {request.remote_addr}: {variant} response: {response_json}", flush=True)
+        print(f"{prefix}: {request.remote_addr}: {variant} took " + str(datetime.now() - start_time), flush=True)
+
     return Response(json.dumps(response_json), status=status, mimetype='application/json')
 
 
