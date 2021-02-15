@@ -10,6 +10,7 @@ from pprint import pprint
 import re
 import spliceai
 
+# import from https://github.com/macarthur-lab/methods
 from annotations.get_ensembl_db_info import get_canonical_transcripts, CURRENT_ENSEMBL_DATABASE
 
 #%%
