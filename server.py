@@ -322,7 +322,7 @@ def run_spliceai():
     response_json = {}
     response_json.update(params)  # copy input params to output
     response_json.update(results)
-    return Response(response_json, status=status, mimetype='application/json')
+    return Response(json.dumps(response_json), status=status, mimetype='application/json')
 
 
 LIFTOVER_EXAMPLE = f"/liftover/?hg=hg19-to-hg38&format=interval&chrom=chr8&start=140300615&end=140300620"
