@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/semantic-ui@2.4.2/dist/semantic.min.css" />
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/semantic-ui@2.4.2/dist/semantic.min.js"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/underscore@1.12.0/underscore-min.js"></script>
 
     <!-- Global site tag (gtag.js) - Google Analytics -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=UA-172722632-1"></script>
@@ -440,6 +441,17 @@
 
         console.log("Parsed scores", parsed_scores)
 
+        //sort by (gene name, is canonical transcript)
+        parsed_scores = _.chain(parsed_scores).sortBy(function(scores) {
+          const gene_name_fields = (scores.SYMBOL || "").split("---")
+          const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes")
+          return !is_canonical_transcript
+        }).sortBy(function(scores) {
+          const gene_name_fields = (scores.SYMBOL || "").split("---")
+          const gene_name = gene_name_fields[0]
+          return gene_name
+        })
+
         return "<table class='ui stackable table'>" +
           "<tr>" +
               "<td><b>variant</b></td>" +
@@ -454,11 +466,11 @@
                 const gene_name_fields = (scores.SYMBOL || "").split("---")
                 const gene_name = gene_name_fields[0]
 
-                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>)` : ""
                 const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes")
-                const background_color = is_canonical_transcript ? "#aaddff" : "white"
+                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>) ${is_canonical_transcript ? '** <sup>canonical</sup>': ''}` : ""
+                const background_color = is_canonical_transcript ? "#eaf3ff" : "white"
 
-                return "<tr class='upperBorder' style='background-color:" + background_color+";'>" +
+                return "<tr class='upperBorder' style='background-color:" + background_color+"'>" +
                   "<td rowspan='4' style='vertical-align: top'>" +
                   "<div style='margin-right:10px; display: inline-block'>" + response.variant + "</div><br class='only-large-screen'/><br class='only-large-screen'/>" +
                     "<a href='"+variant_ucsc_url+"' class='smallLink' target='_blank'>UCSC</a>, " +
@@ -475,11 +487,11 @@
                     "<a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+gene_name+"' class='smallLink' target='_blank'>GeneCards</a>" +
                   "</td>" +
                   "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL+"</td><td>" + (parseFloat(scores.DS_AL) == 0 ? "" : /*"<a href='"+scores.AL_url+"' target='_blank'>"+ */scores.DP_AL+" bp"/*+</a>"*/) + "</td>"+
-                  "</tr><tr>"+
+                  "</tr><tr style='background-color:" + background_color+"'>"+
                   "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL)+">"+scores.DS_DL+"</td><td>" + (parseFloat(scores.DS_DL) == 0 ? "" : /*"<a href='"+scores.DL_url+"' target='_blank'>"+ */scores.DP_DL+" bp"/*+"</a>"*/) + "</td>"+
-                  "</tr><tr>"+
+                  "</tr><tr style='background-color:" + background_color+"'>"+
                   "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG)+">"+scores.DS_AG+"</td><td>" + (parseFloat(scores.DS_AG) == 0 ? "" : /*"<a href='"+scores.AG_url+"' target='_blank'>"+ */scores.DP_AG+" bp"/*+"</a>"*/) + "</td>"+
-                  "</tr><tr>"+
+                  "</tr><tr style='background-color:" + background_color+"'>"+
                   "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">"+scores.DS_DG+"</td><td>" + (parseFloat(scores.DS_DG) == 0 ? "" : /*"<a href='"+scores.DG_url+"' target='_blank'>"+ */scores.DP_DG+" bp"/*+"</a>"*/) + "</td>"+
                   "</tr>"
 
@@ -593,7 +605,7 @@
             }
 
             if (!errorText) {
-                errorText = "ERROR: Unable to reach the SpliceAI-lookup API server. Either the server or your internet may be down."
+                errorText = "ERROR: Unable to reach the SpliceAI-lookup API server. Either the API server or your internet isn't working."
             }
             console.warn(errorText)
             $("#error-box").html(errorText)
