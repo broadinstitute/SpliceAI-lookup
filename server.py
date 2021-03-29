@@ -78,6 +78,7 @@ RATE_LIMIT_WINDOW_SIZE_IN_MINUTES = 1
 RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE = {
     "computed": 4,
     "total": 10,
+    "liftover": 8,
 }
 
 SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
@@ -299,7 +300,6 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
 def run_spliceai():
     start_time = datetime.now()
     logging_prefix = start_time.strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
-    print(f"{logging_prefix}: {request.remote_addr}: ======================", flush=True)
 
     # check params
     params = {}
@@ -310,17 +310,12 @@ def run_spliceai():
         params.update(request.get_json(force=True, silent=True) or {})
 
     if exceeds_rate_limit(request.remote_addr, kind="total"):
-        response_json = params
-        response_json.update({
-            "error": f"ERROR: Rate limit reached. To prevent a user from overwhelming the server and making it "
-                     f"unavailable to other users, this tool allows no more than "
-                     f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['total']} requests per minute per user.",
-            "duration": "0",
-        })
+        error_message = (f"ERROR: Rate limit reached. To prevent a user from overwhelming the server and making it "
+            f"unavailable to other users, this tool allows no more than "
+            f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['total']} requests per minute per user.")
 
-        response_json.update(params)  # copy input params to output
-        print(f"{logging_prefix}: {request.remote_addr}: response: {response_json}", flush=True)
-        return Response(json.dumps(response_json), status=400, mimetype='application/json')
+        print(f"{logging_prefix}: {request.remote_addr}: response: {error_message}", flush=True)
+        return error_response(error_message)
 
     variant = params.get('variant', '')
     variant = variant.strip().strip("'").strip('"').strip(",")
@@ -359,6 +354,7 @@ def run_spliceai():
     use_precomputed_scores = int(use_precomputed_scores)
 
     if request.remote_addr != "63.143.42.242":  # ignore up-time checks
+        print(f"{logging_prefix}: {request.remote_addr}: ======================", flush=True)
         print(f"{logging_prefix}: {request.remote_addr}: {variant} processing with hg={genome_version}, "
               f"distance={spliceai_distance}, mask={spliceai_mask}, precomputed={use_precomputed_scores}", flush=True)
 
@@ -443,6 +439,7 @@ def run_UCSC_liftover_tool(hg, chrom, start, end):
 
 @app.route("/liftover/", methods=['POST', 'GET'])
 def run_liftover():
+    logging_prefix = datetime.now().strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
 
     # check params
     params = {}
@@ -451,6 +448,14 @@ def run_liftover():
 
     if "format" not in params:
         params.update(request.get_json(force=True, silent=True) or {})
+
+    if exceeds_rate_limit(request.remote_addr, kind="liftover"):
+        error_message = (f"ERROR: Rate limit reached. To prevent a user from overwhelming the server and making it "
+                         f"unavailable to other users, this tool allows no more than "
+                         f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['total']} liftover requests per minute per user.")
+
+        print(f"{logging_prefix}: {request.remote_addr}: response: {error_message}", flush=True)
+        return error_response(error_message)
 
     VALID_HG_VALUES = ("hg19-to-hg38", "hg38-to-hg19")
     hg = params.get("hg")  # "hg19-to-hg38"
@@ -487,9 +492,8 @@ def run_liftover():
         if params.get('ref') and params.get('alt'):
             variant_log_string += f"{params.get('ref')}>{params.get('alt')}"
 
-    prefix = datetime.now().strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
-    print(f"{prefix}: {request.remote_addr}: ======================", flush=True)
-    print(f"{prefix}: {request.remote_addr}: {hg} liftover {format}: {chrom}:{variant_log_string}", flush=True)
+    print(f"{logging_prefix}: {request.remote_addr}: ======================", flush=True)
+    print(f"{logging_prefix}: {request.remote_addr}: {hg} liftover {format}: {chrom}:{variant_log_string}", flush=True)
 
     try:
         result = run_UCSC_liftover_tool(hg, chrom, start, end)
