@@ -77,8 +77,8 @@ USE_PRECOMPUTED_SCORES = 1  # whether to use precomputed scores by default
 RATE_LIMIT_WINDOW_SIZE_IN_MINUTES = 1
 RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE = {
     "SpliceAI: computed": 4,
-    "SpliceAI: total": 10,
-    "liftover: total": 8,
+    "SpliceAI: total": 20,
+    "liftover: total": 12,
 }
 
 SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
