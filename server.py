@@ -76,9 +76,9 @@ USE_PRECOMPUTED_SCORES = 1  # whether to use precomputed scores by default
 
 RATE_LIMIT_WINDOW_SIZE_IN_MINUTES = 1
 RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE = {
-    "computed": 4,
-    "total": 10,
-    "liftover": 8,
+    "SpliceAI: computed": 4,
+    "SpliceAI: total": 10,
+    "liftover: total": 8,
 }
 
 SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
@@ -155,30 +155,34 @@ def add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_
         print(f"Redis error: {e}", flush=True)
 
 
-def exceeds_rate_limit(user_id, kind="total"):
+def exceeds_rate_limit(user_id, request_type):
     """Checks whether the given address has exceeded rate limits
 
     Args:
         user_id (str): unique user id
-        kind (str): type of rate limit - either "total" or "compute"
+        request_type (str): type of rate limit - can be "SpliceAI: total", "SpliceAI: computed", or "liftover: total"
 
     Return (bool): True if the given user has exceeded the rate limit for this request type.
     """
-    if kind not in RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE:
-        raise ValueError(f"Invalid 'kind' arg value: {kind}")
+    if request_type not in RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE:
+        raise ValueError(f"Invalid 'request_type' arg value: {request_type}")
 
-    max_requests_per_minute = RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE[kind]
+    max_requests_per_minute = RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE[request_type]
     max_requests = RATE_LIMIT_WINDOW_SIZE_IN_MINUTES * max_requests_per_minute
 
-    redis_key_prefix = f"request {user_id} {kind}"
-    keys = REDIS.keys(f"{redis_key_prefix}*")
-    if len(keys) >= max_requests:
-        return True
-
-    # record this request
     epoch_time = time.time()  # seconds since 1970
-    REDIS.set(f"{redis_key_prefix}: {epoch_time}", 1)
-    REDIS.expire(f"{redis_key_prefix}: {epoch_time}", RATE_LIMIT_WINDOW_SIZE_IN_MINUTES * 60)
+    try:
+        # check number of requests from this user in the last (RATE_LIMIT_WINDOW_SIZE_IN_MINUTES * 60) minutes
+        redis_key_prefix = f"request {user_id} {request_type}"
+        keys = REDIS.keys(f"{redis_key_prefix}*")
+        if len(keys) >= max_requests:
+            return True
+
+        # record this request
+        REDIS.set(f"{redis_key_prefix}: {epoch_time}", 1)
+        REDIS.expire(f"{redis_key_prefix}: {epoch_time}", RATE_LIMIT_WINDOW_SIZE_IN_MINUTES * 60)
+    except Exception as e:
+        print(f"Redis error: {e}", flush=True)
 
     return False
 
@@ -230,10 +234,10 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
 
     source = None
     scores = []
-    if (len(ref) <= 5 or len(alt) <= 2) and spliceai_distance == SPLICEAI_DEFAULT_DISTANCE and str(use_precomputed_scores) == "1":
+    if (len(ref) <= 5 or len(alt) <= 2) and str(spliceai_distance) == str(SPLICEAI_DEFAULT_DISTANCE) and str(use_precomputed_scores) == "1":
         # examples: ("masked", "snv", "hg19")  ("raw", "indel", "hg38")
         key = (
-            "masked" if spliceai_mask == 1 else ("raw" if spliceai_mask == 0 else None),
+            "masked" if str(spliceai_mask) == "1" else ("raw" if str(spliceai_mask) == "0" else None),
             "snv" if len(ref) == 1 and len(alt) == 1 else "indel",
             "hg19" if genome_version == "37" else ("hg38" if genome_version == "38" else None),
         )
@@ -252,12 +256,12 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
             print(f"ERROR: couldn't retrieve scores using tabix: {type(e)}: {e}", flush=True)
 
     if not scores:
-        if exceeds_rate_limit(request.remote_addr, kind="computed"):
+        if exceeds_rate_limit(request.remote_addr, request_type="SpliceAI: computed"):
             return {
                 "variant": variant,
                 "error": f"ERROR: Rate limit reached. To prevent a user from overwhelming the server and making it "
                          f"unavailable to other users, this tool allows no more than "
-                         f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['computed']} computed requests per minute per user.",
+                         f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['SpliceAI: computed']} computed requests per minute per user.",
             }
 
         record = VariantRecord(chrom, pos, ref, alt)
@@ -309,10 +313,10 @@ def run_spliceai():
     if 'variant' not in params:
         params.update(request.get_json(force=True, silent=True) or {})
 
-    if exceeds_rate_limit(request.remote_addr, kind="total"):
+    if exceeds_rate_limit(request.remote_addr, request_type="SpliceAI: total"):
         error_message = (f"ERROR: Rate limit reached. To prevent a user from overwhelming the server and making it "
             f"unavailable to other users, this tool allows no more than "
-            f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['total']} requests per minute per user.")
+            f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['SpliceAI: total']} requests per minute per user.")
 
         print(f"{logging_prefix}: {request.remote_addr}: response: {error_message}", flush=True)
         return error_response(error_message)
@@ -363,8 +367,7 @@ def run_spliceai():
     if not results:
         results = process_variant(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
         if "error" not in results:
-            used_precomputed_scores = "1" if results["source"] == "lookup" else "0"
-            add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, used_precomputed_scores, results)
+            add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores, results)
 
     status = 400 if results.get("error") else 200
 
@@ -449,10 +452,10 @@ def run_liftover():
     if "format" not in params:
         params.update(request.get_json(force=True, silent=True) or {})
 
-    if exceeds_rate_limit(request.remote_addr, kind="liftover"):
+    if exceeds_rate_limit(request.remote_addr, request_type="liftover: total"):
         error_message = (f"ERROR: Rate limit reached. To prevent a user from overwhelming the server and making it "
                          f"unavailable to other users, this tool allows no more than "
-                         f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['total']} liftover requests per minute per user.")
+                         f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['liftover: total']} liftover requests per minute per user.")
 
         print(f"{logging_prefix}: {request.remote_addr}: response: {error_message}", flush=True)
         return error_response(error_message)
