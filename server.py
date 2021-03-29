@@ -74,7 +74,7 @@ SPLICEAI_DEFAULT_DISTANCE = 50  # maximum distance between the variant and gaine
 SPLICEAI_DEFAULT_MASK = 0  # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
 USE_PRECOMPUTED_SCORES = 1  # whether to use precomputed scores by default
 
-RATE_LIMIT_WINDOW_SIZE_IN_MINUTES = 5
+RATE_LIMIT_WINDOW_SIZE_IN_MINUTES = 1
 RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE = {
     "computed": 4,
     "total": 10,
@@ -254,7 +254,7 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
         if exceeds_rate_limit(request.remote_addr, kind="computed"):
             return {
                 "variant": variant,
-                "error": f"ERROR: Rate limit reached. To prevent someone from overwhelming the server and making it "
+                "error": f"ERROR: Rate limit reached. To prevent a user from overwhelming the server and making it "
                          f"unavailable to other users, this tool allows no more than "
                          f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['computed']} computed requests per minute per user.",
             }
@@ -312,7 +312,7 @@ def run_spliceai():
     if exceeds_rate_limit(request.remote_addr, kind="total"):
         response_json = params
         response_json.update({
-            "error": f"ERROR: Rate limit reached. To prevent someone from overwhelming the server and making it "
+            "error": f"ERROR: Rate limit reached. To prevent a user from overwhelming the server and making it "
                      f"unavailable to other users, this tool allows no more than "
                      f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['total']} requests per minute per user.",
             "duration": "0",

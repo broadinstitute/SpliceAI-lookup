@@ -36,6 +36,9 @@
     <!-- End Matomo Code -->
 
     <style>
+        body {
+            overflow-x: scroll;
+        }
         body, .ui.form, label {
             font-size: 11pt !important;
         }
@@ -241,7 +244,13 @@
                 <div>
                     To post issues or feature requests, please use<br /><a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a><br />
                     <br />
-		    <b>2021-2-16</b><br />
+                    <b>2021-3-29</b><br />
+                    - limit API use to no more than 4 computed requests (and 10 total requests) per minute per user.
+                      The API currently only supports interactive use. For automated batch processing, please use the
+                      <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">source code</a>
+                      to set up your own local instance of the API server.<br />
+                    <br />
+                    <b>2021-2-16</b><br />
                     - highlight canonical transcript in blue<br />
                     - save all choices in url to enable link sharing<br />
                     <br />
