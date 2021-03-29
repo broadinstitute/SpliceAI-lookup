@@ -1,7 +1,9 @@
 from collections import defaultdict
+from datetime import datetime
 import json
 import markdown2
 import os
+import pandas as pd
 import pysam
 import re
 import redis
@@ -9,12 +11,12 @@ import socket
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
+import time
+
 from flask import Flask, request, Response
 from flask_cors import CORS
 from flask_talisman import Talisman
 from intervaltree import IntervalTree, Interval
-import pandas as pd
 from spliceai.utils import Annotator, get_delta_scores
 
 app = Flask(__name__)
@@ -71,6 +73,12 @@ SPLICEAI_MAX_DISTANCE_LIMIT = 10000
 SPLICEAI_DEFAULT_DISTANCE = 50  # maximum distance between the variant and gained/lost splice site, defaults to 50
 SPLICEAI_DEFAULT_MASK = 0  # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
 USE_PRECOMPUTED_SCORES = 1  # whether to use precomputed scores by default
+
+RATE_LIMIT_WINDOW_SIZE_IN_MINUTES = 5
+RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE = {
+    "computed": 4,
+    "total": 10,
+}
 
 SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
 
@@ -146,6 +154,34 @@ def add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_
         print(f"Redis error: {e}", flush=True)
 
 
+def exceeds_rate_limit(user_id, kind="total"):
+    """Checks whether the given address has exceeded rate limits
+
+    Args:
+        user_id (str): unique user id
+        kind (str): type of rate limit - either "total" or "compute"
+
+    Return (bool): True if the given user has exceeded the rate limit for this request type.
+    """
+    if kind not in RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE:
+        raise ValueError(f"Invalid 'kind' arg value: {kind}")
+
+    max_requests_per_minute = RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE[kind]
+    max_requests = RATE_LIMIT_WINDOW_SIZE_IN_MINUTES * max_requests_per_minute
+
+    redis_key_prefix = f"request {user_id} {kind}"
+    keys = REDIS.keys(f"{redis_key_prefix}*")
+    if len(keys) >= max_requests:
+        return True
+
+    # record this request
+    epoch_time = time.time()  # seconds since 1970
+    REDIS.set(f"{redis_key_prefix}: {epoch_time}", 1)
+    REDIS.expire(f"{redis_key_prefix}: {epoch_time}", RATE_LIMIT_WINDOW_SIZE_IN_MINUTES * 60)
+
+    return False
+
+
 def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores):
     try:
         chrom, pos, ref, alt = parse_variant(variant)
@@ -215,6 +251,14 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
             print(f"ERROR: couldn't retrieve scores using tabix: {type(e)}: {e}", flush=True)
 
     if not scores:
+        if exceeds_rate_limit(request.remote_addr, kind="computed"):
+            return {
+                "variant": variant,
+                "error": f"ERROR: Rate limit reached. To prevent someone from overwhelming the server and making it "
+                         f"unavailable to other users, this tool allows no more than "
+                         f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['computed']} computed requests per minute per user.",
+            }
+
         record = VariantRecord(chrom, pos, ref, alt)
         try:
             scores = get_delta_scores(
@@ -253,6 +297,9 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
 
 @app.route("/spliceai/", methods=['POST', 'GET'])
 def run_spliceai():
+    start_time = datetime.now()
+    logging_prefix = start_time.strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
+    print(f"{logging_prefix}: {request.remote_addr}: ======================", flush=True)
 
     # check params
     params = {}
@@ -261,6 +308,19 @@ def run_spliceai():
 
     if 'variant' not in params:
         params.update(request.get_json(force=True, silent=True) or {})
+
+    if exceeds_rate_limit(request.remote_addr, kind="total"):
+        response_json = params
+        response_json.update({
+            "error": f"ERROR: Rate limit reached. To prevent someone from overwhelming the server and making it "
+                     f"unavailable to other users, this tool allows no more than "
+                     f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['total']} requests per minute per user.",
+            "duration": "0",
+        })
+
+        response_json.update(params)  # copy input params to output
+        print(f"{logging_prefix}: {request.remote_addr}: response: {response_json}", flush=True)
+        return Response(json.dumps(response_json), status=400, mimetype='application/json')
 
     variant = params.get('variant', '')
     variant = variant.strip().strip("'").strip('"').strip(",")
@@ -298,11 +358,9 @@ def run_spliceai():
 
     use_precomputed_scores = int(use_precomputed_scores)
 
-    start_time = datetime.now()
-    prefix = start_time.strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
     if request.remote_addr != "63.143.42.242":  # ignore up-time checks
-        print(f"{prefix}: {request.remote_addr}: ======================", flush=True)
-        print(f"{prefix}: {request.remote_addr}: {variant} processing with hg={genome_version}, distance={spliceai_distance}, mask={spliceai_mask}, precomputed={use_precomputed_scores}", flush=True)
+        print(f"{logging_prefix}: {request.remote_addr}: {variant} processing with hg={genome_version}, "
+              f"distance={spliceai_distance}, mask={spliceai_mask}, precomputed={use_precomputed_scores}", flush=True)
 
     # check REDIS cache before processing the variant
     results = get_from_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
@@ -318,9 +376,12 @@ def run_spliceai():
     response_json.update(params)  # copy input params to output
     response_json.update(results)
 
+    duration = str(datetime.now() - start_time)
+    response_json['duration'] = duration
+
     if request.remote_addr != "63.143.42.242":
-        print(f"{prefix}: {request.remote_addr}: {variant} response: {response_json}", flush=True)
-        print(f"{prefix}: {request.remote_addr}: {variant} took " + str(datetime.now() - start_time), flush=True)
+        print(f"{logging_prefix}: {request.remote_addr}: {variant} response: {response_json}", flush=True)
+        print(f"{logging_prefix}: {request.remote_addr}: {variant} took {duration}", flush=True)
 
     return Response(json.dumps(response_json), status=status, mimetype='application/json')
 
