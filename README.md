@@ -31,10 +31,10 @@ The steps below outline how to install a SpliceAI API server on your local infra
 The details will vary depending on your OS, etc. If you run into issues, please post them
 here on github.
 
-0. Install and start a [redis](https://redis.io/) server. It'll be used to cache API server responses and avoid redundantly recomputing results.
-0. Download reference fasta files: [hg19.fa](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/bigZips/hg19.fa.gz) and [hg38.fa](http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz)
-0. Optionally download pre-computed scores .vcf.gz and .vcf.gz.tbi files from [Illumina Basespace](https://basespace.illumina.com/s/otSPW8hnhaZR)   
-0. Install and start the SpliceAI API server code:
+1. Install and start a [redis](https://redis.io/) server. It'll be used to cache API server responses and avoid redundantly recomputing results.
+1. Download reference fasta files: [hg19.fa](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/bigZips/hg19.fa.gz) and [hg38.fa](http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz)
+1. Optionally download pre-computed scores .vcf.gz and .vcf.gz.tbi files from [Illumina Basespace](https://basespace.illumina.com/s/otSPW8hnhaZR)   
+1. Install and start the SpliceAI API server code:
 
 ```
 $ git clone git@github.com:broadinstitute/SpliceAI-lookup.git  # clone this repo
