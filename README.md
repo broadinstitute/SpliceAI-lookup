@@ -42,3 +42,6 @@ $ cd SpliceAI-lookup
 $ python3 -m pip install -r requirements.txt  # install python dependencies
 $ nohup ./start_server.sh >> server.log &
 ```
+
+The server uses ~1.5 Gb RAM per server thread.
+
