@@ -23,3 +23,22 @@ Returns SpliceAI scores for the given variant.
 - **mask** (optional) can be 0 which means raw scores or 1 which means masked scores (default: 0). 
 Splicing changes corresponding to strengthening annotated splice sites and weakening unannotated splice sites are typically much less pathogenic than weakening annotated splice sites and
 strengthening unannotated splice sites. When this parameter is = 1 (masked), the delta scores of such splicing changes are set to 0. SpliceAI developers recommend using raw (0) for alternative splicing analysis and masked (1) for variant interpretation.    
+
+---
+**Local Install**
+
+The steps below outline how to install a SpliceAI API server on your local infrastructure.
+The details will vary depending on your OS, etc. If you run into issues, please post them
+here on github.
+
+0. Install and start a [redis](https://redis.io/) server. It'll be used to cache API server responses and avoid redundantly recomputing results.
+0. Download reference fasta files: [hg19.fa](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/bigZips/hg19.fa.gz) and [hg38.fa](http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz)
+0. Optionally download pre-computed scores .vcf.gz and .vcf.gz.tbi files from [Illumina Basespace](https://basespace.illumina.com/s/otSPW8hnhaZR)   
+0. Install and start the SpliceAI API server code:
+
+```
+$ git clone git@github.com:broadinstitute/SpliceAI-lookup.git  # clone this repo
+$ cd SpliceAI-lookup
+$ python3 -m pip install -r requirements.txt  # install python dependencies
+$ nohup ./start_server.sh >> server.log &
+```
