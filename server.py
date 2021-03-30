@@ -81,6 +81,8 @@ RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE = {
     "liftover: total": 12,
 }
 
+DISABLE_LOGGING_FOR_IPS = {f"63.143.42.{i}" for i in range(0, 256)}  # ignore uptimerobot.com IPs
+
 SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
 
 SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&distance=50&mask=0&precomputed=1&variant=chr8-140300615-C-G"
@@ -357,7 +359,7 @@ def run_spliceai():
 
     use_precomputed_scores = int(use_precomputed_scores)
 
-    if request.remote_addr != "63.143.42.242":  # ignore up-time checks
+    if request.remote_addr not in DISABLE_LOGGING_FOR_IPS:
         print(f"{logging_prefix}: {request.remote_addr}: ======================", flush=True)
         print(f"{logging_prefix}: {request.remote_addr}: {variant} processing with hg={genome_version}, "
               f"distance={spliceai_distance}, mask={spliceai_mask}, precomputed={use_precomputed_scores}", flush=True)
@@ -378,7 +380,7 @@ def run_spliceai():
     duration = str(datetime.now() - start_time)
     response_json['duration'] = duration
 
-    if request.remote_addr != "63.143.42.242":
+    if request.remote_addr not in DISABLE_LOGGING_FOR_IPS:
         print(f"{logging_prefix}: {request.remote_addr}: {variant} response: {response_json}", flush=True)
         print(f"{logging_prefix}: {request.remote_addr}: {variant} took {duration}", flush=True)
 
@@ -393,7 +395,7 @@ CHAIN_FILE_PATHS = {
 }
 
 
-def run_UCSC_liftover_tool(hg, chrom, start, end):
+def run_UCSC_liftover_tool(hg, chrom, start, end, verbose=False):
     if hg not in CHAIN_FILE_PATHS:
         raise ValueError(f"Unexpected hg arg value: {hg}")
     chain_file_path = CHAIN_FILE_PATHS[hg]
@@ -410,10 +412,11 @@ def run_UCSC_liftover_tool(hg, chrom, start, end):
         command = f"liftOver {input_file.name} {chain_file_path} {output_file.name} {unmapped_output_file.name}"
 
         try:
-            subprocess.check_output(command, shell=True, encoding="UTF-8")
+            subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT, encoding="UTF-8")
             results = output_file.read()
 
-            print(f"{hg} liftover on {chrom}:{start}-{end} returned: {results}", flush=True)
+            if verbose:
+                print(f"{hg} liftover on {chrom}:{start}-{end} returned: {results}", flush=True)
 
             result_fields = results.strip().split("\t")
             if len(result_fields) > 5:
@@ -495,11 +498,13 @@ def run_liftover():
         if params.get('ref') and params.get('alt'):
             variant_log_string += f"{params.get('ref')}>{params.get('alt')}"
 
-    print(f"{logging_prefix}: {request.remote_addr}: ======================", flush=True)
-    print(f"{logging_prefix}: {request.remote_addr}: {hg} liftover {format}: {chrom}:{variant_log_string}", flush=True)
+    verbose = request.remote_addr not in DISABLE_LOGGING_FOR_IPS
+    if verbose:
+        print(f"{logging_prefix}: {request.remote_addr}: ======================", flush=True)
+        print(f"{logging_prefix}: {request.remote_addr}: {hg} liftover {format}: {chrom}:{variant_log_string}", flush=True)
 
     try:
-        result = run_UCSC_liftover_tool(hg, chrom, start, end)
+        result = run_UCSC_liftover_tool(hg, chrom, start, end, verbose=verbose)
     except Exception as e:
         return error_response(str(e))
 
