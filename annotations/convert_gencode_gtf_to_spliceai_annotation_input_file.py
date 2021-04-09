@@ -10,6 +10,7 @@ from pprint import pprint
 import re
 import spliceai
 
+
 # import from https://github.com/macarthur-lab/methods
 from annotations.get_ensembl_db_info import get_canonical_transcripts, CURRENT_ENSEMBL_DATABASE
 
@@ -27,6 +28,20 @@ test_args = None
 #test_args = ["./annotations/gencode.v24.annotation.gtf.gz"]
 #test_args = ["./annotations/gencode.v36lift37.annotation.gtf.gz"]
 #test_args = ["./annotations/gencode.v36.annotation.gtf.gz"]
+
+#%%
+
+"""
+I was originally going to only include "protein coding" transcripts, but saw that the default 
+SpliceAI annotations include some genes from various other categories  (though I couldn't figure out what 
+their filtering criteria was).
+AFAIK the only downside with including too many is you end up with pseudo- or anti-sense transcripts overlapping 
+your main genes, and SpliceAI outputting many scores for each variant. I could also include lincRNAs and anything 
+else that doesn't overlap the genes in the above set.
+
+4-9-2021 - will try including all transcripts    
+"""
+SKIP_SECONDARY_TRANSCRIPTS = False
 
 #%%
 
@@ -102,8 +117,8 @@ TRANSCRIPT_TYPES_BY_PRIORITY = [
 #%%
 
 def parse_gencode_file(gencode_gtf_path):
-    gene_type_summary_counter = Counter()
-    gene_type_counter = Counter()
+    transcript_type_summary_counter = Counter()
+    transcript_type_counter = Counter()
     with gzip.open(gencode_gtf_path, "rt") as gencode_gtf:
         for line in gencode_gtf:
             if line.startswith("#"):
@@ -124,16 +139,16 @@ def parse_gencode_file(gencode_gtf_path):
 
             strand = fields[6]
 
-            gene_type_counter[meta_fields["transcript_type"]] += 1
+            transcript_type_counter[meta_fields["transcript_type"]] += 1
             if meta_fields["gene_name"] in official_annotations_gene_names:
                 priority = "primary"
-                gene_type_summary_counter["Including gene name from default SpliceAI annotation file"] += 1
+                transcript_type_summary_counter["Including gene name from default SpliceAI annotation file"] += 1
             elif meta_fields["transcript_type"] == "protein_coding":
                 priority = "primary"
-                gene_type_summary_counter["Including new protein-coding gene"] += 1
+                transcript_type_summary_counter["Including new protein-coding gene"] += 1
             else:
                 priority = "secondary"
-                gene_type_summary_counter["Including new other gene"] += 1
+                transcript_type_summary_counter["Including new other gene"] += 1
 
             yield {
                 "chrom": chrom,
@@ -149,11 +164,14 @@ def parse_gencode_file(gencode_gtf_path):
                 "priority": priority,
             }
 
+    print("Exon counts per transcript types:")
+    for k, v in sorted(transcript_type_counter.items(), key=lambda i: -i[1]):
+        print(f"{v:10d}: {k}")
 
     print("Summary:")
-    pprint(gene_type_summary_counter)
-    #print("Gene Types:")
-    #pprint(gene_type_counter)
+    for k, v in sorted(transcript_type_summary_counter.items(), key=lambda i: -i[1]):
+        print(f"{v:10d}: {k}")
+
     #pprint(list(gene_type_counter.keys()))
 
 
@@ -174,11 +192,12 @@ for record in parse_gencode_file(args.gtf_gz_path):
 
     is_canonical_transcript = "no"
     if record["gene_id"] not in gene_id_to_canonical_transcript_id:
-        print(f"WARNING: no canonical transcript for " + record["gene_id"])
+        #print(f"WARNING: no canonical transcript for " + record["gene_id"])
+        pass
     elif record["transcript_id"] == gene_id_to_canonical_transcript_id[record["gene_id"]]:
         is_canonical_transcript = "yes"
 
-    name = "---".join([record["gene_name"], record["gene_id"], record["transcript_id"], is_canonical_transcript])
+    name = "---".join([record["gene_name"], record["gene_id"], record["transcript_id"], is_canonical_transcript, record["transcript_type"]])
     key = (record["chrom"], name, record["strand"])
 
     all_exons_by_priority[priority][transcript_type][key].add((int(record['start_1based']), int(record['end_1based'])))
@@ -196,6 +215,8 @@ def transcript_type_order(transcript_type):
 # reformat the aggregated records into a list which can be turned into a pandas DataFrame
 output_records = []
 interval_trees = defaultdict(IntervalTree)
+skipped_transcript_type_counter = Counter()
+used_transcript_type_counter = Counter()
 for priority in all_exons_by_priority:
     for transcript_type in sorted(all_exons_by_priority[priority].keys(), key=transcript_type_order):
         current_exon_sets = all_exons_by_priority[priority][transcript_type]
@@ -208,12 +229,15 @@ for priority in all_exons_by_priority:
             tx_end_1based = max([end_1based for _, end_1based in exons_set])
 
             # check for overlap with previously-added transcripts
-            if priority != "primary" and interval_trees[chrom].overlaps(Interval(tx_start_0based, tx_end_1based)):
+            if SKIP_SECONDARY_TRANSCRIPTS and priority != "primary" and interval_trees[chrom].overlaps(Interval(tx_start_0based, tx_end_1based)):
                 # skip any secondary transcripts that overlap already-added primary transcripts
                 overlapping_genes = sorted(set([i.data for i in interval_trees[chrom][tx_start_0based:tx_end_1based]]))
-                print(f"Skipping {priority} {transcript_type} gene {gene_name} since it overlaps {len(overlapping_genes)} gene(s): " +
-                    ", ".join(overlapping_genes[:5]) + ("..." if len(overlapping_genes) > 5 else ""))
+                #print(f"Skipping {priority} {transcript_type} gene {gene_name} since it overlaps {len(overlapping_genes)} gene(s): " +
+                #    ", ".join(overlapping_genes[:5]) + ("..." if len(overlapping_genes) > 5 else ""))
+                skipped_transcript_type_counter[transcript_type] += 1
                 continue
+
+            used_transcript_type_counter[transcript_type] += 1
 
             interval_trees[chrom].add(Interval(tx_start_0based, tx_end_1based + 0.1, gene_name))
 
@@ -230,6 +254,14 @@ for priority in all_exons_by_priority:
                 "EXON_END": ",".join([str(s) for s in exon_ends_1based]) + ",",
             })
 
+
+print("Used transcript types counter:")
+for k, v in sorted(used_transcript_type_counter.items(), key=lambda i: -i[1]):
+    print(f"{v:10d}: {k}")
+
+print("Skipped transcript types counter:")
+for k, v in sorted(skipped_transcript_type_counter.items(), key=lambda i: -i[1]):
+    print(f"{v:10d}: {k}")
 
 #%%
 
