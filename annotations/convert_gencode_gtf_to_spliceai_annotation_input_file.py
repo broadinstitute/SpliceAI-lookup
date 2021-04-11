@@ -191,10 +191,12 @@ for record in parse_gencode_file(args.gtf_gz_path):
     transcript_type = record["transcript_type"]
 
     is_canonical_transcript = "no"
-    if record["gene_id"] not in gene_id_to_canonical_transcript_id:
+    gene_id_without_version = record["gene_id"].split(".")[0]
+    transcript_id_without_version = record["transcript_id"].split(".")[0]
+    if gene_id_without_version not in gene_id_to_canonical_transcript_id:
         #print(f"WARNING: no canonical transcript for " + record["gene_id"])
         pass
-    elif record["transcript_id"] == gene_id_to_canonical_transcript_id[record["gene_id"]]:
+    elif transcript_id_without_version == gene_id_to_canonical_transcript_id[gene_id_without_version]:
         is_canonical_transcript = "yes"
 
     name = "---".join([record["gene_name"], record["gene_id"], record["transcript_id"], is_canonical_transcript, record["transcript_type"]])
