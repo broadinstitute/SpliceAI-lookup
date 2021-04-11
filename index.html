@@ -493,8 +493,8 @@
                 if (gene_name_fields.length >= 3 ) {
                     const gene_id_link = `<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a>`
                     const transcript_id_link = `<a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>`
-                    const canonical_transcript_text = is_canonical_transcript ? '<span style="font-size: smaller">canonical transcript</span>, ' : ''
-                    const biotype_link = `<span style="font-size: smaller"><a href="https://www.gencodegenes.org/pages/biotypes.html">biotype: ${transcript_type.replace(/_/g, " ")}</a></span>`
+                    const canonical_transcript_text = is_canonical_transcript ? '<div class="smallLink">canonical transcript</div><br />' : ''
+                    const biotype_link = `<div class="smallLink"><a href="https://www.gencodegenes.org/pages/biotypes.html">biotype: ${transcript_type.replace(/_/g, " ")}</a></div>`
                     gene_and_transcript_id = ` (${gene_id_link} / ${transcript_id_link})<br /> ${canonical_transcript_text} ${biotype_link}`
                 }
 
