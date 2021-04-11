@@ -95,7 +95,7 @@
                         <div style="padding:25px 0px">
                             <div>
                                 Enter a variant below to see its <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf" target="_blank">SpliceAI</a> scores.
-                                This can be any SNV or simple InDel within an exon or intron defined by GENCODE v36.<br />
+                                This can be any SNV or simple InDel within an exon or intron defined by GENCODE v37.<br />
                             </div>
                             <div>
                                 <br />
@@ -105,7 +105,7 @@
                                     This web interface and the underlying <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> are being developed by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.<br />
                                     The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> optionally uses pre-computed
                                     scores provided by Illumina for SNVs and small InDels, but resorts to running the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
-                                    directly for scores not available in the pre-computed files - such as larger InDels or non-default "Max distance" values. 
+                                    directly for scores not available in the pre-computed files - such as larger InDels or non-default "Max distance" values.
                                     All code for this web interface and server is available at <a href="https://github.com/broadinstitute/SpliceAI-lookup" target="_blank">github.com/broadinstitute/SpliceAI-lookup</a>.<br />
                                     <br />
                                     For more information on the SpliceAI model, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>,
@@ -243,6 +243,13 @@
                 <br />
                 <div>
                     To post issues or feature requests, please use<br /><a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a><br />
+                    <br />
+                    <b>April 11, 2021</b><br />
+                    - switch to showing all non-coding transcripts. (Previously, non-coding transcripts with Gencode biotypes
+                      like <i>lncRNA</i>, <i>processed_pseudogene</i>, <i>processed_transcript</i>, <i>retained_intron</i>, and
+                      <i>nonsense_mediated_decay</i> were filtered out if they overlapped coding transcripts). See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/6#issuecomment-816942824">issue #6</a> for details.
+		            - show gray background for non-coding transcripts
+		            - update to Gencode v37
                     <br />
                     <b>March, 2021</b><br />
                     - limit API use to no more than 4 computed requests (and 20 total requests) per minute per user.
@@ -444,16 +451,24 @@
 
         console.log("Parsed scores", parsed_scores)
 
-        //sort by (gene name, is canonical transcript)
-        parsed_scores = _.chain(parsed_scores).sortBy(function(scores) {
-          const gene_name_fields = (scores.SYMBOL || "").split("---")
-          const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes")
-          return !is_canonical_transcript
-        }).sortBy(function(scores) {
-          const gene_name_fields = (scores.SYMBOL || "").split("---")
-          const gene_name = gene_name_fields[0]
-          return gene_name
-        })
+        //sort by (gene name, is canonical transcript, is non-coding transcriipt)
+        parsed_scores = _.chain(parsed_scores)
+            .sortBy(function(scores) {
+              const gene_name_fields = (scores.SYMBOL || "").split("---")
+              const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes")
+              return !is_canonical_transcript
+            })
+            .sortBy(function(scores) {
+              const gene_name_fields = (scores.SYMBOL || "").split("---")
+              const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
+              const is_protein_coding = transcript_type == "protein_coding"
+              return !is_protein_coding
+            })
+            .sortBy(function(scores) {
+              const gene_name_fields = (scores.SYMBOL || "").split("---")
+              const gene_name = gene_name_fields[0]
+              return gene_name
+            })
 
         return "<table class='ui stackable table'>" +
           "<tr>" +
@@ -469,9 +484,12 @@
                 const gene_name_fields = (scores.SYMBOL || "").split("---")
                 const gene_name = gene_name_fields[0]
 
-                const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes")
-                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>) ${is_canonical_transcript ? '** <sup>canonical</sup>': ''}` : ""
-                const background_color = is_canonical_transcript ? "#eaf3ff" : "white"
+                const is_canonical_transcript = gene_name_fields.length >= 4 && gene_name_fields[3] === "yes"
+                const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
+                const is_protein_coding = transcript_type == "protein_coding"
+                const background_color = is_canonical_transcript ? "#eaf3ff" : (is_protein_coding? "white" : "#e5e5e5")
+
+                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>) ${is_canonical_transcript ? '<br /><sup>canonical transcript</sup>': (is_protein_coding ? '' : '<br /><sup>' + transcript_type.replace(/_/g, " ") + ' transcript</sup>')}` : ""
 
                 return "<tr class='upperBorder' style='background-color:" + background_color+"'>" +
                   "<td rowspan='4' style='vertical-align: top'>" +
