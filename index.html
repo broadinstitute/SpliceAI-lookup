@@ -244,7 +244,7 @@
                     <br />
                     <b>April 11, 2021</b><br />
                     - show gray background for non-coding transcripts<br />
-                    - switch to showing all non-coding transcripts. (Previously, non-coding transcripts with Gencode biotypes
+                    - switch to showing all non-coding transcripts. (Previously, transcripts with Gencode biotypes
                       like <i>lncRNA</i>, <i>processed_pseudogene</i>, <i>processed_transcript</i>, <i>retained_intron</i>, and
                       <i>nonsense_mediated_decay</i> were filtered out if they overlapped coding transcripts). See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/6#issuecomment-816942824">issue #6</a> for details.<br />
 		            - update to Gencode v37 (was previously on v36)<br />
@@ -627,7 +627,7 @@
             }
 
             if (!errorText) {
-                errorText = "ERROR: Unable to reach the SpliceAI-lookup API server. Either the API server or your internet isn't working."
+                errorText = "ERROR: Unable to reach the SpliceAI-lookup API server. Either the API server is down or your internet isn't working."
             }
             console.warn(errorText)
             $("#error-box").html(errorText)
