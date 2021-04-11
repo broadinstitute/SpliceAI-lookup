@@ -489,7 +489,7 @@
                 const is_protein_coding = !transcript_type || transcript_type == "protein_coding"
                 const background_color = is_canonical_transcript ? "#eaf3ff" : (is_protein_coding? "white" : "#e5e5e5")
 
-                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>) ${is_canonical_transcript ? '<br /><div style="font-size: smaller">canonical transcript</div>': (is_protein_coding ? '' : '<br /><div style="font-size: smaller">' + transcript_type.replace(/_/g, " ") + ' transcript</div>')}` : ""
+                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>) ${is_canonical_transcript ? '<br /><div style="font-size: smaller">canonical transcript</div>': '<br /><div style="font-size: smaller"><a href="https://www.gencodegenes.org/pages/biotypes.html">biotype: ' + transcript_type.replace(/_/g, " ") + '</a></div>'}` : ""
 
                 return "<tr class='upperBorder' style='background-color:" + background_color+"'>" +
                   "<td rowspan='4' style='vertical-align: top'>" +
