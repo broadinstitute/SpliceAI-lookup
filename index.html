@@ -247,9 +247,9 @@
                     <b>April 11, 2021</b><br />
                     - switch to showing all non-coding transcripts. (Previously, non-coding transcripts with Gencode biotypes
                       like <i>lncRNA</i>, <i>processed_pseudogene</i>, <i>processed_transcript</i>, <i>retained_intron</i>, and
-                      <i>nonsense_mediated_decay</i> were filtered out if they overlapped coding transcripts). See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/6#issuecomment-816942824">issue #6</a> for details.
-		            - show gray background for non-coding transcripts
-		            - update to Gencode v37
+                      <i>nonsense_mediated_decay</i> were filtered out if they overlapped coding transcripts). See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/6#issuecomment-816942824">issue #6</a> for details.<br />
+		            - show gray background for non-coding transcripts<br />
+		            - update to Gencode v37<br />
                     <br />
                     <b>March, 2021</b><br />
                     - limit API use to no more than 4 computed requests (and 20 total requests) per minute per user.
@@ -461,7 +461,7 @@
             .sortBy(function(scores) {
               const gene_name_fields = (scores.SYMBOL || "").split("---")
               const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
-              const is_protein_coding = transcript_type == "protein_coding"
+              const is_protein_coding = !transcript_type || transcript_type == "protein_coding"
               return !is_protein_coding
             })
             .sortBy(function(scores) {
@@ -486,10 +486,10 @@
 
                 const is_canonical_transcript = gene_name_fields.length >= 4 && gene_name_fields[3] === "yes"
                 const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
-                const is_protein_coding = transcript_type == "protein_coding"
+                const is_protein_coding = !transcript_type || transcript_type == "protein_coding"
                 const background_color = is_canonical_transcript ? "#eaf3ff" : (is_protein_coding? "white" : "#e5e5e5")
 
-                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>) ${is_canonical_transcript ? '<br /><sup>canonical transcript</sup>': (is_protein_coding ? '' : '<br /><sup>' + transcript_type.replace(/_/g, " ") + ' transcript</sup>')}` : ""
+                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>) ${is_canonical_transcript ? '<br /><div style="font-size: smaller">canonical transcript</div>': (is_protein_coding ? '' : '<br /><div style="font-size: smaller">' + transcript_type.replace(/_/g, " ") + ' transcript</div>')}` : ""
 
                 return "<tr class='upperBorder' style='background-color:" + background_color+"'>" +
                   "<td rowspan='4' style='vertical-align: top'>" +
