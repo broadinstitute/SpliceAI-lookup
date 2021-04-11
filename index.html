@@ -453,22 +453,22 @@
 
         //sort by (gene name, is canonical transcript, is non-coding transcriipt)
         parsed_scores = _.chain(parsed_scores)
-            .sortBy(function(scores) {
-              const gene_name_fields = (scores.SYMBOL || "").split("---")
-              const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes")
-              return !is_canonical_transcript
-            })
-            .sortBy(function(scores) {
-              const gene_name_fields = (scores.SYMBOL || "").split("---")
-              const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
-              const is_protein_coding = !transcript_type || transcript_type == "protein_coding"
-              return !is_protein_coding
-            })
-            .sortBy(function(scores) {
-              const gene_name_fields = (scores.SYMBOL || "").split("---")
-              const gene_name = gene_name_fields[0]
-              return gene_name
-            })
+          .sortBy(function(scores) {
+            const gene_name_fields = (scores.SYMBOL || "").split("---")
+            const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
+            const is_protein_coding = !transcript_type || transcript_type == "protein_coding"
+            return !is_protein_coding
+          })
+          .sortBy(function(scores) {
+            const gene_name_fields = (scores.SYMBOL || "").split("---")
+            const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes")
+            return !is_canonical_transcript
+          })
+          .sortBy(function(scores) {
+            const gene_name_fields = (scores.SYMBOL || "").split("---")
+            const gene_name = gene_name_fields[0]
+            return gene_name
+          })
 
         return "<table class='ui stackable table'>" +
           "<tr>" +
@@ -487,9 +487,16 @@
                 const is_canonical_transcript = gene_name_fields.length >= 4 && gene_name_fields[3] === "yes"
                 const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
                 const is_protein_coding = !transcript_type || transcript_type == "protein_coding"
-                const background_color = is_canonical_transcript ? "#eaf3ff" : (is_protein_coding? "white" : "#e5e5e5")
+                const background_color = !is_protein_coding ? "#e5e5e5" : (is_canonical_transcript ? "#eaf3ff" : "white")
 
-                let gene_and_transcript_id = gene_name_fields.length >= 3 ? ` (<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a> / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>) ${is_canonical_transcript ? '<br /><div style="font-size: smaller">canonical transcript</div>': '<br /><div style="font-size: smaller"><a href="https://www.gencodegenes.org/pages/biotypes.html">biotype: ' + transcript_type.replace(/_/g, " ") + '</a></div>'}` : ""
+                let gene_and_transcript_id = ""
+                if (gene_name_fields.length >= 3 ) {
+                    const gene_id_link = `<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1]}" target="_blank">${gene_name_fields[1]}</a>`
+                    const transcript_id_link = `<a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2]}" target="_blank">${gene_name_fields[2]}</a>`
+                    const canonical_transcript_text = is_canonical_transcript ? '<div style="font-size: smaller">canonical transcript</div>' : ''
+                    const biotype_link = `<div style="font-size: smaller"><a href="https://www.gencodegenes.org/pages/biotypes.html">biotype: ${transcript_type.replace(/_/g, " ")}</a></div>`
+                    gene_and_transcript_id = ` (${gene_id_link} / ${transcript_id_link})<br /> ${canonical_transcript_text}${canonical_transcript_text ? ',' : ' '} ${biotype_link}`
+                }
 
                 return "<tr class='upperBorder' style='background-color:" + background_color+"'>" +
                   "<td rowspan='4' style='vertical-align: top'>" +
