@@ -15,7 +15,6 @@
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-
       gtag('config', 'UA-172722632-1');
     </script>
     <!-- Matomo -->
@@ -105,8 +104,11 @@
                                     This web interface and the underlying <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> are being developed by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.<br />
                                     The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> optionally uses pre-computed
                                     scores provided by Illumina for SNVs and small InDels, but resorts to running the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
-                                    directly for scores not available in the pre-computed files - such as larger InDels or non-default "Max distance" values.
-                                    All code for this web interface and server is available at <a href="https://github.com/broadinstitute/SpliceAI-lookup" target="_blank">github.com/broadinstitute/SpliceAI-lookup</a>.<br />
+                                    directly for scores not available in the pre-computed files - such as larger InDels or non-default "Max distance" values.<br />
+				    <br />
+				    NOTE: The API currently only supports interactive use. For automated batch processing, please use the
+				    <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
+				    to set up your own local instance of the API server or just run the underlying SpliceAI tool.<br />                                    
                                     <br />
                                     For more information on the SpliceAI model, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>,
                                     as well as in this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.<br />
@@ -248,20 +250,12 @@
                     - switch to showing all non-coding transcripts. (Previously, non-coding transcripts with Gencode biotypes
                       like <i>lncRNA</i>, <i>processed_pseudogene</i>, <i>processed_transcript</i>, <i>retained_intron</i>, and
                       <i>nonsense_mediated_decay</i> were filtered out if they overlapped coding transcripts). See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/6#issuecomment-816942824">issue #6</a> for details.<br />
-		            - show gray background for non-coding transcripts<br />
-		            - update to Gencode v37 (was previously on v36)<br />
+		      - show gray background for non-coding transcripts<br />
+		      - update to Gencode v37 (was previously on v36)<br />
                     <br />
-                    <b>March, 2021</b><br />
-                    - limit API use to no more than 4 computed requests (and 20 total requests) per minute per user.
-                      The API currently only supports interactive use. For automated batch processing, please use the
-                      <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
-                      to set up your own local instance of the API server or just run the underlying SpliceAI tool.<br />
-                    <br />
-                    <b>February, 2021</b><br />
-                    - highlight canonical transcript in blue<br />
-                    - save all choices in url to enable link sharing<br />
-                    - compute scores separately for each transcript and show ENSG & ENST ids (unless using pre-computed scores)<br />
-                    - add option to not use pre-computed scores<br />
+                    <b>1st quarter, 2021</b><br />
+                    - limit API use to no more than 4 computed requests (and 20 total requests) per minute per user<br />
+                    - show scores for more than one transcript (unless using pre-computed scores)<br />
                     - update to Gencode v36 (was previously on v24)<br />
                 </div>
                 <br />
@@ -270,7 +264,6 @@
                     <a href="https://liftover.broadinstitute.org">liftover</a> - simple hg19 <=> hg38 conversion for variants, positions, intervals<br />
                     <a href="https://cma-search.broadinstitute.org">CMA search</a> - search OMIM by genomic region, gene name, phenotype, etc.<br />
                 </div>
-
             </div>
         </div>
           <div class="one wide column"></div>
