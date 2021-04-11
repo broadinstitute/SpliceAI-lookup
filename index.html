@@ -108,7 +108,7 @@
 				    <br />
 				    NOTE: The API currently only supports interactive use. For automated batch processing, please use the
 				    <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
-				    to set up your own local instance of the API server or just run the underlying SpliceAI tool.<br />                                    
+				    to set up your own local instance of the API server or just run the underlying SpliceAI tool.<br />
                                     <br />
                                     For more information on the SpliceAI model, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>,
                                     as well as in this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.<br />
@@ -234,24 +234,20 @@
                     </div>
                 </div>
             </div>
-            <div class="results-div">
-                <div id="error-box" style="color:darkred"></div>
-                <div id="response-box"></div>
-            </div>
         </div>
         <div class="four wide column">
-            <div style="padding:25px 0px">
+            <div class="only-large-screen" style="padding:25px 0px">
                 <div><i>What's New</i></div>
                 <br />
                 <div>
                     To post issues or feature requests, please use<br /><a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a><br />
                     <br />
                     <b>April 11, 2021</b><br />
+                    - show gray background for non-coding transcripts<br />
                     - switch to showing all non-coding transcripts. (Previously, non-coding transcripts with Gencode biotypes
                       like <i>lncRNA</i>, <i>processed_pseudogene</i>, <i>processed_transcript</i>, <i>retained_intron</i>, and
                       <i>nonsense_mediated_decay</i> were filtered out if they overlapped coding transcripts). See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/6#issuecomment-816942824">issue #6</a> for details.<br />
-		      - show gray background for non-coding transcripts<br />
-		      - update to Gencode v37 (was previously on v36)<br />
+		            - update to Gencode v37 (was previously on v36)<br />
                 </div>
                 <br />
                 <div>
@@ -261,6 +257,16 @@
                 </div>
             </div>
         </div>
+          <div class="one wide column"></div>
+      </div>
+      <div class="row">
+          <div class="one wide column"></div>
+          <div class="fourteen wide column">
+              <div class="results-div">
+                  <div id="error-box" style="color:darkred"></div>
+                  <div id="response-box"></div>
+              </div>
+          </div>
           <div class="one wide column"></div>
       </div>
     </div>
