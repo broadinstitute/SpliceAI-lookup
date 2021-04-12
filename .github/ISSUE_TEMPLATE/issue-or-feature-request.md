@@ -7,6 +7,6 @@ assignees: ''
 
 ---
 
-URL (url of page where you see an issue or have a feature suggestion):
+URL (copy-paste the url of a page where you see the issue or have a feature suggestion):
 
-Screenshot (optional):
+Screenshot (optionally, paste an image here):
