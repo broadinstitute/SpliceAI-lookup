@@ -273,14 +273,15 @@
 
     <script>
       var VARIANT_RE = new RegExp(
+	"^[\\s]*" +
         "(chr)?([0-9XYMTt]{1,2})" +
-        "[-\\s:]+" +
+        "[-\\p{Pd}\\s:]+" +
         "([0-9,]+)" +
-        "[-\\s:]*" +
+        "[-\\p{Pd}\\s:]*" +
         "([ACGT]+)" +
-        "[-\\s:>]+" +
+        "[-\\p{Pd}\\s:>]+" +
         "([ACGT]+)",
-        'i'
+        'iu'
       )
 
       var GRCH37_contigs = {
