@@ -130,12 +130,12 @@ class VariantRecord:
         return f"{self.chrom}-{self.pos}-{self.ref}-{self.alts[0]}"
 
 
-def get_redis_key(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores):
+def get_spliceai_redis_key(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores):
     return f"{variant}__hg{genome_version}__d{spliceai_distance}__m{spliceai_mask}__pre{use_precomputed_scores}"
 
 
-def get_from_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores):
-    key = get_redis_key(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
+def get_spliceai_from_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores):
+    key = get_spliceai_redis_key(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
     results = None
     try:
         results_string = REDIS.get(key)
@@ -148,8 +148,8 @@ def get_from_redis(variant, genome_version, spliceai_distance, spliceai_mask, us
     return results
 
 
-def add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores, results):
-    key = get_redis_key(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
+def add_spliceai_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores, results):
+    key = get_spliceai_redis_key(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
     try:
         results_string = json.dumps(results)
         REDIS.set(key, results_string)
@@ -365,11 +365,11 @@ def run_spliceai():
               f"distance={spliceai_distance}, mask={spliceai_mask}, precomputed={use_precomputed_scores}", flush=True)
 
     # check REDIS cache before processing the variant
-    results = get_from_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
+    results = get_spliceai_from_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
     if not results:
         results = process_variant(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
         if "error" not in results:
-            add_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores, results)
+            add_spliceai_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores, results)
 
     status = 400 if results.get("error") else 200
 
@@ -443,6 +443,32 @@ def run_UCSC_liftover_tool(hg, chrom, start, end, verbose=False):
         raise ValueError(f"{hg} liftover failed for {chrom}:{start}-{end} for unknown reasons")
 
 
+def get_liftover_redis_key(genome_version, chrom, start, end):
+    return f"liftover_hg{genome_version}__{chrom}_{start}_{end}"
+
+
+def get_liftover_from_redis(hg, chrom, start, end):
+    key = get_liftover_redis_key(hg, chrom, start, end)
+    results = None
+    try:
+        results_string = REDIS.get(key)
+        if results_string:
+            results = json.loads(results_string)
+    except Exception as e:
+        print(f"Redis error: {e}", flush=True)
+
+    return results
+
+
+def add_liftover_to_redis(hg, chrom, start, end, result):
+    key = get_liftover_redis_key(hg, chrom, start, end)
+    try:
+        results_string = json.dumps(result)
+        REDIS.set(key, results_string)
+    except Exception as e:
+        print(f"Redis error: {e}", flush=True)
+
+
 @app.route("/liftover/", methods=['POST', 'GET'])
 def run_liftover():
     logging_prefix = datetime.now().strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
@@ -503,10 +529,18 @@ def run_liftover():
         print(f"{logging_prefix}: {request.remote_addr}: ======================", flush=True)
         print(f"{logging_prefix}: {request.remote_addr}: {hg} liftover {format}: {chrom}:{variant_log_string}", flush=True)
 
-    try:
-        result = run_UCSC_liftover_tool(hg, chrom, start, end, verbose=verbose)
-    except Exception as e:
-        return error_response(str(e))
+    # check REDIS cache before processing the variant
+    result = get_liftover_from_redis(hg, chrom, start, end)
+    if result and verbose:
+        print(f"{hg} liftover on {chrom}:{start}-{end} got results from cache: {result}", flush=True)
+
+    if not result:
+        try:
+            result = run_UCSC_liftover_tool(hg, chrom, start, end, verbose=verbose)
+        except Exception as e:
+            return error_response(str(e))
+    
+        add_liftover_to_redis(hg, chrom, start, end, result)
 
     result.update(params)
     if format == "position" or format == "variant":
