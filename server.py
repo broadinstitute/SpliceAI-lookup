@@ -49,8 +49,8 @@ else:
         ("masked", "snv", "hg38"): pysam.TabixFile("./test_data/spliceai_scores.masked.snv.hg38_subset.vcf.gz"),
     }
 
-GRCH37_ANNOTATIONS = "./annotations/gencode.v37lift37.annotation.txt.gz"
-GRCH38_ANNOTATIONS = "./annotations/gencode.v37.annotation.txt.gz"
+GRCH37_ANNOTATIONS = "./annotations/gencode.v38lift37.annotation.txt.gz"
+GRCH38_ANNOTATIONS = "./annotations/gencode.v38.annotation.txt.gz"
 
 ANNOTATION_INTERVAL_TREES = {
     "37": defaultdict(IntervalTree),
