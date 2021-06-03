@@ -1,6 +1,7 @@
 #%%
 
 import argparse
+import collections
 from collections import defaultdict, Counter
 import gzip
 from intervaltree import IntervalTree, Interval
@@ -114,11 +115,11 @@ TRANSCRIPT_TYPES_BY_PRIORITY = [
 ]
 
 
-ENST_to_refseq_map = {}
+ENST_to_refseq_map = collections.defaultdict(set)
 with open("./ENST_to_RefSeq_map.txt", "rt") as f:
     for line in f:
         ENST_id, refseq_id = line.strip().split("\t")
-        ENST_to_refseq_map[ENST_id] = refseq_id
+        ENST_to_refseq_map[ENST_id].add(refseq_id)
 
 #%%
 
@@ -205,8 +206,8 @@ for record in parse_gencode_file(args.gtf_gz_path):
     elif transcript_id_without_version == gene_id_to_canonical_transcript_id[gene_id_without_version]:
         is_canonical_transcript = "yes"
 
-    refseq_transcript_id = ENST_to_refseq_map.get(transcript_id_without_version, "")
-    name = "---".join([record["gene_name"], record["gene_id"], record["transcript_id"], is_canonical_transcript, record["transcript_type"], refseq_transcript_id])
+    refseq_transcript_ids_set = ENST_to_refseq_map[transcript_id_without_version]
+    name = "---".join([record["gene_name"], record["gene_id"], record["transcript_id"], is_canonical_transcript, record["transcript_type"], ",".join(refseq_transcript_ids_set)])
     key = (record["chrom"], name, record["strand"])
 
     all_exons_by_priority[priority][transcript_type][key].add((int(record['start_1based']), int(record['end_1based'])))
