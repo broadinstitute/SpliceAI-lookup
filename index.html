@@ -172,7 +172,7 @@
                         </div>
 
 
-                        <br />
+                        <!-- br />
                         <div style="font-size: large; color: darkred">
                           June 3, 2021 2:00pm EST<br />
                           <br />
@@ -181,7 +181,7 @@
                           Please check back in 1 hour
                         </div>
                         <br />
-                        <br />
+                        <br / -->
 
 
                         <div class="ui form" style="width:100%">
@@ -466,8 +466,8 @@
             const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes") ? 0 : 1
             const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
             const is_protein_coding = !transcript_type || transcript_type == "protein_coding" ? 0 : 1
-            const refseq_transcript_ids = gene_name_fields.length >= 6 && gene_name_fields[5]
-            const contains_hgvs_transcript_id = response.raw.includes(transcript_id) || refseq_transcript_ids.split(",").some(refseq_transcript_id => response.raw.includes(refseq_transcript_id)) ? 1 : 0
+            const refseq_transcript_id_is_in_query = gene_name_fields.length >= 6 && gene_name_fields[5].split(",").some(refseq_transcript_id => response.raw.includes(refseq_transcript_id))
+            const contains_hgvs_transcript_id = response.raw.includes(transcript_id) || refseq_transcript_id_is_in_query ? 0 : 1
             return `${contains_hgvs_transcript_id}${is_protein_coding}${is_canonical_transcript}---${gene_name}`
           })
 
