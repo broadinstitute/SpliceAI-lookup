@@ -463,7 +463,7 @@
             const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
             const is_protein_coding = !transcript_type || transcript_type == "protein_coding" ? 0 : 1
             const refseq_transcript_id = gene_name_fields.length >= 6 && gene_name_fields[5]
-            const contains_hgvs_transcript_id = response.raw.includes(transcript_id) || response.raw.includes(refseq_transcript_id) ? 0 : 1
+            const contains_hgvs_transcript_id = response.raw.includes(transcript_id) || response.raw.includes(refseq_transcript_id) ? 1 : 0
             return `${contains_hgvs_transcript_id}${is_protein_coding}${is_canonical_transcript}---${gene_name}`
           })
 
