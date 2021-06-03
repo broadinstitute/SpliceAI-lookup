@@ -162,22 +162,26 @@
                                             <td>1-1042466-GGGC-G</td>
                                             <td><i>deletion of GGC</i></td>
                                         </tr>
+					<tr>
+					  <td>NM_000249.4(MLH1):c.116G>A</td>
+					  <td><i>another HGVS exapmle</i></td>
+					</tr>
                                     </tbody>
                                 </table>
                             </div>
                         </div>
 
 
-                        <!-- br />
+                        <br />
                         <div style="font-size: large; color: darkred">
-                          June 2, 2021 7:30pm EST<br />
+                          June 3, 2021 2:00pm EST<br />
                           <br />
                           <b>The server is briefly down for updates</b><br />
                           <br />
                           Please check back in 1 hour
                         </div>
                         <br />
-                        <br / -->
+                        <br />
 
 
                         <div class="ui form" style="width:100%">
@@ -245,8 +249,8 @@
                     To post issues or feature requests, please use<br /><a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a><br />
                     <br />
                     <b>June 2, 2021</b><br />
-                    - Show RefSeq ids for the subset of Ensembl ENST ids (~30%) that have a matching RefSeq NM id according to Ensembl<br />
-		    - update to Gencode v38 (was previously on v37)<br />
+                    - Show RefSeq ids for the subset of Ensembl ENST ids (~30%) that have a matching RefSeq NM id according to Ensembl. See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/8">issue #8</a> for details.<br />
+		    - update to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v38</a> (was previously on v37)<br />
 		    <br />
                     <b>April 11, 2021</b><br />
                     - show gray background for non-coding transcripts<br />
@@ -462,8 +466,8 @@
             const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes") ? 0 : 1
             const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
             const is_protein_coding = !transcript_type || transcript_type == "protein_coding" ? 0 : 1
-            const refseq_transcript_id = gene_name_fields.length >= 6 && gene_name_fields[5]
-            const contains_hgvs_transcript_id = response.raw.includes(transcript_id) || response.raw.includes(refseq_transcript_id) ? 1 : 0
+            const refseq_transcript_ids = gene_name_fields.length >= 6 && gene_name_fields[5]
+            const contains_hgvs_transcript_id = response.raw.includes(transcript_id) || refseq_transcript_ids.split(",").some(refseq_transcript_id => response.raw.includes(refseq_transcript_id)) ? 1 : 0
             return `${contains_hgvs_transcript_id}${is_protein_coding}${is_canonical_transcript}---${gene_name}`
           })
 
@@ -484,7 +488,7 @@
                 const is_canonical_transcript = gene_name_fields.length >= 4 && gene_name_fields[3] === "yes"
                 const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
                 const is_protein_coding = !transcript_type || transcript_type == "protein_coding"
-                const refseq_transcript_id = gene_name_fields.length >= 6 && gene_name_fields[5]
+                const refseq_transcript_ids = gene_name_fields.length >= 6 && gene_name_fields[5].split(",")
                 const background_color = !is_protein_coding ? "#e5e5e5" : (is_canonical_transcript ? "#eaf3ff" : "white")
 
                 let gene_and_transcript_id = ""
@@ -493,7 +497,7 @@
                     const transcript_id_link = ` / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2].split(".")[0]}" target="_blank">${gene_name_fields[2]}</a>`
                     const canonical_transcript_text = is_canonical_transcript ? '<div class="smallLink">canonical transcript</div>' : ''
                     const biotype_link = `<div class="smallLink"><a href="https://www.gencodegenes.org/pages/biotypes.html" target="_blank">biotype: ${transcript_type.replace(/_/g, " ")}</a></div>`
-                    const refseq_transcript_id_link = refseq_transcript_id ? ` / <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${refseq_transcript_id}" target="_blank">${refseq_transcript_id}</a>` : ''
+                    const refseq_transcript_id_link = refseq_transcript_ids ? (" /" + refseq_transcript_ids.map(refseq_transcript_id => ` <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${refseq_transcript_id}" target="_blank">${refseq_transcript_id}</a>`).join(', ')) : ''
                     gene_and_transcript_id = ` (${gene_id_link}${transcript_id_link}${refseq_transcript_id_link})<br /> ${biotype_link} ${canonical_transcript_text}`
                 }
 
