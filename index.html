@@ -223,10 +223,10 @@
                                         <div class="field" style="padding-right:10px; padding-bottom:12px; white-space:nowrap">
                                             <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Use Illumina's pre-computed scores:</b></span>
                                             <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                                <input type="radio" name="use-precomputed-scores" value="1" checked /><label>yes</label>
+                                                <input type="radio" name="use-precomputed-scores" value="1" /><label>yes</label>
                                             </div>
                                             <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                                <input type="radio" name="use-precomputed-scores" value="0" /><label>no</label>
+                                                <input type="radio" name="use-precomputed-scores" value="0" checked /><label>no</label>
                                             </div>
                                             <i style="margin-left:20px" class="question circle outline icon" data-position="right center" data-content="Illumina provides pre-computed SpliceAI scores for all SNPs and small InDels within Gencode v24 canonical transcripts. If 'yes' is selected here, the server will quickly check these pre-computed files to see if it can avoid the relatively slow step of running the SpliceAI model. Selecting 'no' will cause the server to skip the pre-computed files and run the model. The benefit of this is that, although the scores may take longer, they will always be computed for Gencode v36 transcripts and will include ENSG and ENST ids in addition to the gene name."></i>
                                         </div>
