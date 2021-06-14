@@ -466,7 +466,7 @@
             const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes") ? 0 : 1
             const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
             const is_protein_coding = !transcript_type || transcript_type == "protein_coding" ? 0 : 1
-            const refseq_transcript_id_is_in_query = gene_name_fields.length >= 6 && gene_name_fields[5].split(",").some(refseq_transcript_id => response.raw.includes(refseq_transcript_id))
+            const refseq_transcript_id_is_in_query = gene_name_fields.length >= 6 && gene_name_fields[5] && gene_name_fields[5].split(",").some(refseq_transcript_id => response.raw.includes(refseq_transcript_id))
             const contains_hgvs_transcript_id = response.raw.includes(transcript_id) || refseq_transcript_id_is_in_query ? 0 : 1
             return `${contains_hgvs_transcript_id}${is_protein_coding}${is_canonical_transcript}---${gene_name}`
           })
@@ -488,7 +488,7 @@
                 const is_canonical_transcript = gene_name_fields.length >= 4 && gene_name_fields[3] === "yes"
                 const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
                 const is_protein_coding = !transcript_type || transcript_type == "protein_coding"
-                const refseq_transcript_ids = gene_name_fields.length >= 6 && gene_name_fields[5].split(",")
+                const refseq_transcript_ids = gene_name_fields.length >= 6 && gene_name_fields[5] && gene_name_fields[5].split(",")
                 const background_color = !is_protein_coding ? "#e5e5e5" : (is_canonical_transcript ? "#eaf3ff" : "white")
 
                 let gene_and_transcript_id = ""
