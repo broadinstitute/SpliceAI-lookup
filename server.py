@@ -392,6 +392,8 @@ LIFTOVER_EXAMPLE = f"/liftover/?hg=hg19-to-hg38&format=interval&chrom=chr8&start
 CHAIN_FILE_PATHS = {
     "hg19-to-hg38": "hg19ToHg38.over.chain.gz",
     "hg38-to-hg19": "hg38ToHg19.over.chain.gz",
+    "hg38-to-t2t": "hg38.t2t-chm13-v1.0.over.chain.gz",
+    "t2t-to-hg38": "t2t-chm13-v1.0.hg38.over.chain.gz",
 }
 
 
