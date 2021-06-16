@@ -491,8 +491,8 @@ def run_liftover():
         print(f"{logging_prefix}: {request.remote_addr}: response: {error_message}", flush=True)
         return error_response(error_message)
 
-    VALID_HG_VALUES = ("hg19-to-hg38", "hg38-to-hg19")
-    hg = params.get("hg")  # "hg19-to-hg38"
+    VALID_HG_VALUES = set(CHAIN_FILE_PATHS.keys())
+    hg = params.get("hg")
     if not hg or hg not in VALID_HG_VALUES:
         return error_response(f'"hg" param error. It should be set to {" or ".join(VALID_HG_VALUES)}. For example: {LIFTOVER_EXAMPLE}\n')
 
