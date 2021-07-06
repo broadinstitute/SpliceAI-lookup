@@ -188,7 +188,7 @@ def exceeds_rate_limit(user_id, request_type):
 
     epoch_time = time.time()  # seconds since 1970
 
-    if epoch_time - (int(REDIS.get("rate_limit_outlier_ips_update_time")) or 0) > 120:  # time 2 minutes
+    if epoch_time - int(REDIS.get("rate_limit_outlier_ips_update_time") or 0) > 120:  # time 2 minutes
         REDIS.set("rate_limit_outlier_ips_update_time", int(epoch_time))
         global RATE_LIMIT_OUTLIER_IPS
         RATE_LIMIT_OUTLIER_IPS = get_rate_limit_outlier_ips()
