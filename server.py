@@ -23,6 +23,32 @@ app = Flask(__name__)
 Talisman(app)
 CORS(app)
 
+RATE_LIMIT_WINDOW_SIZE_IN_MINUTES = 1
+RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE = {
+    "SpliceAI: computed": 4,
+    "SpliceAI: total": 15,
+    "liftover: total": 12,
+}
+
+RATE_LIMIT_OUTLIER_IPS_PATH = os.path.abspath("rate_limit_outlier_ips.txt")
+
+def get_rate_limit_outlier_ips():
+    print(f"Reading rate limit outlier IPs: {RATE_LIMIT_OUTLIER_IPS_PATH}")
+    if os.path.isfile(RATE_LIMIT_OUTLIER_IPS_PATH):
+        with open(RATE_LIMIT_OUTLIER_IPS_PATH, "rt") as f:
+            rate_limit_outlier_ips = f.readlines()
+    else:
+        rate_limit_outlier_ips = []
+
+    print(f"Current list of rate limit outlier IPs: {rate_limit_outlier_ips}")
+    return rate_limit_outlier_ips
+
+
+RATE_LIMIT_OUTLIER_IPS = get_rate_limit_outlier_ips()
+
+DISABLE_LOGGING_FOR_IPS = {f"63.143.42.{i}" for i in range(0, 256)}  # ignore uptimerobot.com IPs
+
+
 HG19_FASTA_PATH = os.path.expanduser("~/hg19.fa")
 HG38_FASTA_PATH = os.path.expanduser("~/hg38.fa")
 
@@ -73,15 +99,6 @@ SPLICEAI_MAX_DISTANCE_LIMIT = 10000
 SPLICEAI_DEFAULT_DISTANCE = 50  # maximum distance between the variant and gained/lost splice site, defaults to 50
 SPLICEAI_DEFAULT_MASK = 0  # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
 USE_PRECOMPUTED_SCORES = 1  # whether to use precomputed scores by default
-
-RATE_LIMIT_WINDOW_SIZE_IN_MINUTES = 1
-RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE = {
-    "SpliceAI: computed": 4,
-    "SpliceAI: total": 20,
-    "liftover: total": 12,
-}
-
-DISABLE_LOGGING_FOR_IPS = {f"63.143.42.{i}" for i in range(0, 256)}  # ignore uptimerobot.com IPs
 
 SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
 
@@ -169,10 +186,20 @@ def exceeds_rate_limit(user_id, request_type):
     if request_type not in RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE:
         raise ValueError(f"Invalid 'request_type' arg value: {request_type}")
 
-    max_requests_per_minute = RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE[request_type]
-    max_requests = RATE_LIMIT_WINDOW_SIZE_IN_MINUTES * max_requests_per_minute
-
     epoch_time = time.time()  # seconds since 1970
+
+    if epoch_time - (REDIS.get("rate_limit_outlier_ips_update_time") or 0) > 120:  # time 2 minutes
+        REDIS.set("rate_limit_outlier_ips_update_time", epoch_time)
+        global RATE_LIMIT_OUTLIER_IPS
+        RATE_LIMIT_OUTLIER_IPS = get_rate_limit_outlier_ips()
+
+    if user_id in RATE_LIMIT_OUTLIER_IPS:
+        print(f"Rate limiting outlier list IP: {user_id}")
+        max_requests = 1
+    else:
+        max_requests_per_minute = RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE[request_type]
+        max_requests = RATE_LIMIT_WINDOW_SIZE_IN_MINUTES * max_requests_per_minute
+
     try:
         # check number of requests from this user in the last (RATE_LIMIT_WINDOW_SIZE_IN_MINUTES * 60) minutes
         redis_key_prefix = f"request {user_id} {request_type}"
