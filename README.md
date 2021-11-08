@@ -35,13 +35,13 @@ to the [issue tracker](https://github.com/broadinstitute/SpliceAI-lookup/issues)
 1. Install and start a [redis](https://redis.io/) server. It's used to cache API server responses and avoid redundantly recomputing results.
 1. Download reference fasta files: [hg19.fa](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/bigZips/hg19.fa.gz) and [hg38.fa](http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz)
 1. Optionally download pre-computed scores .vcf.gz and .vcf.gz.tbi files from [Illumina Basespace](https://basespace.illumina.com/s/otSPW8hnhaZR)   
-1. Install and start the SpliceAI API server:
+1. Start a single-threaded SpliceAI API server on localhost port 8080. To modify server options, edit the `start_local_server.sh` script:
 
 ```
 $ git clone git@github.com:broadinstitute/SpliceAI-lookup.git  # clone this repo
 $ cd SpliceAI-lookup
 $ python3 -m pip install -r requirements.txt  # install python dependencies
-$ nohup ./start_server.sh >> server.log &
+$ ./start_local_server.sh
 ```
 
 The server uses ~1.5 Gb RAM per server thread.
