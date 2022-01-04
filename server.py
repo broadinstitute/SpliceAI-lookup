@@ -312,7 +312,7 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
         return {
             "variant": variant,
             "error": f"ERROR: The SpliceAI model did not return any scores for {variant}. This is typically due to the "
-                     f"variant not being within any exon or intron as defined in Gencode v36",
+                     f"variant falling outside of all Gencode exons and introns.",
         }
 
     scores = [s[s.index("|")+1:] for s in scores]  # drop allele field
