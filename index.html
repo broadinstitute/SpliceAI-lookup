@@ -370,7 +370,9 @@
           var ref = m[4]
           var alt = m[5]
 
-          if (ref.length == alt.length) {
+          if (ref.length > 1 && alt.length > 1) {
+            variant = chrom + ":g." + pos + "_" + (pos + ref.length - 1) + "delins" + alt
+          } else if (ref.length == alt.length) {
             variant = chrom + ":g." + pos + ref + ">" + alt
           } else if (ref.length > alt.length) {
             //deletion (https://varnomen.hgvs.org/recommendations/DNA/variant/deletion/)
