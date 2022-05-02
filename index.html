@@ -553,7 +553,7 @@
             ensembl_api_url_prefix = "grch37."
           }
           $.getJSON(
-            "http://" + ensembl_api_url_prefix + "rest.ensembl.org/vep/human/hgvs/" + variant_hgvs + "?content-type=application/json&vcf_string=1"
+            "https://" + ensembl_api_url_prefix + "rest.ensembl.org/vep/human/hgvs/" + variant_hgvs + "?content-type=application/json&vcf_string=1"
           ).catch(function(error) {
             var errorText = error.responseText
             try {
