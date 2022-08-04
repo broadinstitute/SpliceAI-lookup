@@ -48,7 +48,7 @@
 
         .transcript-color-legend {
             border-style:solid;
-            min-width:30px;
+            min-width:23px;
             display:inline-block;
             margin-left: 20px;
         }
@@ -349,6 +349,10 @@
       const CODING_TRANSCRIPT_BACKGROUND_COLOR = "white"
       const NON_CODING_TRANSCRIPT_BACKGROUND_COLOR = "#e5e5e5"
 
+      const RED_BACKGROUND = "#fccfb8"
+      const YELLOW_BACKGROUND = "#fff19d"
+      const GREEN_BACKGROUND = "#cdffd7"
+
       function parseVariant(variant) {
         const m = variant.match(VARIANT_RE)
         if (m) {
@@ -401,17 +405,14 @@
 
 
       function getScoreStyle(score) {
-        var red = "#fccfb8"
-        var yellow = "#fff19d"
-        var green = "#cdffd7"
 
-        var score = parseFloat(score)
+        score = parseFloat(score)
         if(score >= 0.8) {
-          return "style='background-color:"+red+"'"
+          return "style='background-color:"+RED_BACKGROUND+"'"
         } else if (score >= 0.5) {
-          return "style='background-color:"+yellow+"'"
+          return "style='background-color:"+YELLOW_BACKGROUND+"'"
         } else if (score >= 0.2) {
-          return "style='background-color:"+green+"'"
+          return "style='background-color:"+GREEN_BACKGROUND+"'"
         }
       }
 
@@ -432,14 +433,14 @@
         }
 
 
-        var parsed_scores = response.scores.map(function(s) {
-          var splice_ai_values = s.split("|")
-          var splice_ai_dict = {}
+        let parsed_scores = response.scores.map(function(s) {
+          const splice_ai_values = s.split("|")
+          const splice_ai_dict = {}
           SPLICEAI_SCORE_FIELDS.forEach(function(k, i) {
             splice_ai_dict[k] = splice_ai_values[i]
           })
 
-          var score_types = ["DG", "DL", "AG", "AL"]
+          const score_types = ["DG", "DL", "AG", "AL"]
           score_types.forEach(function(score_type) {
             try {
               splice_ai_dict[score_type + "_url"] = getUCSCBrowserUrl(response.hg, response.chrom, response.pos + parseInt(splice_ai_dict["DP_" + score_type]))
@@ -470,7 +471,7 @@
         return "<table class='ui stackable table'>" +
           "<tr>" +
               "<td><b>variant</b></td>" +
-              "<td><b>gene</b><div style='float:right;'> Background Colors: &nbsp;" +
+              "<td><b>gene</b><div style='float:right;'>" +
                 `<span class='transcript-color-legend' style='background-color:${CANONICAL_TRANSCRIPT_BACKGROUND_COLOR}!important'>&nbsp;</span> = canonical transcript ` +
                 `<span class='transcript-color-legend' style='background-color:${NON_CODING_TRANSCRIPT_BACKGROUND_COLOR}!important'>&nbsp;</span> = non-coding transcript` +
               "</td>" +
@@ -532,7 +533,7 @@
       }
 
       $.urlParam = function (name) {
-        var results = new RegExp('[\?&#]?' + name + '=([^&#]*)').exec(window.location.hash);
+        const results = new RegExp('[\?&#]?' + name + '=([^&#]*)').exec(window.location.hash);
         return (results !== null) ? decodeURIComponent(results[1]) || 0 : false;
       }
 
@@ -548,37 +549,37 @@
         });
 
         $("#submit-button").click(function() {
-          var variant = $("#search-box").val().trim()
+          const variant = $("#search-box").val().trim()
           if (!variant) {
             return
           }
 
-          var genome_version = $("input[name='hg']:checked").val().trim()
-          var mask = $("input[name='mask']:checked").val().trim()
-          var max_distance = $("#max-distance-input").val().trim()
-          var use_precomputed_scores = $("input[name='use-precomputed-scores']:checked").val().trim()
-          var variant_hgvs = parseVariantToHGVS(variant, genome_version)
+          const genome_version = $("input[name='hg']:checked").val().trim()
+          const mask = $("input[name='mask']:checked").val().trim()
+          const max_distance = $("#max-distance-input").val().trim()
+          const use_precomputed_scores = $("input[name='use-precomputed-scores']:checked").val().trim()
+          const variant_hgvs = parseVariantToHGVS(variant, genome_version)
 
           $("#error-box").hide()
           $("#response-box").hide()
 
           $("#submit-button").addClass(["loading", "disabled"])
 
-          var ensembl_api_url_prefix = ""
+          let ensembl_api_url_prefix = ""
           if (genome_version == "37") {
             ensembl_api_url_prefix = "grch37."
           }
           $.getJSON(
             "https://" + ensembl_api_url_prefix + "rest.ensembl.org/vep/human/hgvs/" + variant_hgvs + "?content-type=application/json&vcf_string=1"
           ).catch(function(error) {
-            var errorText = error.responseText
+            let errorText = error.responseText
             try {
               errorText = JSON.parse(errorText).error
             } catch(e) {
               console.warn(e)
             }
 
-            var refAlleleError = errorText.match(new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
+            const refAlleleError = errorText.match(new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
             if (refAlleleError) {
                 errorText = variant + " has unexpected reference allele. The hg" + genome_version + " reference allele should be: " + refAlleleError[1]
             }
@@ -592,12 +593,12 @@
               throw { responseText: "Unable to parse Ensembl API repsonse: " + response }
             }
 
-            var vcf_string = (response[0].vcf_string || "---").split("-")
-            var chrom = vcf_string[0]
-            var pos = vcf_string[1]
-            var ref = vcf_string[2]
-            var alt = vcf_string[3]
-            var most_severe_consequence = (response[0].most_severe_consequence || "").replace(/_/g, " ")
+            const vcf_string = (response[0].vcf_string || "---").split("-")
+            const chrom = vcf_string[0]
+            const pos = vcf_string[1]
+            const ref = vcf_string[2]
+            const alt = vcf_string[3]
+            const most_severe_consequence = (response[0].most_severe_consequence || "").replace(/_/g, " ")
 
             console.log("chrom:", chrom, "pos:", pos, "ref:", ref, "alt:", alt)
             console.log("most_severe_consequence:", most_severe_consequence)
@@ -631,7 +632,7 @@
 
           }).catch(function(error) {
             $("#response-box").hide()
-            var errorText = error.responseText
+            let errorText = error.responseText
             try {
               errorText = JSON.parse(errorText).error
             } catch(e) {
