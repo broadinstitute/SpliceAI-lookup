@@ -46,6 +46,13 @@
             display: none !important;
         }
 
+        .transcript-color-legend {
+            border-style:solid;
+            min-width:30px;
+            display:inline-block;
+            margin-left: 20px;
+        }
+
         @media screen and (min-width: 770px) {
             .only-large-screen {
                 display: block !important;
@@ -266,7 +273,7 @@
     </div>
 
     <script>
-      var VARIANT_RE = new RegExp(
+      const VARIANT_RE = new RegExp(
 	"^[\\s]*" +
         "(chr)?([0-9XYMTt]{1,2})" +
         "[-\\p{Pd}\\s:]+" +
@@ -278,7 +285,7 @@
         'iu'
       )
 
-      var GRCH37_contigs = {
+      const GRCH37_contigs = {
         "1": "NC_000001.10",
         "2": "NC_000002.11",
         "3": "NC_000003.11",
@@ -307,7 +314,7 @@
         "MT": "NC_012920.1",
       }
 
-      var GRCH38_contigs = {
+      const GRCH38_contigs = {
         "1" : "NC_000001.11",
         "2" : "NC_000002.12",
         "3" : "NC_000003.12",
@@ -336,12 +343,16 @@
         "MT": "NC_012920.1",
       }
 
-      var SPLICEAI_SCORE_FIELDS = "SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
+      const SPLICEAI_SCORE_FIELDS = "SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
+
+      const CANONICAL_TRANSCRIPT_BACKGROUND_COLOR = "#eaf3ff"
+      const CODING_TRANSCRIPT_BACKGROUND_COLOR = "white"
+      const NON_CODING_TRANSCRIPT_BACKGROUND_COLOR = "#e5e5e5"
 
       function parseVariant(variant) {
-        var m = variant.match(VARIANT_RE)
+        const m = variant.match(VARIANT_RE)
         if (m) {
-          var chrom = m[2].toUpperCase()
+          const chrom = m[2].toUpperCase()
           return {
             chrom: chrom,
             pos: m[3].replace(/,/g, ""),
@@ -355,9 +366,9 @@
 
 
       function parseVariantToHGVS(variant, genome_version) {
-        var m = variant.match(VARIANT_RE)
+        const m = variant.match(VARIANT_RE)
         if (m) {
-          var chrom = m[2].toUpperCase()
+          let chrom = m[2].toUpperCase()
           if (genome_version == "37") {
             chrom = GRCH37_contigs[chrom]
           } else if(genome_version == "38") {
@@ -366,9 +377,9 @@
             throw "Invalid genome_version: " + genome_version
           }
 
-          var pos = parseInt(m[3].replace(/,/g, ""))
-          var ref = m[4]
-          var alt = m[5]
+          const pos = parseInt(m[3].replace(/,/g, ""))
+          const ref = m[4]
+          const alt = m[5]
 
           if (ref.length > 1 && alt.length > 1) {
             variant = chrom + ":g." + pos + "_" + (pos + ref.length - 1) + "delins" + alt
@@ -459,7 +470,10 @@
         return "<table class='ui stackable table'>" +
           "<tr>" +
               "<td><b>variant</b></td>" +
-              "<td><b>gene</b></td>" +
+              "<td><b>gene</b><div style='float:right;'> Background Colors: &nbsp;" +
+                `<span class='transcript-color-legend' style='background-color:${CANONICAL_TRANSCRIPT_BACKGROUND_COLOR}!important'>&nbsp;</span> = canonical transcript ` +
+                `<span class='transcript-color-legend' style='background-color:${NON_CODING_TRANSCRIPT_BACKGROUND_COLOR}!important'>&nbsp;</span> = non-coding transcript` +
+              "</td>" +
               "<td><b>&#916;&nbsp; type</b></td>" +
               "<td><b>&#916;&nbsp; score</b>  " + "<i class='question circle outline icon' data-content='Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 50bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.2 or higher appear in green, 0.5 or higher appear in yellow, and 0.8 or higher appear in red.'></i>"+"</td>" +
               "<td><b>pre-mRNA position</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions in the pre-mRNA being splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant.'></i>"+"</td>" +
@@ -474,7 +488,9 @@
                 const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
                 const is_protein_coding = !transcript_type || transcript_type == "protein_coding"
                 const refseq_transcript_ids = gene_name_fields.length >= 6 && gene_name_fields[5] && gene_name_fields[5].split(",")
-                const background_color = !is_protein_coding ? "#e5e5e5" : (is_canonical_transcript ? "#eaf3ff" : "white")
+                const background_color = !is_protein_coding ? NON_CODING_TRANSCRIPT_BACKGROUND_COLOR : (
+                    is_canonical_transcript ? CANONICAL_TRANSCRIPT_BACKGROUND_COLOR : CODING_TRANSCRIPT_BACKGROUND_COLOR
+                )
 
                 let gene_and_transcript_id = ""
                 if (gene_name_fields.length >= 3 ) {
