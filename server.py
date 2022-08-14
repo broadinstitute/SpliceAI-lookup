@@ -214,12 +214,11 @@ def exceeds_rate_limit(user_id, request_type):
 
             if redis_hit_limit_counter > 200:
                 error_message = (
-                    f"ERROR: You have exceeded the rate limit {redis_hit_limit_counter_key} times so far "
+                    f"ERROR: You have exceeded the rate limit {redis_hit_limit_counter} times so far "
                     f"over the past few days. To prevent a single user from overwhelming the server and making it "
                     f"unavailable to other users, this tool allows no more than "
                     f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE[request_type]} computed requests per "
-                    f"minute per user. If you continue to exceed this limit, your IP address may be blocked from "
-                    f"accessing this server."
+                    f"minute per user. If you continue to exceed this limit, your IP address may be blocked."
                 )
             else:
                 error_message = (
