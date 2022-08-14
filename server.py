@@ -182,8 +182,7 @@ def exceeds_rate_limit(user_id, request_type):
         user_id (str): unique user id
         request_type (str): type of rate limit - can be "SpliceAI: total", "SpliceAI: computed", or "liftover: total"
 
-    Return int: 0 if the user hasn't exceeded the rate limit, or a number >= 1 indicating how many times this user has
-        exceeded the limit during the past RATE_LIMIT_COUNTER_WINDOW_SIZE_IN_DAYS
+    Return str: error message about exceeding the rate limit, or None if the rate limit was not exceeded
     """
     if request_type not in RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE:
         raise ValueError(f"Invalid 'request_type' arg value: {request_type}")
@@ -212,7 +211,24 @@ def exceeds_rate_limit(user_id, request_type):
             redis_hit_limit_counter = int(redis_hit_limit_counter) + 1
             REDIS.set(redis_hit_limit_counter_key, redis_hit_limit_counter)
             REDIS.expire(redis_hit_limit_counter_key, RATE_LIMIT_COUNTER_WINDOW_SIZE_IN_DAYS * 24 * 60 * 60)
-            return redis_hit_limit_counter
+
+            if redis_hit_limit_counter > 200:
+                error_message = (
+                    f"ERROR: You have exceeded the rate limit {redis_hit_limit_counter_key} times so far "
+                    f"over the past few days. To prevent a single user from overwhelming the server and making it "
+                    f"unavailable to other users, this tool allows no more than "
+                    f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE[request_type]} computed requests per "
+                    f"minute per user. If you continue to exceed this limit, your IP address may be blocked from "
+                    f"accessing this server."
+                )
+            else:
+                error_message = (
+                    f"ERROR: Rate limit reached. To prevent a user from overwhelming the server and making it "
+                    f"unavailable to other users, this tool allows no more than "
+                    f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE[request_type]} computed requests per minute per user."
+                )
+
+            return error_message
 
         # record this request
         REDIS.set(f"{redis_key_prefix}: {epoch_time}", 1)
@@ -220,7 +236,7 @@ def exceeds_rate_limit(user_id, request_type):
     except Exception as e:
         print(f"Redis error: {e}", flush=True)
 
-    return 0
+    return None
 
 
 def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores):
@@ -292,23 +308,11 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
             print(f"ERROR: couldn't retrieve scores using tabix: {type(e)}: {e}", flush=True)
 
     if not scores:
-        number_of_times_rate_limit_exceeded = exceeds_rate_limit(request.remote_addr, request_type="SpliceAI: computed")
-        if number_of_times_rate_limit_exceeded > 200:
+        error_message = exceeds_rate_limit(request.remote_addr, request_type="SpliceAI: computed")
+        if error_message:
             return {
                 "variant": variant,
-                "error": f"ERROR: You have exceeded the rate limit {number_of_times_rate_limit_exceeded} times so far "
-                         f"over the past few days. To prevent a single user from overwhelming the server and making it "
-                         f"unavailable to other users, this tool allows no more than "
-                         f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['SpliceAI: computed']} computed requests per "
-                         f"minute per user. If you continue to exceed this limit, your IP address may be blocked from "
-                         f"accessing this server.",
-            }
-        elif number_of_times_rate_limit_exceeded > 0:
-            return {
-                "variant": variant,
-                "error": f"ERROR: Rate limit reached. To prevent a user from overwhelming the server and making it "
-                         f"unavailable to other users, this tool allows no more than "
-                         f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['SpliceAI: computed']} computed requests per minute per user.",
+                "error": error_message,
             }
 
         record = VariantRecord(chrom, pos, ref, alt)
@@ -360,11 +364,8 @@ def run_spliceai():
     if 'variant' not in params:
         params.update(request.get_json(force=True, silent=True) or {})
 
-    if exceeds_rate_limit(request.remote_addr, request_type="SpliceAI: total"):
-        error_message = (f"ERROR: Rate limit reached. To prevent a user from overwhelming the server and making it "
-            f"unavailable to other users, this tool allows no more than "
-            f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['SpliceAI: total']} requests per minute per user.")
-
+    error_message = exceeds_rate_limit(request.remote_addr, request_type="SpliceAI: total")
+    if error_message:
         print(f"{logging_prefix}: {request.remote_addr}: response: {error_message}", flush=True)
         return error_response(error_message)
 
@@ -528,11 +529,8 @@ def run_liftover():
     if "format" not in params:
         params.update(request.get_json(force=True, silent=True) or {})
 
-    if exceeds_rate_limit(request.remote_addr, request_type="liftover: total"):
-        error_message = (f"ERROR: Rate limit reached. To prevent a user from overwhelming the server and making it "
-                         f"unavailable to other users, this tool allows no more than "
-                         f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['liftover: total']} liftover requests per minute per user.")
-
+    error_message = exceeds_rate_limit(request.remote_addr, request_type="liftover: total")
+    if error_message:
         print(f"{logging_prefix}: {request.remote_addr}: response: {error_message}", flush=True)
         return error_response(error_message)
 
