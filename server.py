@@ -30,6 +30,7 @@ RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE = {
     "liftover: total": 12,
 }
 
+RATE_LIMIT_COUNTER_WINDOW_SIZE_IN_DAYS = 3
 RATE_LIMIT_OUTLIER_IPS_PATH = os.path.abspath("rate_limit_outlier_ips.txt")
 
 def get_rate_limit_outlier_ips():
@@ -181,7 +182,8 @@ def exceeds_rate_limit(user_id, request_type):
         user_id (str): unique user id
         request_type (str): type of rate limit - can be "SpliceAI: total", "SpliceAI: computed", or "liftover: total"
 
-    Return (bool): True if the given user has exceeded the rate limit for this request type.
+    Return int: 0 if the user hasn't exceeded the rate limit, or a number >= 1 indicating how many times this user has
+        exceeded the limit during the past RATE_LIMIT_COUNTER_WINDOW_SIZE_IN_DAYS
     """
     if request_type not in RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE:
         raise ValueError(f"Invalid 'request_type' arg value: {request_type}")
@@ -205,7 +207,12 @@ def exceeds_rate_limit(user_id, request_type):
         redis_key_prefix = f"request {user_id} {request_type}"
         keys = REDIS.keys(f"{redis_key_prefix}*")
         if len(keys) >= max_requests:
-            return True
+            redis_hit_limit_counter_key = f"request {user_id} rate limit counter"
+            redis_hit_limit_counter = REDIS.get(redis_hit_limit_counter_key) or 0
+            redis_hit_limit_counter = int(redis_hit_limit_counter) + 1
+            REDIS.set(redis_hit_limit_counter_key, redis_hit_limit_counter)
+            REDIS.expire(redis_hit_limit_counter_key, RATE_LIMIT_COUNTER_WINDOW_SIZE_IN_DAYS * 24 * 60 * 60)
+            return redis_hit_limit_counter
 
         # record this request
         REDIS.set(f"{redis_key_prefix}: {epoch_time}", 1)
@@ -213,7 +220,7 @@ def exceeds_rate_limit(user_id, request_type):
     except Exception as e:
         print(f"Redis error: {e}", flush=True)
 
-    return False
+    return 0
 
 
 def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores):
@@ -285,7 +292,18 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
             print(f"ERROR: couldn't retrieve scores using tabix: {type(e)}: {e}", flush=True)
 
     if not scores:
-        if exceeds_rate_limit(request.remote_addr, request_type="SpliceAI: computed"):
+        number_of_times_rate_limit_exceeded = exceeds_rate_limit(request.remote_addr, request_type="SpliceAI: computed")
+        if number_of_times_rate_limit_exceeded > 200:
+            return {
+                "variant": variant,
+                "error": f"ERROR: You have exceeded the rate limit {number_of_times_rate_limit_exceeded} times so far "
+                         f"over the past few days. To prevent a single user from overwhelming the server and making it "
+                         f"unavailable to other users, this tool allows no more than "
+                         f"{RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE['SpliceAI: computed']} computed requests per "
+                         f"minute per user. If you continue to exceed this limit, your IP address may be blocked from "
+                         f"accessing this server.",
+            }
+        elif number_of_times_rate_limit_exceeded > 0:
             return {
                 "variant": variant,
                 "error": f"ERROR: Rate limit reached. To prevent a user from overwhelming the server and making it "
