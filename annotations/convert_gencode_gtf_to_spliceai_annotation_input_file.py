@@ -13,7 +13,7 @@ import spliceai
 
 
 # import from https://github.com/macarthur-lab/methods
-from annotations.get_ensembl_db_info import get_canonical_transcripts, CURRENT_ENSEMBL_DATABASE
+from tgg.annotations.get_ensembl_db_info import get_gene_id_to_canonical_transcript_id, CURRENT_ENSEMBL_DATABASE
 
 #%%
 official_annotations_gene_names = set()
@@ -191,7 +191,7 @@ all_exons_by_priority = {
 }
 
 print(f"Getting canonical transcripts from {CURRENT_ENSEMBL_DATABASE}")
-gene_id_to_canonical_transcript_id = get_canonical_transcripts()
+gene_id_to_canonical_transcript_id = get_gene_id_to_canonical_transcript_id()
 
 for record in parse_gencode_file(args.gtf_gz_path):
     priority = record["priority"]
