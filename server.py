@@ -13,6 +13,13 @@ import sys
 import tempfile
 import time
 
+# pangolin imports
+from pkg_resources import resource_filename
+from pangolin.model import torch, Pangolin, L, W, AR
+from pangolin.pangolin import process_variant
+import gffutils
+
+# flask imports
 from flask import Flask, request, Response
 from flask_cors import CORS
 from flask_talisman import Talisman
@@ -25,8 +32,10 @@ CORS(app)
 
 RATE_LIMIT_WINDOW_SIZE_IN_MINUTES = 1
 RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE = {
-    "SpliceAI: computed": 4,
-    "SpliceAI: total": 15,
+    "spliceai: computed": 4,
+    "sliceai: total": 15,
+    "pangolin: computed": 4,
+    "pangolin: total": 15,
     "liftover: total": 12,
 }
 
@@ -76,8 +85,30 @@ else:
         ("masked", "snv", "hg38"): pysam.TabixFile("./test_data/spliceai_scores.masked.snv.hg38_subset.vcf.gz"),
     }
 
-GRCH37_ANNOTATIONS = "./annotations/gencode.v38lift37.annotation.txt.gz"
-GRCH38_ANNOTATIONS = "./annotations/gencode.v38.annotation.txt.gz"
+GRCH37_ANNOTATIONS = "./annotations/gencode.v42lift37.annotation.txt.gz"
+GRCH38_ANNOTATIONS = "./annotations/gencode.v42.annotation.txt.gz"
+PANGOLIN_GRCH37_ANNOTATIONS = "./annotations/gencode.v42lift37.annotation.db"
+PANGOLIN_GRCH38_ANNOTATIONS = "./annotations/gencode.v42.annotation.db"
+
+PANGOLIN_GTF = {
+    "37": gffutils.FeatureDB(PANGOLIN_GRCH37_ANNOTATIONS),
+    "38": gffutils.FeatureDB(PANGOLIN_GRCH38_ANNOTATIONS),
+}
+
+
+PANGOLIN_MODELS = []
+for i in 0, 2, 4, 6:
+    for j in 1, 2, 3:
+        model = Pangolin(L, W, AR)
+        if torch.cuda.is_available():
+            model.cuda()
+            weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)))
+        else:
+            weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)), map_location=torch.device('cpu'))
+        model.load_state_dict(weights)
+        model.eval()
+        PANGOLIN_MODELS.append(model)
+
 
 ANNOTATION_INTERVAL_TREES = {
     "37": defaultdict(IntervalTree),
@@ -98,8 +129,8 @@ SPLICEAI_ANNOTATOR = {
 
 SPLICEAI_MAX_DISTANCE_LIMIT = 10000
 SPLICEAI_DEFAULT_DISTANCE = 50  # maximum distance between the variant and gained/lost splice site, defaults to 50
-SPLICEAI_DEFAULT_MASK = 0  # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
-USE_PRECOMPUTED_SCORES = 1  # whether to use precomputed scores by default
+SPLICEAI_DEFAULT_MASK = 0       # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
+USE_PRECOMPUTED_SCORES = 1      # whether to use precomputed scores by default
 
 SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
 
@@ -148,12 +179,12 @@ class VariantRecord:
         return f"{self.chrom}-{self.pos}-{self.ref}-{self.alts[0]}"
 
 
-def get_spliceai_redis_key(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores):
-    return f"{variant}__hg{genome_version}__d{spliceai_distance}__m{spliceai_mask}__pre{use_precomputed_scores}"
+def get_splicing_scores_redis_key(tool_name, variant, genome_version, distance, mask, use_precomputed_scores):
+    return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}__pre{use_precomputed_scores}"
 
 
-def get_spliceai_from_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores):
-    key = get_spliceai_redis_key(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
+def get_splicing_scores_from_redis(tool_name, variant, genome_version, distance, mask, use_precomputed_scores):
+    key = get_splicing_scores_redis_key(tool_name, variant, genome_version, distance, mask, use_precomputed_scores)
     results = None
     try:
         results_string = REDIS.get(key)
@@ -166,8 +197,8 @@ def get_spliceai_from_redis(variant, genome_version, spliceai_distance, spliceai
     return results
 
 
-def add_spliceai_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores, results):
-    key = get_spliceai_redis_key(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
+def add_splicing_scores_to_redis(tool_name, variant, genome_version, distance, mask, use_precomputed_scores, results):
+    key = get_splicing_scores_redis_key(tool_name, variant, genome_version, distance, mask, use_precomputed_scores)
     try:
         results_string = json.dumps(results)
         REDIS.set(key, results_string)
@@ -238,7 +269,7 @@ def exceeds_rate_limit(user_id, request_type):
     return None
 
 
-def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores):
+def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use_precomputed_scores):
     try:
         chrom, pos, ref, alt = parse_variant(variant)
     except ValueError as e:
@@ -285,10 +316,10 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
 
     source = None
     scores = []
-    if (len(ref) <= 5 or len(alt) <= 2) and str(spliceai_distance) == str(SPLICEAI_DEFAULT_DISTANCE) and str(use_precomputed_scores) == "1":
+    if (len(ref) <= 5 or len(alt) <= 2) and str(distance_param) == str(SPLICEAI_DEFAULT_DISTANCE) and str(use_precomputed_scores) == "1":
         # examples: ("masked", "snv", "hg19")  ("raw", "indel", "hg38")
         key = (
-            "masked" if str(spliceai_mask) == "1" else ("raw" if str(spliceai_mask) == "0" else None),
+            "masked" if str(mask_param) == "1" else ("raw" if str(mask_param) == "0" else None),
             "snv" if len(ref) == 1 and len(alt) == 1 else "indel",
             "hg19" if genome_version == "37" else ("hg38" if genome_version == "38" else None),
         )
@@ -319,8 +350,8 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
             scores = get_delta_scores(
                 record,
                 SPLICEAI_ANNOTATOR[genome_version],
-                spliceai_distance,
-                spliceai_mask)
+                distance_param,
+                mask_param)
             source = "computed"
             #print(f"Computed: ", scores, flush=True)
         except Exception as e:
@@ -350,8 +381,88 @@ def process_variant(variant, genome_version, spliceai_distance, spliceai_mask, u
     }
 
 
+def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use_precomputed_scores):
+    if genome_version not in ("37", "38"):
+        raise ValueError(f"Invalid genome_version: {mask_param}")
+
+    if mask_param not in ("True", "False"):
+        raise ValueError(f"Invalid mask_param: {mask_param}")
+
+    try:
+        chrom, pos, ref, alt = parse_variant(variant)
+    except ValueError as e:
+        return {
+            "variant": variant,
+            "error": f"ERROR: {e}",
+        }
+
+    if len(ref) > 1 and len(alt) > 1:
+        return {
+            "variant": variant,
+            "error": f"ERROR: Pangolin does not currently support complex InDels like {chrom}-{pos}-{ref}-{alt}",
+        }
+
+    error_message = exceeds_rate_limit(request.remote_addr, request_type="pangolin: computed")
+    if error_message:
+        return {
+            "variant": variant,
+            "error": error_message,
+        }
+
+    class PangolinArgs:
+        reference_file = HG19_FASTA_PATH if genome_version == "37" else HG38_FASTA_PATH
+        distance = distance_param
+        mask = mask_param
+        score_cutoff = None
+        score_exons = "False"
+
+    scores = process_variant(0, chrom, int(pos), ref, alt, PANGOLIN_GTF[genome_version], PANGOLIN_MODELS, PangolinArgs)
+
+    if scores == -1:
+        return {
+            "variant": variant,
+            "error": f"ERROR: Unable to compute Pangolin scores",
+        }
+
+    scores = scores.split("|")
+    splice_gain_pos, splice_gain_score = scores[1].split(":")
+    splice_loss_pos, splice_loss_score = scores[2].split(":")
+
+    warnings = scores[3].replace("Warnings:", "").strip()
+    if warnings:
+        print("Pangolin Warning:", warnings)
+
+    return {
+        "variant": variant,
+        "genome_version": genome_version,
+        "chrom": chrom,
+        "pos": pos,
+        "ref": ref,
+        "alt": alt,
+        "scores": [splice_gain_score, splice_loss_score, splice_gain_pos, splice_loss_pos],
+        "source": "pangolin",
+    }
+
+
 @app.route("/spliceai/", methods=['POST', 'GET'])
 def run_spliceai():
+    return run_splice_prediction_tool(tool_name="spliceai")
+
+
+@app.route("/pangolin/", methods=['POST', 'GET'])
+def run_spliceai():
+    return run_splice_prediction_tool(tool_name="pangolin")
+
+
+def run_splice_prediction_tool(tool_name):
+    """Handles API request for splice prediction
+
+    Args:
+        tool_name (str): "spliceai" or "pangolin"
+    """
+    if tool_name not in ("spliceai", "pangolin"):
+        raise ValueError(f"Invalid tool_name: {tool_name}")
+
     start_time = datetime.now()
     logging_prefix = start_time.strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
 
@@ -363,7 +474,7 @@ def run_spliceai():
     if 'variant' not in params:
         params.update(request.get_json(force=True, silent=True) or {})
 
-    error_message = exceeds_rate_limit(request.remote_addr, request_type="SpliceAI: total")
+    error_message = exceeds_rate_limit(request.remote_addr, request_type=f"{tool_name}: total")
     if error_message:
         print(f"{logging_prefix}: {request.remote_addr}: response: {error_message}", flush=True)
         return error_response(error_message)
@@ -383,20 +494,20 @@ def run_spliceai():
     if genome_version not in ("37", "38"):
         return error_response(f'Invalid "hg" value: "{genome_version}". The value must be either "37" or "38". For example: {SPLICEAI_EXAMPLE}\n')
 
-    spliceai_distance = params.get("distance", SPLICEAI_DEFAULT_DISTANCE)
+    distance_param = params.get("distance", SPLICEAI_DEFAULT_DISTANCE)
     try:
-        spliceai_distance = int(spliceai_distance)
+        distance_param = int(distance_param)
     except Exception as e:
-        return error_response(f'Invalid "distance": "{spliceai_distance}". The value must be an integer.\n')
+        return error_response(f'Invalid "distance": "{distance_param}". The value must be an integer.\n')
 
-    if spliceai_distance > SPLICEAI_MAX_DISTANCE_LIMIT:
-        return error_response(f'Invalid "distance": "{spliceai_distance}". The value must be < {SPLICEAI_MAX_DISTANCE_LIMIT}.\n')
+    if distance_param > SPLICEAI_MAX_DISTANCE_LIMIT:
+        return error_response(f'Invalid "distance": "{distance_param}". The value must be < {SPLICEAI_MAX_DISTANCE_LIMIT}.\n')
 
-    spliceai_mask = params.get("mask", str(SPLICEAI_DEFAULT_MASK))
-    if spliceai_mask not in ("0", "1"):
-        return error_response(f'Invalid "mask" value: "{spliceai_mask}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n')
+    mask_param = params.get("mask", str(SPLICEAI_DEFAULT_MASK))
+    if mask_param not in ("0", "1"):
+        return error_response(f'Invalid "mask" value: "{mask_param}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n')
 
-    spliceai_mask = int(spliceai_mask)
+    mask_param = int(mask_param)
 
     use_precomputed_scores = params.get("precomputed", str(USE_PRECOMPUTED_SCORES))
     if use_precomputed_scores not in ("0", "1"):
@@ -407,14 +518,21 @@ def run_spliceai():
     if request.remote_addr not in DISABLE_LOGGING_FOR_IPS:
         print(f"{logging_prefix}: {request.remote_addr}: ======================", flush=True)
         print(f"{logging_prefix}: {request.remote_addr}: {variant} processing with hg={genome_version}, "
-              f"distance={spliceai_distance}, mask={spliceai_mask}, precomputed={use_precomputed_scores}", flush=True)
+              f"distance={distance_param}, mask={mask_param}, precomputed={use_precomputed_scores}", flush=True)
 
     # check REDIS cache before processing the variant
-    results = get_spliceai_from_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
+    results = get_splicing_scores_from_redis(tool_name, variant, genome_version, distance_param, mask_param, use_precomputed_scores)
     if not results:
-        results = process_variant(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores)
+        if tool_name == "spliceai":
+            results = get_spliceai_scores(variant, genome_version, distance_param, mask_param, use_precomputed_scores)
+        elif tool_name == "pangolin":
+            pangolin_mask_param = "True" if mask_param == "1" else "False"
+            results = get_pangolin_scores(variant, genome_version, distance_param, pangolin_mask_param, use_precomputed_scores)
+        else:
+            raise ValueError(f"Invalid tool_name: {tool_name}")
+
         if "error" not in results:
-            add_spliceai_to_redis(variant, genome_version, spliceai_distance, spliceai_mask, use_precomputed_scores, results)
+            add_splicing_scores_to_redis(tool_name, variant, genome_version, distance_param, mask_param, use_precomputed_scores, results)
 
     status = 400 if results.get("error") else 200
 
