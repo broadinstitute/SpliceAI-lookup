@@ -16,7 +16,7 @@ import time
 # pangolin imports
 from pkg_resources import resource_filename
 from pangolin.model import torch, Pangolin, L, W, AR
-from pangolin.pangolin import process_variant
+from pangolin.pangolin import process_variant as process_variant_using_pangolin
 import gffutils
 
 # flask imports
@@ -416,7 +416,7 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
         score_cutoff = None
         score_exons = "False"
 
-    scores = process_variant(0, chrom, int(pos), ref, alt, PANGOLIN_GTF[genome_version], PANGOLIN_MODELS, PangolinArgs)
+    scores = process_variant_using_pangolin(0, chrom, int(pos), ref, alt, PANGOLIN_GTF[genome_version], PANGOLIN_MODELS, PangolinArgs)
 
     if scores == -1:
         return {
@@ -450,7 +450,7 @@ def run_spliceai():
 
 
 @app.route("/pangolin/", methods=['POST', 'GET'])
-def run_spliceai():
+def run_pangolin():
     return run_splice_prediction_tool(tool_name="pangolin")
 
 
