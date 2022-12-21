@@ -33,7 +33,7 @@ CORS(app)
 RATE_LIMIT_WINDOW_SIZE_IN_MINUTES = 1
 RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE = {
     "spliceai: computed": 4,
-    "sliceai: total": 15,
+    "spliceai: total": 15,
     "pangolin: computed": 4,
     "pangolin: total": 15,
     "liftover: total": 12,
