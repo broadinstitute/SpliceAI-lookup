@@ -211,7 +211,7 @@ def exceeds_rate_limit(user_id, request_type):
 
     Args:
         user_id (str): unique user id
-        request_type (str): type of rate limit - can be "SpliceAI: total", "SpliceAI: computed", or "liftover: total"
+        request_type (str): type of rate limit - can be "spliceai: total", "spliceai: computed", or "liftover: total"
 
     Return str: error message about exceeding the rate limit, or None if the rate limit was not exceeded
     """
@@ -338,7 +338,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
             print(f"ERROR: couldn't retrieve scores using tabix: {type(e)}: {e}", flush=True)
 
     if not scores:
-        error_message = exceeds_rate_limit(request.remote_addr, request_type="SpliceAI: computed")
+        error_message = exceeds_rate_limit(request.remote_addr, request_type="spliceai: computed")
         if error_message:
             return {
                 "variant": variant,
