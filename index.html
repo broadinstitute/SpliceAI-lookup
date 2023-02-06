@@ -344,6 +344,7 @@
       }
 
       const SPLICEAI_SCORE_FIELDS = "SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
+      const PANGOLIN_SCORE_FIELDS = "SYMBOL|DS_SG|DS_SL|DP_SG|DP_SL".split("|")  // splice_gain_score, splice_loss_score, splice_gain_pos, splice_loss_pos
 
       const CANONICAL_TRANSCRIPT_BACKGROUND_COLOR = "#eaf3ff"
       const CODING_TRANSCRIPT_BACKGROUND_COLOR = "white"
@@ -423,50 +424,67 @@
         return "https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg" + genome_version + "&position=chr" + chrom + ":" + pos
       }
 
-      function generateResultsTable(response) {
-        console.log("Processing result:", response)
+      function generateResultsTable(responses) {
 
-        try {
-          response["url"] = getUCSCBrowserUrl(response.hg, response.chrom, response.pos)
-        } catch(e) {
-          response["url"] = "#"
-        }
+        let parsed_scores = []
+        responses.forEach(function(response) {
+            const is_pangolin = response.source && response.source.startsWith("pangolin")
 
+            response.scores.forEach(function(scores) {
+                const splice_prediction_values = scores.split("|")
+                const splice_prediction_dict = {};
 
-        let parsed_scores = response.scores.map(function(s) {
-          const splice_ai_values = s.split("|")
-          const splice_ai_dict = {}
-          SPLICEAI_SCORE_FIELDS.forEach(function(k, i) {
-            splice_ai_dict[k] = splice_ai_values[i]
-          })
+                (is_pangolin ? PANGOLIN_SCORE_FIELDS : SPLICEAI_SCORE_FIELDS).forEach(function(k, i) {
+                    splice_prediction_dict[k] = splice_prediction_values[i]
+                    if (k.startsWith("DS_")) {
+                        splice_prediction_dict[k] = Math.abs(parseFloat(splice_prediction_dict[k]))
+                    }
+                })
 
-          const score_types = ["DG", "DL", "AG", "AL"]
-          score_types.forEach(function(score_type) {
-            try {
-              splice_ai_dict[score_type + "_url"] = getUCSCBrowserUrl(response.hg, response.chrom, response.pos + parseInt(splice_ai_dict["DP_" + score_type]))
-            } catch(e) {
-              splice_ai_dict[score_type + "_url"] = "#"
-            }
-          })
+                const score_types = is_pangolin ? ["SG", "SL"] : ["DG", "DL", "AG", "AL"]
+                score_types.forEach(function(score_type) {
+                    try {
+                        splice_prediction_dict[score_type + "_url"] = getUCSCBrowserUrl(response.hg, response.chrom, response.pos + parseInt(splice_prediction_dict["DP_" + score_type]))
+                    } catch(e) {
+                        splice_prediction_dict[score_type + "_url"] = "#"
+                    }
+                })
 
-          return splice_ai_dict
+                try {
+                    splice_prediction_dict["url"] = getUCSCBrowserUrl(response.hg, response.chrom, response.pos)
+                } catch(e) {
+                    splice_prediction_dict["url"] = "#"
+                }
+
+                splice_prediction_dict['source'] = response.source
+                splice_prediction_dict['is_pangolin'] = is_pangolin
+                splice_prediction_dict['hg'] = response.hg
+                splice_prediction_dict['variant'] = response.variant
+
+                // compute sort key
+                const splice_prediction_tool = is_pangolin ? 1 : 0;
+
+                const gene_name_fields = (splice_prediction_dict["SYMBOL"] || "").split("---")
+                const gene_name = gene_name_fields[0]
+                const transcript_id = gene_name_fields.length >= 3 && gene_name_fields[2]
+                const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes") ? 0 : 1
+                const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
+                const is_protein_coding = !transcript_type || transcript_type == "protein_coding" ? 0 : 1
+                const refseq_transcript_id_is_in_query = gene_name_fields.length >= 6 && gene_name_fields[5] && gene_name_fields[5].split(",").some(refseq_transcript_id => response.raw.includes(refseq_transcript_id))
+                const contains_hgvs_transcript_id = response.raw.includes(transcript_id) || refseq_transcript_id_is_in_query ? 0 : 1;
+
+                splice_prediction_dict['sort_key'] = `${splice_prediction_tool}${contains_hgvs_transcript_id}`
+                splice_prediction_dict['sort_key'] += `${is_protein_coding}${is_canonical_transcript}`
+                splice_prediction_dict['sort_key'] += `---${gene_name}`
+
+                parsed_scores.push(splice_prediction_dict)
+            })
         })
 
-        console.log("Parsed scores", parsed_scores)
-
         //sort by (gene name, is canonical transcript, is non-coding transcriipt)
-        parsed_scores = _.chain(parsed_scores)
-          .sortBy(function(scores) {
-            const gene_name_fields = (scores.SYMBOL || "").split("---")
-            const gene_name = gene_name_fields[0]
-            const transcript_id = gene_name_fields.length >= 3 && gene_name_fields[2]
-            const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes") ? 0 : 1
-            const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
-            const is_protein_coding = !transcript_type || transcript_type == "protein_coding" ? 0 : 1
-            const refseq_transcript_id_is_in_query = gene_name_fields.length >= 6 && gene_name_fields[5] && gene_name_fields[5].split(",").some(refseq_transcript_id => response.raw.includes(refseq_transcript_id))
-            const contains_hgvs_transcript_id = response.raw.includes(transcript_id) || refseq_transcript_id_is_in_query ? 0 : 1
-            return `${contains_hgvs_transcript_id}${is_protein_coding}${is_canonical_transcript}---${gene_name}`
-          })
+        parsed_scores = _.chain(parsed_scores).sortBy('sort_key').value()
+
+        console.log("Parsed scores:", parsed_scores)
 
         return "<table class='ui stackable table'>" +
           "<tr>" +
@@ -479,9 +497,9 @@
               "<td><b>&#916;&nbsp; score</b>  " + "<i class='question circle outline icon' data-content='Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 50bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.2 or higher appear in green, 0.5 or higher appear in yellow, and 0.8 or higher appear in red.'></i>"+"</td>" +
               "<td><b>pre-mRNA position</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions in the pre-mRNA being splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant.'></i>"+"</td>" +
           "</tr>" + parsed_scores.map(function(scores) {
-                const variant_ucsc_url = response.url
-                const gnomAD_version = response.hg === "38"? "gnomad_r3" : "gnomad_r2_1"
-                const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + response.variant + "?dataset=" + gnomAD_version
+                const variant_ucsc_url = scores.url
+                const gnomAD_version = scores.hg === "38"? "gnomad_r3" : "gnomad_r2_1"
+                const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + scores.variant + "?dataset=" + gnomAD_version
                 const gene_name_fields = (scores.SYMBOL || "").split("---")
                 const gene_name = gene_name_fields[0]
 
@@ -503,14 +521,15 @@
                     gene_and_transcript_id = ` (${gene_id_link}${transcript_id_link}${refseq_transcript_id_link})<br /> ${biotype_link} ${canonical_transcript_text}`
                 }
 
-                return "<tr class='upperBorder' style='background-color:" + background_color+"'>" +
-                  "<td rowspan='4' style='vertical-align: top'>" +
-                  "<div style='margin-right:10px; display: inline-block'>" + response.variant + "</div><br class='only-large-screen'/><br class='only-large-screen'/>" +
+
+                let result= "<tr class='upperBorder' style='background-color:" + background_color+"'>" +
+                  "<td rowspan='" + (scores.is_pangolin ? 2: 4) + "' style='vertical-align: top'>" +
+                  "<div style='margin-right:10px; display: inline-block'>" + scores.variant + "</div><br class='only-large-screen'/><br class='only-large-screen'/>" +
                     "<a href='"+variant_ucsc_url+"' class='smallLink' target='_blank'>UCSC</a>, " +
                     "<a href='"+variant_gnomAD_url+"' class='smallLink' target='_blank'>gnomAD</a>" +
                   "</td>"+
-                  "<td rowspan='4' style='vertical-align: top'>" +
-                    "<div style='margin-right:10px; display: inline-block'>"+gene_name+gene_and_transcript_id+"</div><br class='only-large-screen'/><br class='only-large-screen'/>" +
+                  "<td rowspan='" + (scores.is_pangolin ? 2: 4) + "' style='vertical-align: top'>" +
+                    "<div style='margin-right:10px; display: inline-block'>"+gene_name+(gene_and_transcript_id || '') +"</div><br class='only-large-screen'/><br class='only-large-screen'/>" +
                     "<a href='https://www.omim.org/search?search="+gene_name+"' class='smallLink' target='_blank'>OMIM</a>, " +
                     "<a href='https://gtexportal.org/home/gene/"+gene_name+"' class='smallLink' target='_blank'>GTEx</a>, " +
                     "<a href='https://gnomad.broadinstitute.org/gene/"+gene_name+"?dataset="+gnomAD_version+"' class='smallLink' target='_blank'>gnomAD</a>, " +
@@ -519,15 +538,25 @@
                     "<a href='https://decipher.sanger.ac.uk/gene/"+gene_name+"' class='smallLink' target='_blank'>Decipher</a>, " +
                     "<a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+gene_name+"' class='smallLink' target='_blank'>GeneCards</a>" +
                   "</td>" +
-                  "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL+"</td><td>" + (parseFloat(scores.DS_AL) == 0 ? "" : /*"<a href='"+scores.AL_url+"' target='_blank'>"+ */scores.DP_AL+" bp"/*+</a>"*/) + "</td>"+
-                  "</tr><tr style='background-color:" + background_color+"'>"+
-                  "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL)+">"+scores.DS_DL+"</td><td>" + (parseFloat(scores.DS_DL) == 0 ? "" : /*"<a href='"+scores.DL_url+"' target='_blank'>"+ */scores.DP_DL+" bp"/*+"</a>"*/) + "</td>"+
-                  "</tr><tr style='background-color:" + background_color+"'>"+
-                  "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG)+">"+scores.DS_AG+"</td><td>" + (parseFloat(scores.DS_AG) == 0 ? "" : /*"<a href='"+scores.AG_url+"' target='_blank'>"+ */scores.DP_AG+" bp"/*+"</a>"*/) + "</td>"+
-                  "</tr><tr style='background-color:" + background_color+"'>"+
-                  "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">"+scores.DS_DG+"</td><td>" + (parseFloat(scores.DS_DG) == 0 ? "" : /*"<a href='"+scores.DG_url+"' target='_blank'>"+ */scores.DP_DG+" bp"/*+"</a>"*/) + "</td>"+
+                    (scores.is_pangolin ?
+                            "<td>Splice Loss</td><td "+getScoreStyle(scores.DS_SL)+">"+scores.DS_SL.toFixed(2)+"</td><td>" + (parseFloat(scores.DS_SL) == 0 ? "" : /*"<a href='"+scores.SL_url+"' target='_blank'>"+ */scores.DP_SL+" bp"/*+</a>"*/) + "</td>"+
+                            "</tr><tr style='background-color:" + background_color+"'>"+
+                            "<td>Splice Gain</td><td "+getScoreStyle(scores.DS_SG)+">"+scores.DS_SG.toFixed(2)+"</td><td>" + (parseFloat(scores.DS_SG) == 0 ? "" : /*"<a href='"+scores.SG_url+"' target='_blank'>"+ */scores.DP_SG+" bp"/*+"</a>"*/) + "</td>"
+                        :
+                            "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL.toFixed(2)+"</td><td>" + (parseFloat(scores.DS_AL) == 0 ? "" : /*"<a href='"+scores.AL_url+"' target='_blank'>"+ */scores.DP_AL+" bp"/*+</a>"*/) + "</td>"+
+                            "</tr><tr style='background-color:" + background_color+"'>"+
+                            "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL)+">"+scores.DS_DL.toFixed(2)+"</td><td>" + (parseFloat(scores.DS_DL) == 0 ? "" : /*"<a href='"+scores.DL_url+"' target='_blank'>"+ */scores.DP_DL+" bp"/*+"</a>"*/) + "</td>"+
+                            "</tr><tr style='background-color:" + background_color+"'>"+
+                            "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG)+">"+scores.DS_AG.toFixed(2)+"</td><td>" + (parseFloat(scores.DS_AG) == 0 ? "" : /*"<a href='"+scores.AG_url+"' target='_blank'>"+ */scores.DP_AG+" bp"/*+"</a>"*/) + "</td>"+
+                            "</tr><tr style='background-color:" + background_color+"'>"+
+                            "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">"+scores.DS_DG.toFixed(2)+"</td><td>" + (parseFloat(scores.DS_DG) == 0 ? "" : /*"<a href='"+scores.DG_url+"' target='_blank'>"+ */scores.DP_DG+" bp"/*+"</a>"*/) + "</td>"
+                    ) +
                   "</tr>"
 
+                if(scores.is_pangolin) {
+                    result  = "<tr><td><b>Pangolin Results: <a href='https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4'>*</a></b> </td><td></td><td></td><td></td><td></td></tr>" + result
+                }
+                return result
               }).join("") +
           "</table>"
       }
@@ -569,6 +598,7 @@
           if (genome_version == "37") {
             ensembl_api_url_prefix = "grch37."
           }
+
           $.getJSON(
             "https://" + ensembl_api_url_prefix + "rest.ensembl.org/vep/human/hgvs/" + variant_hgvs + "?content-type=application/json&vcf_string=1"
           ).catch(function(error) {
@@ -601,34 +631,42 @@
             const most_severe_consequence = (response[0].most_severe_consequence || "").replace(/_/g, " ")
 
             console.log("chrom:", chrom, "pos:", pos, "ref:", ref, "alt:", alt)
-            console.log("most_severe_consequence:", most_severe_consequence)
+            console.log("Most severe consequence:", most_severe_consequence)
 
-            // call SpliceAI-lookup API
-            return $.getJSON(
-              //"http://localhost:8080/spliceai/",
-              "https://spliceailookup-api.broadinstitute.org/spliceai/",
-              {
-                hg: genome_version,
-                distance: max_distance,
-                mask: mask,
-                precomputed: use_precomputed_scores,
-                variant: chrom+'-'+pos+'-'+ref+'-'+alt,
-                raw: variant,
-              }
-            )
-          }).then(function(response) {
-            $("#error-box").hide()
-            $("#response-box").html(generateResultsTable(response))
-            $("#response-box").show()
-
-            // set url
-            window.location.hash = "#" + $.param({
-              variant: variant,
-              hg: genome_version,
-              distance: max_distance,
-              mask: mask,
-              precomputed: use_precomputed_scores,
+            // get SpliceAI and Pangolin scores from API endpoints in parallel
+            //const base_api_url = "http://localhost:8080"
+            const base_api_url = "https://spliceailookup-api.broadinstitute.org"
+            const getJSON_promises = ["spliceai", "pangolin"].map((endpoint) => {
+                const promise = $.getJSON(`${base_api_url}/${endpoint}/`,
+                    {
+                        hg: genome_version,
+                        distance: max_distance,
+                        mask: mask,
+                        precomputed: use_precomputed_scores,
+                        variant: chrom + '-' + pos + '-' + ref + '-' + alt,
+                        raw: variant,
+                    }
+                )
+                return promise
             })
+
+            return Promise.all(getJSON_promises)
+
+          }).then(function(response) {
+              console.log("SpliceAI-lookup server response:", response)
+
+              $("#error-box").hide()
+              $("#response-box").html(generateResultsTable(response))
+              $("#response-box").show()
+
+              // set url
+              window.location.hash = "#" + $.param({
+                  variant: variant,
+                  hg: genome_version,
+                  distance: max_distance,
+                  mask: mask,
+                  precomputed: use_precomputed_scores,
+              })
 
           }).catch(function(error) {
             $("#response-box").hide()

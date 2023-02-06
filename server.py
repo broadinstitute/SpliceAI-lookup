@@ -27,16 +27,21 @@ from intervaltree import IntervalTree, Interval
 from spliceai.utils import Annotator, get_delta_scores
 
 app = Flask(__name__)
-Talisman(app)
+
 CORS(app)
+
+DEBUG = False
+if not DEBUG:
+    Talisman(app)
+
 
 RATE_LIMIT_WINDOW_SIZE_IN_MINUTES = 1
 RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE = {
-    "spliceai: computed": 4,
-    "spliceai: total": 15,
-    "pangolin: computed": 4,
-    "pangolin: total": 15,
-    "liftover: total": 12,
+    "spliceai:model": 4,
+    "spliceai:total": 15,
+    "pangolin:model": 4,
+    "pangolin:total": 15,
+    "liftover:total": 12,
 }
 
 RATE_LIMIT_COUNTER_WINDOW_SIZE_IN_DAYS = 3
@@ -89,12 +94,6 @@ GRCH37_ANNOTATIONS = "./annotations/gencode.v42lift37.annotation.txt.gz"
 GRCH38_ANNOTATIONS = "./annotations/gencode.v42.annotation.txt.gz"
 PANGOLIN_GRCH37_ANNOTATIONS = "./annotations/gencode.v42lift37.annotation.db"
 PANGOLIN_GRCH38_ANNOTATIONS = "./annotations/gencode.v42.annotation.db"
-
-PANGOLIN_GTF = {
-    "37": gffutils.FeatureDB(PANGOLIN_GRCH37_ANNOTATIONS),
-    "38": gffutils.FeatureDB(PANGOLIN_GRCH38_ANNOTATIONS),
-}
-
 
 PANGOLIN_MODELS = []
 for i in 0, 2, 4, 6:
@@ -211,7 +210,7 @@ def exceeds_rate_limit(user_id, request_type):
 
     Args:
         user_id (str): unique user id
-        request_type (str): type of rate limit - can be "spliceai: total", "spliceai: computed", or "liftover: total"
+        request_type (str): type of rate limit - can be "spliceai:total", "spliceai:model", or "liftover:total"
 
     Return str: error message about exceeding the rate limit, or None if the rate limit was not exceeded
     """
@@ -331,14 +330,14 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
                 if fields[0] == chrom and int(fields[1]) == pos and fields[3] == ref and fields[4] == alt:
                     scores.append(fields[7])
             if scores:
-                source = "lookup"
+                source = "splice-ai:lookup"
                 #print(f"Fetched: ", scores, flush=True)
 
         except Exception as e:
             print(f"ERROR: couldn't retrieve scores using tabix: {type(e)}: {e}", flush=True)
 
     if not scores:
-        error_message = exceeds_rate_limit(request.remote_addr, request_type="spliceai: computed")
+        error_message = exceeds_rate_limit(request.remote_addr, request_type="spliceai:model")
         if error_message:
             return {
                 "variant": variant,
@@ -352,7 +351,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
                 SPLICEAI_ANNOTATOR[genome_version],
                 distance_param,
                 mask_param)
-            source = "computed"
+            source = "splice-ai:model"
             #print(f"Computed: ", scores, flush=True)
         except Exception as e:
             return {
@@ -402,7 +401,7 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
             "error": f"ERROR: Pangolin does not currently support complex InDels like {chrom}-{pos}-{ref}-{alt}",
         }
 
-    error_message = exceeds_rate_limit(request.remote_addr, request_type="pangolin: computed")
+    error_message = exceeds_rate_limit(request.remote_addr, request_type="pangolin:model")
     if error_message:
         return {
             "variant": variant,
@@ -416,7 +415,13 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
         score_cutoff = None
         score_exons = "False"
 
-    scores = process_variant_using_pangolin(0, chrom, int(pos), ref, alt, PANGOLIN_GTF[genome_version], PANGOLIN_MODELS, PangolinArgs)
+    if genome_version == "37":
+        pangolin_gene_db = gffutils.FeatureDB(PANGOLIN_GRCH37_ANNOTATIONS)
+    else:
+        pangolin_gene_db = gffutils.FeatureDB(PANGOLIN_GRCH38_ANNOTATIONS)
+
+    scores = process_variant_using_pangolin(
+        0, chrom, int(pos), ref, alt, pangolin_gene_db, PANGOLIN_MODELS, PangolinArgs)
 
     if scores == -1:
         return {
@@ -424,13 +429,23 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
             "error": f"ERROR: Unable to compute Pangolin scores",
         }
 
-    scores = scores.split("|")
-    splice_gain_pos, splice_gain_score = scores[1].split(":")
-    splice_loss_pos, splice_loss_score = scores[2].split(":")
+    parsed_scores = []
+    for i, scores_for_gene in enumerate(scores.split("ENSG")):
+        if i == 0:
+            continue
 
-    warnings = scores[3].replace("Warnings:", "").strip()
-    if warnings:
-        print("Pangolin Warning:", warnings)
+        scores_for_gene = scores_for_gene.split("|")
+
+        gene_id = "ENSG" + scores_for_gene[0]
+        splice_gain_pos, splice_gain_score = scores_for_gene[1].split(":")
+        splice_loss_pos, splice_loss_score = scores_for_gene[2].split(":")
+        warnings = scores_for_gene[3].replace("Warnings:", "").strip()
+        parsed_scores.append(
+            "|".join([gene_id, splice_gain_score, splice_loss_score, splice_gain_pos, splice_loss_pos])
+        )
+
+        if warnings:
+            print("Pangolin Warning:", warnings)
 
     return {
         "variant": variant,
@@ -439,7 +454,7 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
         "pos": pos,
         "ref": ref,
         "alt": alt,
-        "scores": [splice_gain_score, splice_loss_score, splice_gain_pos, splice_loss_pos],
+        "scores": parsed_scores,
         "source": "pangolin",
     }
 
@@ -474,7 +489,7 @@ def run_splice_prediction_tool(tool_name):
     if 'variant' not in params:
         params.update(request.get_json(force=True, silent=True) or {})
 
-    error_message = exceeds_rate_limit(request.remote_addr, request_type=f"{tool_name}: total")
+    error_message = exceeds_rate_limit(request.remote_addr, request_type=f"{tool_name}:total")
     if error_message:
         print(f"{logging_prefix}: {request.remote_addr}: response: {error_message}", flush=True)
         return error_response(error_message)
@@ -646,7 +661,7 @@ def run_liftover():
     if "format" not in params:
         params.update(request.get_json(force=True, silent=True) or {})
 
-    error_message = exceeds_rate_limit(request.remote_addr, request_type="liftover: total")
+    error_message = exceeds_rate_limit(request.remote_addr, request_type="liftover:total")
     if error_message:
         print(f"{logging_prefix}: {request.remote_addr}: response: {error_message}", flush=True)
         return error_response(error_message)
@@ -729,4 +744,4 @@ def catch_all(path):
 print("Initialization completed.", flush=True)
 
 if __name__ == "__main__":
-    app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+    app.run(debug=DEBUG, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
