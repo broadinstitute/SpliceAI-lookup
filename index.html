@@ -431,7 +431,7 @@
       function generateResultsTable(responses) {
 
         let parsed_scores = []
-        responses.forEach(function(response) {
+        responses.filter(r => r).forEach(function(response) {
             const is_pangolin = response.source && response.source.startsWith("pangolin")
 
             response.scores.forEach(function(scores) {
@@ -654,7 +654,7 @@
                 return promise
             })
 
-            return Promise.all(getJSON_promises)
+            return Promise.all(getJSON_promises.map(p => p.catch(e => console.log(e))))
 
           }).then(function(response) {
               console.log("SpliceAI-lookup server response:", response)
