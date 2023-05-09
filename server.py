@@ -522,8 +522,6 @@ def run_splice_prediction_tool(tool_name):
     if mask_param not in ("0", "1"):
         return error_response(f'Invalid "mask" value: "{mask_param}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n')
 
-    mask_param = int(mask_param)
-
     use_precomputed_scores = params.get("precomputed", str(USE_PRECOMPUTED_SCORES))
     if use_precomputed_scores not in ("0", "1"):
         return error_response(f'Invalid "precomputed" value: "{use_precomputed_scores}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n')
@@ -541,7 +539,7 @@ def run_splice_prediction_tool(tool_name):
         if tool_name == "spliceai":
             results = get_spliceai_scores(variant, genome_version, distance_param, mask_param, use_precomputed_scores)
         elif tool_name == "pangolin":
-            pangolin_mask_param = "True" if mask_param == 1 else "False"
+            pangolin_mask_param = "True" if mask_param == "1" else "False"
             results = get_pangolin_scores(variant, genome_version, distance_param, pangolin_mask_param, use_precomputed_scores)
         else:
             raise ValueError(f"Invalid tool_name: {tool_name}")
