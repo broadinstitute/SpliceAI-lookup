@@ -12,8 +12,8 @@ import re
 import spliceai
 
 
-# import from https://github.com/macarthur-lab/methods
-from tgg.annotations.get_ensembl_db_info import get_gene_id_to_canonical_transcript_id, CURRENT_ENSEMBL_DATABASE
+# import from https://github.com/bw2/annotation-utils
+from annotations.get_ensembl_db_info import get_gene_id_to_canonical_transcript_id, CURRENT_ENSEMBL_DATABASE
 
 #%%
 official_annotations_gene_names = set()
