@@ -90,10 +90,10 @@ else:
         ("masked", "snv", "hg38"): pysam.TabixFile("./test_data/spliceai_scores.masked.snv.hg38_subset.vcf.gz"),
     }
 
-GRCH37_ANNOTATIONS = "./annotations/gencode.v42lift37.annotation.txt.gz"
-GRCH38_ANNOTATIONS = "./annotations/gencode.v42.annotation.txt.gz"
-PANGOLIN_GRCH37_ANNOTATIONS = "./annotations/gencode.v42lift37.annotation.db"
-PANGOLIN_GRCH38_ANNOTATIONS = "./annotations/gencode.v42.annotation.db"
+GRCH37_ANNOTATIONS = "./annotations/gencode.v43lift37.annotation.txt.gz"
+GRCH38_ANNOTATIONS = "./annotations/gencode.v43.annotation.txt.gz"
+PANGOLIN_GRCH37_ANNOTATIONS = "./annotations/gencode.v43lift37.annotation.db"
+PANGOLIN_GRCH38_ANNOTATIONS = "./annotations/gencode.v43.annotation.db"
 
 PANGOLIN_MODELS = []
 for i in 0, 2, 4, 6:
