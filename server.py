@@ -277,12 +277,6 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
             "error": f"ERROR: {e}",
         }
 
-    if len(ref) > 1 and len(alt) > 1:
-        return {
-            "variant": variant,
-            "error": f"ERROR: SpliceAI does not currently support complex InDels like {chrom}-{pos}-{ref}-{alt}",
-        }
-
     # generate error message if variant falls outside annotated exons or introns
     OTHER_GENOME_VERSION = {"37": "38", "38": "37"}
     chrom_without_chr = chrom.replace("chr", "")
@@ -315,7 +309,9 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
 
     source = None
     scores = []
-    if (len(ref) <= 5 or len(alt) <= 2) and str(distance_param) == str(SPLICEAI_DEFAULT_DISTANCE) and str(use_precomputed_scores) == "1":
+
+    # check Illumina's pre-computed tables of spliceAI scores if the user OK'ed this and the variant is short enough to potentially be in there
+    if str(use_precomputed_scores) == "1" and (len(ref) <= 5 or len(alt) <= 2) and str(distance_param) == str(SPLICEAI_DEFAULT_DISTANCE):
         # examples: ("masked", "snv", "hg19")  ("raw", "indel", "hg38")
         key = (
             "masked" if str(mask_param) == "1" else ("raw" if str(mask_param) == "0" else None),
@@ -336,6 +332,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
         except Exception as e:
             print(f"ERROR: couldn't retrieve scores using tabix: {type(e)}: {e}", flush=True)
 
+    # run the SpliceAI model to compute the scores
     if not scores:
         error_message = exceeds_rate_limit(request.remote_addr, request_type="spliceai:model")
         if error_message:
