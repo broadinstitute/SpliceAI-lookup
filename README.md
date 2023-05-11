@@ -38,8 +38,6 @@ Get Pangolin scores for the given variant.
   strengthening unannotated splice sites. When this parameter is = 1 (masked), the delta scores of such splicing changes are set to 0. SpliceAI developers recommend using raw (0) for alternative splicing analysis and masked (1) for variant interpretation.
 
 ---
-
----
 #### Local Install
 
 The steps below outline how to install a SpliceAI API server on your local infrastructure.
@@ -52,10 +50,10 @@ to the [issue tracker](https://github.com/broadinstitute/SpliceAI-lookup/issues)
 1. Start a single-threaded SpliceAI API server on localhost port 8080. To modify server options, edit the `start_local_server.sh` script:
 
 ```
-$ git clone git@github.com:broadinstitute/SpliceAI-lookup.git  # clone this repo
-$ cd SpliceAI-lookup
-$ python3 -m pip install -r requirements.txt  # install python dependencies
-$ ./start_local_server.sh
+$ git clone git@github.com:broadinstitute/SpliceAI-lookup.git  # clone this repo  
+$ cd SpliceAI-lookup  
+$ python3 -m pip install -r requirements.txt  # install python dependencies  
+$ ./start_local_server.sh  
 ```
 
 The server uses ~1.5 Gb RAM per server thread.
