@@ -160,7 +160,7 @@ def error_response(error_message, source=None):
     response_json = {"error": str(error_message)}
     if source:
         response_json["source"] = source
-    return Response(json.dumps(response_json), status=400, mimetype='application/json')
+    return Response(json.dumps(response_json), status=200, mimetype='application/json')
 
 
 REVERSE_COMPLEMENT_MAP = dict(zip("ACGTN", "TGCAN"))
