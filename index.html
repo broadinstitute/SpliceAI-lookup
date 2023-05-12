@@ -353,10 +353,6 @@
       const CODING_TRANSCRIPT_BACKGROUND_COLOR = "white"
       const NON_CODING_TRANSCRIPT_BACKGROUND_COLOR = "#e5e5e5"
 
-      const RED_BACKGROUND = "#fccfb8"
-      const YELLOW_BACKGROUND = "#fff19d"
-      const GREEN_BACKGROUND = "#cdffd7"
-
       function parseVariant(variant) {
         const m = variant.match(VARIANT_RE)
         if (m) {
@@ -408,18 +404,29 @@
       }
 
 
-      function getScoreStyle(score) {
-
+      function getScoreStyle(score, isDeltaScore) {
+        if (typeof isDeltaScore === 'undefined') {
+          isDeltaScore = false;
+        }
         score = parseFloat(score)
-        if(score >= 0.8) {
-          return "style='background-color:"+RED_BACKGROUND+"'"
-        } else if (score >= 0.5) {
-          return "style='background-color:"+YELLOW_BACKGROUND+"'"
-        } else if (score >= 0.2) {
-          return "style='background-color:"+GREEN_BACKGROUND+"'"
-        } else if (score == 0) {
+        if (score == 0) {
           return "style='color:#BBBBBB'"
         }
+        const opacity = isDeltaScore ? 1 : 0.3;
+        const RED_BACKGROUND = "rgba(252, 207, 184, " + opacity + ")"       // #fccfb8
+        const YELLOW_BACKGROUND = "rgba(255, 241, 157, " + opacity + ")" //fff19d
+        const GREEN_BACKGROUND = "rgba(205, 255, 215, " + opacity + ")"  //cdffd7
+
+        let result = "style='"
+        if(score >= 0.8) {
+            result += "background-color:"+RED_BACKGROUND+";"
+        } else if (score >= 0.5) {
+            result += "background-color:"+YELLOW_BACKGROUND+";"
+        } else if (score >= 0.2) {
+            result += "background-color:"+GREEN_BACKGROUND+";"
+        }
+        result += "'"
+        return result;
       }
 
       function getUCSCBrowserUrl(genome_version, chrom, pos) {
@@ -582,17 +589,17 @@
                     "<a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+gene_name+"' class='smallLink' target='_blank'>GeneCards</a>" +
                   "</td>" +
                     (scores.is_pangolin ?
-                            "<td>Splice Loss</td><td "+getScoreStyle(scores.DS_SL)+">" + scores.DS_SL.toFixed(2) +"</td><td>" + (scores.DS_SL == 0 ? "" : scores.DP_SL+" bp") + "</td>"+
+                            "<td>Splice Loss</td><td "+getScoreStyle(scores.DS_SL, true)+">" + scores.DS_SL.toFixed(2) +"</td><td>" + (scores.DS_SL == 0 ? "" : scores.DP_SL+" bp") + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Splice Gain</td><td "+getScoreStyle(scores.DS_SG)+">" + scores.DS_SG.toFixed(2) +"</td><td>" + (scores.DS_SG == 0 ? "" : scores.DP_SG+" bp") + "</td>"
+                            "<td>Splice Gain</td><td "+getScoreStyle(scores.DS_SG, true)+">" + scores.DS_SG.toFixed(2) +"</td><td>" + (scores.DS_SG == 0 ? "" : scores.DP_SG+" bp") + "</td>"
                         :
-                            "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">" + scores.DS_AL.toFixed(2) +"</td><td>" + ((scores.DS_AL == 0 && scores.DS_AL_REF == 0 && scores.DS_AL_ALT == 0)? "" : scores.DP_AL+" bp") + "</td><td "+getScoreStyle(scores.DS_AL_REF)+">" + scores.DS_AL_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_AL_ALT)+">" + scores.DS_AL_ALT.toFixed(2) + "</td>"+
+                            "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL, true)+">" + scores.DS_AL.toFixed(2) +"</td><td>" + ((scores.DS_AL == 0 && scores.DS_AL_REF == 0 && scores.DS_AL_ALT == 0)? "" : scores.DP_AL+" bp") + "</td><td "+getScoreStyle(scores.DS_AL_REF)+">" + scores.DS_AL_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_AL_ALT)+">" + scores.DS_AL_ALT.toFixed(2) + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL)+">" + scores.DS_DL.toFixed(2) +"</td><td>" + ((scores.DS_DL == 0 && scores.DS_DL_REF == 0 && scores.DS_DL_ALT == 0)? "" : scores.DP_DL+" bp") + "</td><td "+getScoreStyle(scores.DS_DL_REF)+">" + scores.DS_DL_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_DL_ALT)+">" + scores.DS_DL_ALT.toFixed(2) + "</td>"+
+                            "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL, true)+">" + scores.DS_DL.toFixed(2) +"</td><td>" + ((scores.DS_DL == 0 && scores.DS_DL_REF == 0 && scores.DS_DL_ALT == 0)? "" : scores.DP_DL+" bp") + "</td><td "+getScoreStyle(scores.DS_DL_REF)+">" + scores.DS_DL_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_DL_ALT)+">" + scores.DS_DL_ALT.toFixed(2) + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG)+">" + scores.DS_AG.toFixed(2) +"</td><td>" + ((scores.DS_AG == 0 && scores.DS_AG_REF == 0 && scores.DS_AG_ALT == 0)? "" : scores.DP_AG+" bp") + "</td><td "+getScoreStyle(scores.DS_AG_REF)+">" + scores.DS_AG_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_AG_ALT)+">" + scores.DS_AG_ALT.toFixed(2) + "</td>"+
+                            "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG, true)+">" + scores.DS_AG.toFixed(2) +"</td><td>" + ((scores.DS_AG == 0 && scores.DS_AG_REF == 0 && scores.DS_AG_ALT == 0)? "" : scores.DP_AG+" bp") + "</td><td "+getScoreStyle(scores.DS_AG_REF)+">" + scores.DS_AG_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_AG_ALT)+">" + scores.DS_AG_ALT.toFixed(2) + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">" + scores.DS_DG.toFixed(2) +"</td><td>" + ((scores.DS_DG == 0 && scores.DS_DG_REF == 0 && scores.DS_DG_ALT == 0)? "" : scores.DP_DG+" bp") + "</td><td "+getScoreStyle(scores.DS_DG_REF)+">" + scores.DS_DG_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_DG_ALT)+">" + scores.DS_DG_ALT.toFixed(2) + "</td>"
+                            "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG, true)+">" + scores.DS_DG.toFixed(2) +"</td><td>" + ((scores.DS_DG == 0 && scores.DS_DG_REF == 0 && scores.DS_DG_ALT == 0)? "" : scores.DP_DG+" bp") + "</td><td "+getScoreStyle(scores.DS_DG_REF)+">" + scores.DS_DG_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_DG_ALT)+">" + scores.DS_DG_ALT.toFixed(2) + "</td>"
                     ) +
                   "</tr>"
 
@@ -677,8 +684,8 @@
             console.log("Most severe consequence:", most_severe_consequence)
 
             // get SpliceAI and Pangolin scores from API endpoints in parallel
-            const base_api_url = location.hostname == "" ? "http://localhost:8080" : "https://spliceailookup-api.broadinstitute.org"
-            //const base_api_url = "https://spliceailookup-api.broadinstitute.org"
+            //const base_api_url = location.hostname == "" ? "http://localhost:8080" : "https://spliceailookup-api.broadinstitute.org"
+            const base_api_url = "https://spliceailookup-api.broadinstitute.org"
             const getJSON_promises = ["spliceai", "pangolin"].map((endpoint) => {
                 const promise = $.getJSON(`${base_api_url}/${endpoint}/`,
                     {
