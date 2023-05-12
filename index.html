@@ -83,30 +83,28 @@
                     <div class="twelve wide column">
                         <div style="padding:25px 0px">
                             <div>
-                                Enter a variant below to see its <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf" target="_blank">SpliceAI</a> scores.<br />
-                            </div>
-                            <div>
-                                <br />
-                                <a id="more-details1-button" href="#" onclick="$('#more-details1').show();$('#more-details1-button').hide();">more details...</a>
+                                Enter a variant below to see its <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf" target="_blank">SpliceAI</a> scores... &nbsp;
+                                <a id="more-details1-button" href="#" onclick="$('#more-details1').show();$('#more-details1-button').hide();">[more details]</a>
 
                                 <div id="more-details1" style="display:none">
-                                    This web interface and the underlying <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> are being developed by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.<br />
-                                    The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> optionally uses pre-computed
-                                    scores provided by Illumina for SNVs and small InDels, but resorts to running the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
-                                    directly for scores not available in the pre-computed files - such as larger InDels or non-default "Max distance" values.<br />
-				    <br />
-				    NOTE: The API currently only supports interactive use. For automated batch processing, please use the
-				    <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
-				    to set up your own local instance of the API server or just run the underlying SpliceAI tool.<br />
                                     <br />
-                                    For more information on the SpliceAI model, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>,
-                                    as well as in this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.<br />
+                                    This web interface and the underlying <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> are developed and maintained by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.<br />
+                                    The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> optionally uses pre-computed
+                                    scores provided by Illumina for SNVs and small InDels, but runs the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
+                                    directly for scores not available in the pre-computed files - such as for larger InDels, non-default "Max distance" values, etc.<br />
+				    <br />
+				    NOTE: The server supports not more than several queries per-minute per-user. If you need to batch-process many variants, please use the
+				    <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
+				    to set up your own local instance of the API server or just run the underlying SpliceAI model directly.<br />
+                                    <br />
+                                    For more information about the SpliceAI model, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>,
+                                    and this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.<br />
                                     <br />
 				    Since February 2023, <a href="https://github.com/tkzeng/Pangolin" target="_blank">Pangolin scores</a> from [<a href="https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4" target="_blank">Zeng & Li 2022</a>] are also shown below the SpliceAI results.
                                 </div>
                             </div>
                             <br />
-                            <div style="padding-left: 15px; color: gray">
+                            <div style="padding-left: 0px; color: gray">
                                 <table>
                                     <thead style="text-align: left">
                                         <tr>
@@ -125,37 +123,30 @@
                                         </tr>
                                         <tr>
                                             <td>NM_000552.4(VWF):c.3797C>A (p.Pro1266Gln)</td>
-                                            <td></td>
+                                            <td>
+                                                <a id="more-details2-button" href="#" onclick="$('.more-details2').show();$('#more-details2-button').hide();">[show more examples]</a>
+                                            </td>
                                         </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                            <br />
-                            <a id="more-details2-button" href="#" onclick="$('#more-details2').show();$('#more-details2-button').hide();">more examples...</a>
-                            <div id="more-details2" style="display:none; padding-left: 15px; color: gray">
-                                <table>
-                                    <thead></thead>
-                                    <tbody>
-                                        <tr>
+                                        <tr style="display:none;" class="more-details2">
                                             <td>8:140300616 T&gt;G</td>
                                             <td>'chr' <i>prefix is optional</i></td>
                                         </tr>
-                                        <tr>
+                                        <tr style="display:none;" class="more-details2">
                                             <td>1:930130:C:G </td>
                                             <td><i>position with overlapping genes</i></td>
                                         </tr>
-                                        <tr>
+                                        <tr style="display:none;" class="more-details2">
                                             <td>1-1042601-A-AGAGAG </td>
                                             <td><i>insertion of GAGAG</i></td>
                                         </tr>
-                                        <tr>
+                                        <tr style="display:none;" class="more-details2">
                                             <td>1-1042466-GGGC-G</td>
                                             <td><i>deletion of GGC</i></td>
                                         </tr>
-					<tr>
-					  <td>NM_000249.4(MLH1):c.116G>A</td>
-					  <td><i>another HGVS exapmle</i></td>
-					</tr>
+                                        <tr style="display:none;" class="more-details2">
+                                            <td>NM_000249.4(MLH1):c.116G>A</td>
+                                            <td><i>another HGVS exapmle</i></td>
+                                        </tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -230,10 +221,11 @@
         </div>
         <div class="four wide column">
             <div class="only-large-screen" style="padding:25px 0px">
-                <div><i>What's New</i></div>
-                <br />
                 <div>
-                    To post issues or feature requests related to this web interface, please use <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>. For questions about SpliceAI itself or the SpliceAI pre-computed scores, see <a href="https://github.com/illumina/SpliceAI" target="_blank">SpliceAI/issues</a>.<br />
+                    <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website.
+                    <a href="https://github.com/illumina/SpliceAI" target="_blank">SpliceAI/issues</a>: issues with the underlying SpliceAI model.<br />
+                    <br />
+                    <div><i>What's New</i></div>
                     <br />
                     <b>May 12, 2023</b><br />
                     - added REF score, ALT score columns to show SpliceAI's underlying predictions for each haplotype.
@@ -243,9 +235,9 @@
                     - added support for MNPs (see <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/1">issue #1</a> & <a href="https://github.com/Illumina/SpliceAI/pull/119">SpliceAI PR by @kdahlo</a>)<br />
                     - fixed bug where "raw" Pangolin scores were shown regardless of whether the user selected "raw" or "masked".<br />
                     - updated to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v43</a> (was previously on v42)<br />
-		    <br />
-                    <a id="more-details3-button" href="#" onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
+		            <br />
 
+                    <a id="more-details3-button" href="#" onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
                     <div id="more-details3" style="display:none">
 
                         <b>Feb 5, 2023</b><br />
@@ -265,8 +257,8 @@
                 <br />
                 <div>
                     <b>Related web tools:</b><br />
-                    <a href="https://liftover.broadinstitute.org">liftover</a> - simple hg19 <=> hg38 conversion for variants, positions, intervals<br />
-                    <a href="https://cma-search.broadinstitute.org">CMA search</a> - search OMIM by genomic region, gene name, phenotype, etc.<br />
+                    <a href="https://liftover.broadinstitute.org">liftover</a>: for variants/positions/intervals (hg19 <=> hg38 <=> T2T)<br />
+                    <a href="https://cma-search.broadinstitute.org">CMA search</a>: search OMIM by interval, gene or phenotype<br />
                 </div>
             </div>
         </div>
