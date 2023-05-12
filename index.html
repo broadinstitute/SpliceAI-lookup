@@ -237,6 +237,10 @@
                 <div>
                     To post issues or feature requests related to this web interface, please use <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>. For questions about SpliceAI itself or the SpliceAI pre-computed scores, see <a href="https://github.com/illumina/SpliceAI" target="_blank">SpliceAI/issues</a>.<br />
                     <br />
+                    <b>May 12, 2023</b><br />
+                    - Add REF score, ALT score columns to show SpliceAI's underlying predictions for each haplotype.
+                    The &#916;&nbsp; score column is the difference of these two.<br />
+                    <br />
                     <b>May 10, 2023</b><br />
                     - added support for MNPs (see <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/1">issue #1</a> & <a href="https://github.com/Illumina/SpliceAI/pull/119">SpliceAI PR by @kdahlo</a>)<br />
                     - fixed bug where "raw" Pangolin scores were shown regardless of whether the user selected "raw" or "masked".<br />
@@ -244,11 +248,9 @@
                     <br />
                     <b>Feb 5, 2023</b><br />
                     - show <a href="https://github.com/tkzeng/Pangolin">Pangolin scores</a> in addition to SpliceAI scores.<br />
-                    - updated to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v42</a> (was previously on v38)<br />
                     <br />
                     <b>June 2, 2021</b><br />
                     - show RefSeq ids for the subset of Ensembl ENST ids (~30%) that have one or more matching RefSeq NM ids according to Ensembl. See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/8">issue #8</a> for details.<br />
-                    - updated to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v38</a> (was previously on v37)<br />
                     <br />
                     <b>April 11, 2021</b><br />
                     - show gray background for non-coding transcripts<br />
@@ -256,7 +258,6 @@
                       like <i>lncRNA</i>, <i>processed_pseudogene</i>, <i>processed_transcript</i>, <i>retained_intron</i>, and
                       <i>nonsense_mediated_decay</i> were filtered out if they overlapped <i>protein_coding</i> transcripts).
                       See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/6#issuecomment-816942824">issue #6</a> for details.<br />
-                    - updated to Gencode v37 (was previously on v36)<br />
                 </div>
                 <br />
                 <div>
@@ -266,7 +267,7 @@
                 </div>
             </div>
         </div>
-          <div class="one wide column only-large-screen"></div>
+        <div class="one wide column only-large-screen"></div>
       </div>
       <div class="row">
           <div class="one wide column only-large-screen"></div>
@@ -351,7 +352,7 @@
         "MT": "NC_012920.1",
       }
 
-      const SPLICEAI_SCORE_FIELDS = "SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
+      const SPLICEAI_SCORE_FIELDS = "SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL|DS_AG_REF|DS_AG_ALT|DS_AL_REF|DS_AL_ALT|DS_DG_REF|DS_DG_ALT|DS_DL_REF|DS_DL_ALT".split("|")
       const PANGOLIN_SCORE_FIELDS = "SYMBOL|DS_SG|DS_SL|DP_SG|DP_SL".split("|")  // splice_gain_score, splice_loss_score, splice_gain_pos, splice_loss_pos
 
       const CANONICAL_TRANSCRIPT_BACKGROUND_COLOR = "#eaf3ff"
@@ -422,6 +423,8 @@
           return "style='background-color:"+YELLOW_BACKGROUND+"'"
         } else if (score >= 0.2) {
           return "style='background-color:"+GREEN_BACKGROUND+"'"
+        } else if (score == 0) {
+          return "style='color:#BBBBBB'"
         }
       }
 
@@ -434,9 +437,20 @@
 
       function generateResultsTable(responses) {
 
-        let parsed_scores = []
+        let parsed_scores_or_errors = []
         responses.filter(r => r).forEach(function(response) {
             const is_pangolin = response.source && response.source.startsWith("pangolin")
+            if (response.error) {
+                parsed_scores_or_errors.push({
+                    'error': response.error,
+                    'source': response.source,
+                    'is_pangolin': is_pangolin,
+                    'hg': response.hg,
+                    'variant': response.variant,
+                    'sort_key': 0,
+                })
+                return
+            }
 
             response.scores.forEach(function(scores) {
                 const splice_prediction_values = scores.split("|")
@@ -485,14 +499,14 @@
                 splice_prediction_dict['sort_key'] += `${is_protein_coding}${is_canonical_transcript}`
                 splice_prediction_dict['sort_key'] += `---${gene_name}`
 
-                parsed_scores.push(splice_prediction_dict)
+                parsed_scores_or_errors.push(splice_prediction_dict)
             })
         })
 
         //sort by (gene name, is canonical transcript, is non-coding transcriipt)
-        parsed_scores = _.chain(parsed_scores).sortBy('sort_key').value()
+        parsed_scores_or_errors = _.chain(parsed_scores_or_errors).sortBy('sort_key').value()
 
-        console.log("Parsed scores:", parsed_scores)
+        console.log("Parsed scores:", parsed_scores_or_errors)
 
         return "<table class='ui stackable table'>" +
           "<tr>" +
@@ -504,7 +518,17 @@
               "<td><b>&#916;&nbsp; type</b></td>" +
               "<td><b>&#916;&nbsp; score</b>  " + "<i class='question circle outline icon' data-content='Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 50bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.2 or higher appear in green, 0.5 or higher appear in yellow, and 0.8 or higher appear in red.'></i>"+"</td>" +
               "<td><b>pre-mRNA position</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions in the pre-mRNA being splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant.'></i>"+"</td>" +
-          "</tr>" + parsed_scores.map(function(scores) {
+              "<td><b>REF score</b>  "+ "<i class='question circle outline icon' data-content='Raw probability for the REF allele'></i>"+"</td>" +
+              "<td><b>ALT score</b>  "+ "<i class='question circle outline icon' data-content='Raw probability for the ALT allele'></i>"+"</td>" +
+          "</tr>" + parsed_scores_or_errors.map(function(scores_or_error) {
+                if (scores_or_error.error) {
+                    return "<tr>" +
+                        "<td colspan='7'>" +
+                            "<div style='color:darkred'>" + ( scores_or_error.is_pangolin ? 'Pangolin ' : 'SpliceAI ' ) + scores_or_error.error + "</div>" +
+                        "</td>" +
+                    "</tr>"
+                }
+                let scores = scores_or_error
                 const variant_ucsc_url = scores.url
                 const gnomAD_version = scores.hg === "38"? "gnomad_r3" : "gnomad_r2_1"
                 const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + scores.variant + "?dataset=" + gnomAD_version
@@ -528,7 +552,24 @@
                     const refseq_transcript_id_link = refseq_transcript_ids ? (" /" + refseq_transcript_ids.map(refseq_transcript_id => ` <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${refseq_transcript_id}" target="_blank">${refseq_transcript_id}</a>`).join(', ')) : ''
                     gene_and_transcript_id = ` (${gene_id_link}${transcript_id_link}${refseq_transcript_id_link})<br /> ${biotype_link} ${canonical_transcript_text}`
                 }
-
+                //round to 2 decimal places
+                if (scores.is_pangolin) {
+                    scores.DS_SL = Math.round(scores.DS_SL * 100) / 100
+                    scores.DS_SG = Math.round(scores.DS_SG * 100) / 100
+                } else {
+                    scores.DS_AG = Math.round(scores.DS_AG * 100) / 100
+                    scores.DS_AL = Math.round(scores.DS_AL * 100) / 100
+                    scores.DS_DL = Math.round(scores.DS_DL * 100) / 100
+                    scores.DS_DG = Math.round(scores.DS_DG * 100) / 100
+                    scores.DS_AL_REF = Math.round(scores.DS_AL_REF * 100) / 100
+                    scores.DS_AL_ALT = Math.round(scores.DS_AL_ALT * 100) / 100
+                    scores.DS_DL_REF = Math.round(scores.DS_DL_REF * 100) / 100
+                    scores.DS_DL_ALT = Math.round(scores.DS_DL_ALT * 100) / 100
+                    scores.DS_AG_REF = Math.round(scores.DS_AG_REF * 100) / 100
+                    scores.DS_AG_ALT = Math.round(scores.DS_AG_ALT * 100) / 100
+                    scores.DS_DG_REF = Math.round(scores.DS_DG_REF * 100) / 100
+                    scores.DS_DG_ALT = Math.round(scores.DS_DG_ALT * 100) / 100
+                }
 
                 let result= "<tr class='upperBorder' style='background-color:" + background_color+"'>" +
                   "<td rowspan='" + (scores.is_pangolin ? 2: 4) + "' style='vertical-align: top'>" +
@@ -547,22 +588,22 @@
                     "<a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+gene_name+"' class='smallLink' target='_blank'>GeneCards</a>" +
                   "</td>" +
                     (scores.is_pangolin ?
-                            "<td>Splice Loss</td><td "+getScoreStyle(scores.DS_SL)+">"+scores.DS_SL.toFixed(2)+"</td><td>" + (parseFloat(scores.DS_SL) == 0 ? "" : /*"<a href='"+scores.SL_url+"' target='_blank'>"+ */scores.DP_SL+" bp"/*+</a>"*/) + "</td>"+
+                            "<td>Splice Loss</td><td "+getScoreStyle(scores.DS_SL)+">" + scores.DS_SL.toFixed(2) +"</td><td>" + (scores.DS_SL == 0 ? "" : scores.DP_SL+" bp") + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Splice Gain</td><td "+getScoreStyle(scores.DS_SG)+">"+scores.DS_SG.toFixed(2)+"</td><td>" + (parseFloat(scores.DS_SG) == 0 ? "" : /*"<a href='"+scores.SG_url+"' target='_blank'>"+ */scores.DP_SG+" bp"/*+"</a>"*/) + "</td>"
+                            "<td>Splice Gain</td><td "+getScoreStyle(scores.DS_SG)+">" + scores.DS_SG.toFixed(2) +"</td><td>" + (scores.DS_SG == 0 ? "" : scores.DP_SG+" bp") + "</td>"
                         :
-                            "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">"+scores.DS_AL.toFixed(2)+"</td><td>" + (parseFloat(scores.DS_AL) == 0 ? "" : /*"<a href='"+scores.AL_url+"' target='_blank'>"+ */scores.DP_AL+" bp"/*+</a>"*/) + "</td>"+
+                            "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL)+">" + scores.DS_AL.toFixed(2) +"</td><td>" + ((scores.DS_AL == 0 && scores.DS_AL_REF == 0 && scores.DS_AL_ALT == 0)? "" : scores.DP_AL+" bp") + "</td><td "+getScoreStyle(scores.DS_AL_REF)+">" + scores.DS_AL_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_AL_ALT)+">" + scores.DS_AL_ALT.toFixed(2) + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL)+">"+scores.DS_DL.toFixed(2)+"</td><td>" + (parseFloat(scores.DS_DL) == 0 ? "" : /*"<a href='"+scores.DL_url+"' target='_blank'>"+ */scores.DP_DL+" bp"/*+"</a>"*/) + "</td>"+
+                            "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL)+">" + scores.DS_DL.toFixed(2) +"</td><td>" + ((scores.DS_DL == 0 && scores.DS_DL_REF == 0 && scores.DS_DL_ALT == 0)? "" : scores.DP_DL+" bp") + "</td><td "+getScoreStyle(scores.DS_DL_REF)+">" + scores.DS_DL_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_DL_ALT)+">" + scores.DS_DL_ALT.toFixed(2) + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG)+">"+scores.DS_AG.toFixed(2)+"</td><td>" + (parseFloat(scores.DS_AG) == 0 ? "" : /*"<a href='"+scores.AG_url+"' target='_blank'>"+ */scores.DP_AG+" bp"/*+"</a>"*/) + "</td>"+
+                            "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG)+">" + scores.DS_AG.toFixed(2) +"</td><td>" + ((scores.DS_AG == 0 && scores.DS_AG_REF == 0 && scores.DS_AG_ALT == 0)? "" : scores.DP_AG+" bp") + "</td><td "+getScoreStyle(scores.DS_AG_REF)+">" + scores.DS_AG_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_AG_ALT)+">" + scores.DS_AG_ALT.toFixed(2) + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">"+scores.DS_DG.toFixed(2)+"</td><td>" + (parseFloat(scores.DS_DG) == 0 ? "" : /*"<a href='"+scores.DG_url+"' target='_blank'>"+ */scores.DP_DG+" bp"/*+"</a>"*/) + "</td>"
+                            "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG)+">" + scores.DS_DG.toFixed(2) +"</td><td>" + ((scores.DS_DG == 0 && scores.DS_DG_REF == 0 && scores.DS_DG_ALT == 0)? "" : scores.DP_DG+" bp") + "</td><td "+getScoreStyle(scores.DS_DG_REF)+">" + scores.DS_DG_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_DG_ALT)+">" + scores.DS_DG_ALT.toFixed(2) + "</td>"
                     ) +
                   "</tr>"
 
                 if(scores.is_pangolin) {
-                    result  = "<tr><td><b>Pangolin Results: <a href='https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4' target='_blank'><i class='question circle outline icon' data-position='right center' data-content='Pangolin scores are computed on the server by running the Pangolin model with the user-selected parameters (ie. max distance).'></i></a></b> </td><td></td><td></td><td></td><td></td></tr>" + result
+                    result = "<tr><td><b>Pangolin Results: <a href='https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4' target='_blank'><i class='question circle outline icon' data-position='right center' data-content='Pangolin scores are computed on the server by running the Pangolin model with the user-selected parameters (ie. max distance).'></i></a></b> </td><td></td><td></td><td></td><td></td></tr>" + result
                 }
                 return result
               }).join("") +
@@ -642,8 +683,8 @@
             console.log("Most severe consequence:", most_severe_consequence)
 
             // get SpliceAI and Pangolin scores from API endpoints in parallel
-            //const base_api_url = "http://localhost:8080"
-            const base_api_url = "https://spliceailookup-api.broadinstitute.org"
+            const base_api_url = location.hostname == "" ? "http://localhost:8080" : "https://spliceailookup-api.broadinstitute.org"
+            //const base_api_url = "https://spliceailookup-api.broadinstitute.org"
             const getJSON_promises = ["spliceai", "pangolin"].map((endpoint) => {
                 const promise = $.getJSON(`${base_api_url}/${endpoint}/`,
                     {
@@ -661,7 +702,8 @@
             return Promise.all(getJSON_promises.map(p => p.catch(e => console.log(e))))
 
           }).then(function(response) {
-              console.log("SpliceAI-lookup server response:", response)
+              console.log("spliceai API response was:", response[0])
+              console.log("pangolin API response was:", response[1])
 
               $("#error-box").hide()
               $("#response-box").html(generateResultsTable(response))
@@ -677,6 +719,7 @@
               })
 
           }).catch(function(error) {
+
             $("#response-box").hide()
             let errorText = error.responseText
             try {

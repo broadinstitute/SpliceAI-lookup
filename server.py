@@ -26,6 +26,14 @@ from flask_talisman import Talisman
 from intervaltree import IntervalTree, Interval
 from spliceai.utils import Annotator, get_delta_scores
 
+# pandas output options
+pd.options.display.float_format = "{:,.2f}".format
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
+pd.set_option('display.expand_frame_repr', False)
+pd.set_option('max_colwidth', -1)
+
+
 app = Flask(__name__)
 
 CORS(app)
@@ -148,8 +156,11 @@ VARIANT_RE = re.compile(
 REDIS = redis.Redis(host='localhost', port=6379, db=0)  # in-memory cache server which may or may not be running
 
 
-def error_response(error_message):
-    return Response(json.dumps({"error": str(error_message)}), status=400, mimetype='application/json')
+def error_response(error_message, source=None):
+    response_json = {"error": str(error_message)}
+    if source:
+        response_json["source"] = source
+    return Response(json.dumps(response_json), status=400, mimetype='application/json')
 
 
 REVERSE_COMPLEMENT_MAP = dict(zip("ACGTN", "TGCAN"))
@@ -274,6 +285,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
     except ValueError as e:
         return {
             "variant": variant,
+            "source": "spliceai",
             "error": f"ERROR: {e}",
         }
 
@@ -287,6 +299,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
             other_genome_genes = " and ".join(sorted(set([str(i.data).split("---")[0] for i in other_genome_overlapping_intervals])))
             return {
                 "variant": variant,
+                "source": "spliceai",
                 "error": f"ERROR: In GRCh{genome_version}, {chrom}-{pos}-{ref}-{alt} falls outside all gencode exons and introns."
                          f"SpliceAI only works for variants within known exons or introns. However, in GRCh{other_genome_version}, "
                          f"{chrom}:{pos} falls within {other_genome_genes}, so perhaps GRCh{genome_version} is not the correct genome version?"
@@ -294,6 +307,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
         else:
             return {
                 "variant": variant,
+                "source": "spliceai",
                 "error": f"ERROR: {chrom}-{pos}-{ref}-{alt} falls outside all Gencode exons and introns on "
                 f"GRCh{genome_version}. SpliceAI only works for variants that are within known exons or introns.",
             }
@@ -326,39 +340,52 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
                 if fields[0] == chrom and int(fields[1]) == pos and fields[3] == ref and fields[4] == alt:
                     scores.append(fields[7])
             if scores:
-                source = "splice-ai:lookup"
+                source = "spliceai:lookup"
                 #print(f"Fetched: ", scores, flush=True)
 
         except Exception as e:
             print(f"ERROR: couldn't retrieve scores using tabix: {type(e)}: {e}", flush=True)
 
     # run the SpliceAI model to compute the scores
+    all_scores = []
     if not scores:
         error_message = exceeds_rate_limit(request.remote_addr, request_type="spliceai:model")
         if error_message:
             return {
                 "variant": variant,
+                "source": "spliceai",
                 "error": error_message,
             }
 
         record = VariantRecord(chrom, pos, ref, alt)
         try:
+            #scores, all_scores = get_delta_scores(
             scores = get_delta_scores(
                 record,
                 SPLICEAI_ANNOTATOR[genome_version],
                 distance_param,
                 mask_param)
-            source = "splice-ai:model"
+            source = "spliceai:model"
+
+            #print("All scores:", flush=True)
+            #all_scores_transript0 = all_scores[0]
+            #all_scores_transript0["position"] = list(range(-distance_param, distance_param + 1))
+            #df = pd.DataFrame(all_scores_transript0)
+            #df = df.applymap(lambda x: "{:.2f}".format(x) if x >= 0.01 else "")
+            #print(df, flush=True)
+
             #print(f"Computed: ", scores, flush=True)
         except Exception as e:
             return {
                 "variant": variant,
+                "source": "spliceai",
                 "error": f"ERROR: {type(e)}: {e}",
             }
 
     if not scores:
         return {
             "variant": variant,
+            "source": "spliceai",
             "error": f"ERROR: The SpliceAI model did not return any scores for {variant}. This is typically due to the "
                      f"variant falling outside of all Gencode exons and introns.",
         }
@@ -389,12 +416,14 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
     except ValueError as e:
         return {
             "variant": variant,
+            "source": "pangolin",
             "error": f"ERROR: {e}",
         }
 
     if len(ref) > 1 and len(alt) > 1:
         return {
             "variant": variant,
+            "source": "pangolin",
             "error": f"ERROR: Pangolin does not currently support complex InDels like {chrom}-{pos}-{ref}-{alt}",
         }
 
@@ -402,6 +431,7 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
     if error_message:
         return {
             "variant": variant,
+            "source": "pangolin",
             "error": error_message,
         }
 
@@ -423,7 +453,8 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
     if scores == -1:
         return {
             "variant": variant,
-            "error": f"ERROR: Unable to compute Pangolin scores",
+            "source": "pangolin",
+            "error": f"ERROR: Pangolin was unable to compute scores for this variant",
         }
 
     parsed_scores = []
@@ -489,39 +520,39 @@ def run_splice_prediction_tool(tool_name):
     error_message = exceeds_rate_limit(request.remote_addr, request_type=f"{tool_name}:total")
     if error_message:
         print(f"{logging_prefix}: {request.remote_addr}: response: {error_message}", flush=True)
-        return error_response(error_message)
+        return error_response(error_message, source=tool_name)
 
     variant = params.get('variant', '')
     variant = variant.strip().strip("'").strip('"').strip(",")
     if not variant:
-        return error_response(f'"variant" not specified. For example: {SPLICEAI_EXAMPLE}\n')
+        return error_response(f'"variant" not specified. For example: {SPLICEAI_EXAMPLE}\n', source=tool_name)
 
     if not isinstance(variant, str):
-        return error_response(f'"variant" value must be a string rather than a {type(variant)}.\n')
+        return error_response(f'"variant" value must be a string rather than a {type(variant)}.\n', source=tool_name)
 
     genome_version = params.get("hg")
     if not genome_version:
-        return error_response(f'"hg" not specified. The URL must include an "hg" arg: hg=37 or hg=38. For example: {SPLICEAI_EXAMPLE}\n')
+        return error_response(f'"hg" not specified. The URL must include an "hg" arg: hg=37 or hg=38. For example: {SPLICEAI_EXAMPLE}\n', source=tool_name)
 
     if genome_version not in ("37", "38"):
-        return error_response(f'Invalid "hg" value: "{genome_version}". The value must be either "37" or "38". For example: {SPLICEAI_EXAMPLE}\n')
+        return error_response(f'Invalid "hg" value: "{genome_version}". The value must be either "37" or "38". For example: {SPLICEAI_EXAMPLE}\n', source=tool_name)
 
     distance_param = params.get("distance", SPLICEAI_DEFAULT_DISTANCE)
     try:
         distance_param = int(distance_param)
     except Exception as e:
-        return error_response(f'Invalid "distance": "{distance_param}". The value must be an integer.\n')
+        return error_response(f'Invalid "distance": "{distance_param}". The value must be an integer.\n', source=tool_name)
 
     if distance_param > SPLICEAI_MAX_DISTANCE_LIMIT:
-        return error_response(f'Invalid "distance": "{distance_param}". The value must be < {SPLICEAI_MAX_DISTANCE_LIMIT}.\n')
+        return error_response(f'Invalid "distance": "{distance_param}". The value must be < {SPLICEAI_MAX_DISTANCE_LIMIT}.\n', source=tool_name)
 
     mask_param = params.get("mask", str(SPLICEAI_DEFAULT_MASK))
     if mask_param not in ("0", "1"):
-        return error_response(f'Invalid "mask" value: "{mask_param}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n')
+        return error_response(f'Invalid "mask" value: "{mask_param}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n', source=tool_name)
 
     use_precomputed_scores = params.get("precomputed", str(USE_PRECOMPUTED_SCORES))
     if use_precomputed_scores not in ("0", "1"):
-        return error_response(f'Invalid "precomputed" value: "{use_precomputed_scores}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n')
+        return error_response(f'Invalid "precomputed" value: "{use_precomputed_scores}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n', source=tool_name)
 
     use_precomputed_scores = int(use_precomputed_scores)
 
@@ -544,8 +575,6 @@ def run_splice_prediction_tool(tool_name):
         if "error" not in results:
             add_splicing_scores_to_redis(tool_name, variant, genome_version, distance_param, mask_param, use_precomputed_scores, results)
 
-    status = 400 if results.get("error") else 200
-
     response_json = {}
     response_json.update(params)  # copy input params to output
     response_json.update(results)
@@ -557,7 +586,7 @@ def run_splice_prediction_tool(tool_name):
         print(f"{logging_prefix}: {request.remote_addr}: {variant} response: {response_json}", flush=True)
         print(f"{logging_prefix}: {request.remote_addr}: {variant} took {duration}", flush=True)
 
-    return Response(json.dumps(response_json), status=status, mimetype='application/json')
+    return Response(json.dumps(response_json), status=200, mimetype='application/json')
 
 
 LIFTOVER_EXAMPLE = f"/liftover/?hg=hg19-to-hg38&format=interval&chrom=chr8&start=140300615&end=140300620"
