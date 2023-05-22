@@ -183,17 +183,17 @@
                                         <div class="field" style="padding-right:10px; white-space:nowrap">
                                             <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Score type:</b></span>
                                             <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                                <input type="radio" name="mask" value="1" /><label>masked</label>
+                                                <input type="radio" name="mask" value="1" checked /><label>masked</label>
                                             </div>
                                             <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                                <input type="radio" name="mask" value="0" checked /><label>raw</label>
+                                                <input type="radio" name="mask" value="0" /><label>raw</label>
                                             </div>
                                             <i style="margin-left:20px" class="question circle outline icon" data-position="right center" data-content="Splicing changes corresponding to strengthening annotated splice sites and weakening unannotated splice sites are typically much less pathogenic than weakening annotated splice sites and strengthening unannotated splice sites. Selecting 'masked' will hide the score for such splicing changes and show 0 instead. Selecting 'raw' will show all scores. SpliceAI developers recommend using 'raw' scores for alternative splicing analysis and 'masked' scores for variant interpretation."></i>
                                         </div>
                                         <div class="field" style="padding-right:10px; white-space:nowrap">
                                             <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Max distance:</b></span>
                                             <div class="ui input" style="padding-left:15px; padding-bottom:10px; padding-right:8px; width:100px">
-                                                <input id="max-distance-input" type="text" value="50" style="padding:7px 10px">
+                                                <input id="max-distance-input" type="text" value="500" style="padding:7px 10px">
                                             </div>
                                             <i class="question circle outline icon" data-position="right center" data-content="For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distance specified here controls the size of this window. The maximum allowed value is 10,000bp."></i>
                                         </div>
@@ -226,11 +226,12 @@
                     <br />
                     <div><i>What's New</i></div>
                     <br />
+		    <b>May 22, 2023</b><br />
+		    - changed defaults to 'masked' and distance = 500bp<br />
+		    <br />
                     <b>May 12, 2023</b><br />
                     - added REF & ALT score columns to show SpliceAI's underlying predictions for each haplotype (using <a href="https://github.com/Illumina/SpliceAI/pull/92">SpliceAI PR by @h-joshi</a>).
                     The &#916;&nbsp; score column is the difference between these two scores.<br />
-                    <br />		    
-                    <b>May 10, 2023</b><br />
                     - added support for MNPs (see <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/1">issue #1</a> & <a href="https://github.com/Illumina/SpliceAI/pull/119">SpliceAI PR by @kdahlo</a>)<br />
                     - fixed bug where "raw" Pangolin scores were shown regardless of whether the user selected "raw" or "masked".<br />
                     - updated to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v43</a> (was previously on v42)<br />
