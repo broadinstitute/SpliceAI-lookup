@@ -7,7 +7,7 @@ assignees: ''
 
 ---
 
-Please paste the url of the results page and the variant search string as text here (unless this isn't about a specific variant).
+Please include the url of the results page and the variant search string as text here (unless this isn't about a specific variant).
 
 
 ---
