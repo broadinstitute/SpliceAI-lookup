@@ -135,13 +135,13 @@ SPLICEAI_ANNOTATOR = {
 }
 
 SPLICEAI_MAX_DISTANCE_LIMIT = 10000
-SPLICEAI_DEFAULT_DISTANCE = 50  # maximum distance between the variant and gained/lost splice site, defaults to 50
-SPLICEAI_DEFAULT_MASK = 0       # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
-USE_PRECOMPUTED_SCORES = 1      # whether to use precomputed scores by default
+SPLICEAI_DEFAULT_DISTANCE = 500  # maximum distance between the variant and gained/lost splice site, defaults to 50
+SPLICEAI_DEFAULT_MASK = 0        # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
+USE_PRECOMPUTED_SCORES = 0       # whether to use precomputed scores by default
 
 SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
 
-SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&distance=50&mask=0&precomputed=1&variant=chr8-140300615-C-G"
+SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&distance=500&mask=0&precomputed=1&variant=chr8-140300615-C-G"
 
 VARIANT_RE = re.compile(
     "(chr)?(?P<chrom>[0-9XYMTt]{1,2})"
