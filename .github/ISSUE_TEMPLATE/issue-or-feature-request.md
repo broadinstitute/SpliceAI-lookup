@@ -7,7 +7,9 @@ assignees: ''
 
 ---
 
-URL (copy-paste the url of a page where you see the issue or have a feature suggestion):
+Please provide the url of the page and the variant search string as text. 
 
 
-Screenshot (optionally, paste or drag-drop an image here):
+If you'd like to also share a screenshot:
+MacOSX: Press **Command+Shift+4**, then select a region of the page, then paste the image into this text box by pressing **Command+v**.
+Windows:  Press **Windows Logo Key + PrtScn**  or  **Fn + Windows logo key + Space Bar**. Then, in File Explorer, open the Pictures > Screenshots folder and drag the image here.
