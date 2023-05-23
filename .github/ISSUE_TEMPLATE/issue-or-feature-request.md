@@ -7,7 +7,10 @@ assignees: ''
 
 ---
 
-URL (copy-paste the url of a page where you see the issue or have a feature suggestion):
+Please paste the url of the results page and the variant search string as text here (unless this isn't about a specific variant).
 
 
-Screenshot (optionally, paste or drag-drop an image here):
+---
+If you'd like to also share a screenshot:
+MacOSX:   Press Command+Shift+4, select a region of the page, then paste the image here.
+Windows:  Press Windows Logo Key + PrtScn   or   Fn + Windows logo key + Space Bar. Then, in File Explorer, open the Pictures > Screenshots folder and drag the image here.
