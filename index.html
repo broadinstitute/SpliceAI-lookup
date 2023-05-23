@@ -197,7 +197,7 @@
                                             </div>
                                             <i class="question circle outline icon" data-position="right center" data-content="For each variant, SpliceAI looks within a window (+/- 50bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distance specified here controls the size of this window. The maximum allowed value is 10,000bp."></i>
                                         </div>
-                                        <div class="field" style="padding-right:10px; padding-bottom:12px; white-space:nowrap">
+                                        <!--div class="field" style="padding-right:10px; padding-bottom:12px; white-space:nowrap">
                                             <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Use Illumina's pre-computed scores:</b></span>
                                             <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
                                                 <input type="radio" name="use-precomputed-scores" value="1" /><label>yes</label>
@@ -206,7 +206,7 @@
                                                 <input type="radio" name="use-precomputed-scores" value="0" checked /><label>no</label>
                                             </div>
                                             <i style="margin-left:20px" class="question circle outline icon" data-position="right center" data-content="Illumina provides pre-computed SpliceAI scores for all SNPs and small InDels within Gencode v24 canonical transcripts. If 'yes' is selected here, the server will quickly check these pre-computed files to see if it can avoid the relatively slow step of running the SpliceAI model. Even with 'yes' selected, it will still run the model if it finds that the pre-computed files don't contain the variant. Selecting 'no' will cause the server to always skip the pre-computed files and run the model. The benefit of skipping the pre-computed files is that, although the scores may take longer, they will always be computed for Gencode v38 transcripts and will include ENSG and ENST ids in addition to the gene name."></i>
-                                        </div>
+                                        </div-->
                                     </div>
                                     <div class="three wide column">
                                         <button id="submit-button" class="ui primary button" style="margin-bottom: 15px">Submit</button>
@@ -226,19 +226,23 @@
                     <br />
                     <div><i>What's New</i></div>
                     <br />
-		    <b>May 22, 2023</b><br />
-		    - changed defaults to 'masked' and distance = 500bp<br />
-		    <br />
+                    <b>May 22, 2023</b><br />
+                    - changed defaults to 'masked' and distance = 500bp<br />
+                    - retired <b>Illumina precomputed scores</b> since they were created using Gencode v24
+                    and a distance = 50bp and so can differ from computed scores which are based on the latest Gencode version<br/>
+                    <br />
                     <b>May 12, 2023</b><br />
                     - added REF & ALT score columns to show SpliceAI's underlying predictions for each haplotype (using <a href="https://github.com/Illumina/SpliceAI/pull/92">SpliceAI PR by @h-joshi</a>).
                     The &#916;&nbsp; score column is the difference between these two scores.<br />
                     - added support for MNPs (see <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/1">issue #1</a> & <a href="https://github.com/Illumina/SpliceAI/pull/119">SpliceAI PR by @kdahlo</a>)<br />
-                    - fixed bug where "raw" Pangolin scores were shown regardless of whether the user selected "raw" or "masked".<br />
                     - updated to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v43</a> (was previously on v42)<br />
 		            <br />
 
                     <a id="more-details3-button" href="#" onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
                     <div id="more-details3" style="display:none">
+                        <b>May 0, 2023</b><br />
+                        - fixed bug where "raw" Pangolin scores were shown regardless of whether the user selected "raw" or "masked".<br />
+                        <br />
 
                         <b>Feb 5, 2023</b><br />
                         - show <a href="https://github.com/tkzeng/Pangolin">Pangolin scores</a> in addition to SpliceAI scores.<br />
@@ -404,6 +408,13 @@
         return variant
       }
 
+      function formatScore(score) {
+          if (score == null || isNaN(score)) {
+              return ""
+          } else {
+              return parseFloat(score).toFixed(2)
+          }
+      }
 
       function getScoreStyle(score, isDeltaScore) {
         if (typeof isDeltaScore === 'undefined') {
@@ -590,17 +601,17 @@
                     "<a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+gene_name+"' class='smallLink' target='_blank'>GeneCards</a>" +
                   "</td>" +
                     (scores.is_pangolin ?
-                            "<td>Splice Loss</td><td "+getScoreStyle(scores.DS_SL, true)+">" + scores.DS_SL.toFixed(2) +"</td><td>" + (scores.DS_SL == 0 ? "" : scores.DP_SL+" bp") + "</td>"+
+                            "<td>Splice Loss</td><td "+getScoreStyle(scores.DS_SL, true)+">" + formatScore(scores.DS_SL) +"</td><td>" + (scores.DS_SL == 0 ? "" : scores.DP_SL+" bp") + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Splice Gain</td><td "+getScoreStyle(scores.DS_SG, true)+">" + scores.DS_SG.toFixed(2) +"</td><td>" + (scores.DS_SG == 0 ? "" : scores.DP_SG+" bp") + "</td>"
+                            "<td>Splice Gain</td><td "+getScoreStyle(scores.DS_SG, true)+">" + formatScore(scores.DS_SG) +"</td><td>" + (scores.DS_SG == 0 ? "" : scores.DP_SG+" bp") + "</td>"
                         :
-                            "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL, true)+">" + scores.DS_AL.toFixed(2) +"</td><td>" + ((scores.DS_AL == 0 && scores.DS_AL_REF == 0 && scores.DS_AL_ALT == 0)? "" : scores.DP_AL+" bp") + "</td><td "+getScoreStyle(scores.DS_AL_REF)+">" + scores.DS_AL_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_AL_ALT)+">" + scores.DS_AL_ALT.toFixed(2) + "</td>"+
+                            "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL, true)+">" + formatScore(scores.DS_AL) +"</td><td>" + ((scores.DS_AL == 0 && scores.DS_AL_REF == 0 && scores.DS_AL_ALT == 0)? "" : scores.DP_AL+" bp") + "</td><td "+getScoreStyle(scores.DS_AL_REF)+">" + formatScore(scores.DS_AL_REF) + "</td><td "+getScoreStyle(scores.DS_AL_ALT)+">" + formatScore(scores.DS_AL_ALT) + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL, true)+">" + scores.DS_DL.toFixed(2) +"</td><td>" + ((scores.DS_DL == 0 && scores.DS_DL_REF == 0 && scores.DS_DL_ALT == 0)? "" : scores.DP_DL+" bp") + "</td><td "+getScoreStyle(scores.DS_DL_REF)+">" + scores.DS_DL_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_DL_ALT)+">" + scores.DS_DL_ALT.toFixed(2) + "</td>"+
+                            "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL, true)+">" + formatScore(scores.DS_DL) +"</td><td>" + ((scores.DS_DL == 0 && scores.DS_DL_REF == 0 && scores.DS_DL_ALT == 0)? "" : scores.DP_DL+" bp") + "</td><td "+getScoreStyle(scores.DS_DL_REF)+">" + formatScore(scores.DS_DL_REF) + "</td><td "+getScoreStyle(scores.DS_DL_ALT)+">" + formatScore(scores.DS_DL_ALT) + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG, true)+">" + scores.DS_AG.toFixed(2) +"</td><td>" + ((scores.DS_AG == 0 && scores.DS_AG_REF == 0 && scores.DS_AG_ALT == 0)? "" : scores.DP_AG+" bp") + "</td><td "+getScoreStyle(scores.DS_AG_REF)+">" + scores.DS_AG_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_AG_ALT)+">" + scores.DS_AG_ALT.toFixed(2) + "</td>"+
+                            "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG, true)+">" + formatScore(scores.DS_AG) +"</td><td>" + ((scores.DS_AG == 0 && scores.DS_AG_REF == 0 && scores.DS_AG_ALT == 0)? "" : scores.DP_AG+" bp") + "</td><td "+getScoreStyle(scores.DS_AG_REF)+">" + formatScore(scores.DS_AG_REF) + "</td><td "+getScoreStyle(scores.DS_AG_ALT)+">" + formatScore(scores.DS_AG_ALT) + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG, true)+">" + scores.DS_DG.toFixed(2) +"</td><td>" + ((scores.DS_DG == 0 && scores.DS_DG_REF == 0 && scores.DS_DG_ALT == 0)? "" : scores.DP_DG+" bp") + "</td><td "+getScoreStyle(scores.DS_DG_REF)+">" + scores.DS_DG_REF.toFixed(2) + "</td><td "+getScoreStyle(scores.DS_DG_ALT)+">" + scores.DS_DG_ALT.toFixed(2) + "</td>"
+                            "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG, true)+">" + formatScore(scores.DS_DG) +"</td><td>" + ((scores.DS_DG == 0 && scores.DS_DG_REF == 0 && scores.DS_DG_ALT == 0)? "" : scores.DP_DG+" bp") + "</td><td "+getScoreStyle(scores.DS_DG_REF)+">" + formatScore(scores.DS_DG_REF) + "</td><td "+getScoreStyle(scores.DS_DG_ALT)+">" + formatScore(scores.DS_DG_ALT) + "</td>"
                     ) +
                   "</tr>"
 
@@ -637,7 +648,7 @@
           const genome_version = $("input[name='hg']:checked").val().trim()
           const mask = $("input[name='mask']:checked").val().trim()
           const max_distance = $("#max-distance-input").val().trim()
-          const use_precomputed_scores = $("input[name='use-precomputed-scores']:checked").val().trim()
+          //const use_precomputed_scores = $("input[name='use-precomputed-scores']:checked").val().trim()
           const variant_hgvs = parseVariantToHGVS(variant, genome_version)
 
           $("#error-box").hide()
@@ -693,7 +704,7 @@
                         hg: genome_version,
                         distance: max_distance,
                         mask: mask,
-                        precomputed: use_precomputed_scores,
+                        //precomputed: use_precomputed_scores,
                         variant: chrom + '-' + pos + '-' + ref + '-' + alt,
                         raw: variant,
                     }
@@ -717,7 +728,7 @@
                   hg: genome_version,
                   distance: max_distance,
                   mask: mask,
-                  precomputed: use_precomputed_scores,
+                  //precomputed: use_precomputed_scores,
               })
 
           }).catch(function(error) {
@@ -756,10 +767,12 @@
           $("input[name='mask'][value='"+maskFromUrl+"']").prop("checked", true)
         }
 
+        /*
         const precomputedFromUrl = $.urlParam('precomputed')
         if (precomputedFromUrl) {
           $("input[name='use-precomputed-scores'][value='"+precomputedFromUrl+"']").prop("checked", true)
         }
+        */
 
         const variantFromUrl = $.urlParam('variant')
         if (variantFromUrl) {

@@ -100,7 +100,7 @@ else:
 
 GRCH37_ANNOTATIONS = "./annotations/gencode.v43lift37.annotation.txt.gz"
 GRCH38_ANNOTATIONS = "./annotations/gencode.v43.annotation.txt.gz"
-PANGOLIN_GRCH37_ANNOTATIONS = "./annotations/gencode.v43lift37.annotation.db"
+PANGOLIN_GRCH37_ANNOTATIONS = "./annotations/gencode.v43lift37.annotation.without_chr_prefix.db"
 PANGOLIN_GRCH38_ANNOTATIONS = "./annotations/gencode.v43.annotation.db"
 
 PANGOLIN_MODELS = []
