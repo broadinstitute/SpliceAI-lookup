@@ -20,7 +20,7 @@ from pangolin.pangolin import process_variant as process_variant_using_pangolin
 import gffutils
 
 # flask imports
-from flask import Flask, request, Response
+from flask import Flask, request, Response, send_from_directory
 from flask_cors import CORS
 from flask_talisman import Talisman
 from intervaltree import IntervalTree, Interval
@@ -757,8 +757,28 @@ def run_liftover():
 
     return Response(json.dumps(result), mimetype='application/json')
 
+# share static files from the annotations folder to support local installs
+@app.route('/annotations/', strict_slashes=False, defaults={'path': ''})
+@app.route('/annotations/<path:path>')
+def send_annotations(path):
+    if os.path.isfile(os.path.join("annotations", path)):
+        return send_from_directory('annotations', path)
 
-@app.route('/', defaults={'path': ''})
+    # return an html table of available annotation files
+    html = "<html><head><title>SpliceAI-lookup: Annotation Files</title></head>"
+    html += "<body><table>"
+    html += "<tr><th align=left>./annotation files</th><th align=left>last updated</th></tr>"
+    for filename in os.listdir("annotations"):
+        html += f"<tr><td><a href='/annotations/{filename}'>{filename}</a></td>"
+        last_modified = datetime.fromtimestamp(os.path.getmtime(os.path.join('annotations', filename)))
+        html += f"<td>{last_modified.strftime('%Y-%m-%d %H:%M:%S')}</td></tr>"
+    html += "</table></body></html>"
+
+    return Response(html, mimetype='text/html')
+
+
+
+@app.route('/', strict_slashes=False, defaults={'path': ''})
 @app.route('/<path:path>/')
 def catch_all(path):
     with open("README.md") as f:

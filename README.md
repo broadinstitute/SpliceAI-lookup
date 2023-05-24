@@ -44,9 +44,11 @@ The steps below outline how to install a SpliceAI API server on your local infra
 The details will vary depending on your OS, etc. If you run into issues, please submit them
 to the [issue tracker](https://github.com/broadinstitute/SpliceAI-lookup/issues).
 
-1. Install and start a [redis](https://redis.io/) server. It's used to cache API server responses and avoid redundantly recomputing results.
+1. Install pytorch as described in the [Pangolin installation docs](https://github.com/tkzeng/Pangolin#installation)
+1. Install and start a [redis](https://redis.io/) server. It's used to cache previously computed API server responses so that they don't have to be computed again.
 1. Download reference fasta files: [hg19.fa](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/bigZips/hg19.fa.gz) and [hg38.fa](http://hgdownload.cse.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz)
 1. Optionally download pre-computed scores .vcf.gz and .vcf.gz.tbi files from [Illumina Basespace](https://basespace.illumina.com/s/otSPW8hnhaZR)   
+1. Download [annotation files](https://spliceailookup.broadinstitute.org/annotations) into your local ./annotations directory.
 1. Start a single-threaded SpliceAI API server on localhost port 8080. To modify server options, edit the `start_local_server.sh` script:
 
 ```

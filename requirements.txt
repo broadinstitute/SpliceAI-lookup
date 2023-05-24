@@ -11,3 +11,9 @@ markdown2
 pandas
 pysam
 redis
+# pangolin dependencies:
+gffutils
+biopython
+pyfastx
+pyvcf>=0.6.8
+pangolin @ git+https://github.com/tkzeng/Pangolin
