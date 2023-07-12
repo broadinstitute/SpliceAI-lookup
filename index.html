@@ -212,7 +212,7 @@
                                         <button id="submit-button" class="ui primary button right floated" style="margin-bottom: 15px">Submit</button>
                                     </div>
                                 </div>
-                                <div class="row">
+                                <div id="survey" class="row">
                                   <div class="twelve wide column">
                                     <div class="field">
                                       While you're waiting for your results...
@@ -222,7 +222,7 @@
                                     </div>
                                   </div>
                                   <div class="four wide column" style="padding-right: 1.5rem">
-                                    <button id="survey" class="ui button right floated" onclick="window.open('https://forms.gle/cppzxRamzeJQcHDS9','popup','width=800,height=800')" style="background-color:rgba(252, 207, 184, 1)">Open Survey</button> 
+                                    <button class="ui button right floated" onclick="window.open('https://forms.gle/cppzxRamzeJQcHDS9','popup','width=800,height=800')" style="background-color:rgba(252, 207, 184, 1)">Open Survey</button> 
                                   </div>
                                 </div>
                             </div>
@@ -734,6 +734,7 @@
               $("#error-box").hide()
               $("#response-box").html(generateResultsTable(response))
               $("#response-box").show()
+              $("#survey").hide()
 
               // set url
               window.location.hash = "#" + $.param({
