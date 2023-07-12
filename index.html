@@ -208,9 +208,22 @@
                                             <i style="margin-left:20px" class="question circle outline icon" data-position="right center" data-content="Illumina provides pre-computed SpliceAI scores for all SNPs and small InDels within Gencode v24 canonical transcripts. If 'yes' is selected here, the server will quickly check these pre-computed files to see if it can avoid the relatively slow step of running the SpliceAI model. Even with 'yes' selected, it will still run the model if it finds that the pre-computed files don't contain the variant. Selecting 'no' will cause the server to always skip the pre-computed files and run the model. The benefit of skipping the pre-computed files is that, although the scores may take longer, they will always be computed for Gencode v38 transcripts and will include ENSG and ENST ids in addition to the gene name."></i>
                                         </div-->
                                     </div>
-                                    <div class="three wide column">
-                                        <button id="submit-button" class="ui primary button" style="margin-bottom: 15px">Submit</button>
+                                    <div class="three wide column" style="padding-right: 1.5rem">
+                                        <button id="submit-button" class="ui primary button right floated" style="margin-bottom: 15px">Submit</button>
                                     </div>
+                                </div>
+                                <div class="row">
+                                  <div class="twelve wide column">
+                                    <div class="field">
+                                      While you're waiting for your results...
+                                      <br />
+                                      <b>Help us to make SpliceAI Lookup even better!</b>
+                                      <i class="question circle outline icon" data-position="right center" data-content="This fairly short survey (~3-5mins) will help us understand what existing features you use and get information on what we should add, such as the highly-requested in-frame vs out-of-frame calculations. We'll be rolling out some of these features over the next few months, so keep an eye out!"></i>
+                                    </div>
+                                  </div>
+                                  <div class="four wide column" style="padding-right: 1.5rem">
+                                    <button id="survey" class="ui button right floated" onclick="window.open('https://forms.gle/cppzxRamzeJQcHDS9','popup','width=800,height=800')" style="background-color:rgba(252, 207, 184, 1)">Open Survey</button> 
+                                  </div>
                                 </div>
                             </div>
                         </div>
