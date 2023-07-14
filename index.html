@@ -629,7 +629,7 @@
                   "</tr>"
 
                 if(scores.is_pangolin) {
-                    result = "<tr class='pangolin_header'><td style='white-space: nowrap'><b>Pangolin scores: <a href='https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4' target='_blank'><i class='question circle outline icon' data-position='right center' data-content='Pangolin scores are computed on the server by running the Pangolin model with the user-selected parameters (ie. max distance).'></i></a></b> </td><td></td><td></td><td></td><td></td></tr>" + result
+                    result = "<tr class='pangolin_header' style='display:none'><td style='white-space: nowrap'><b>Pangolin scores: <a href='https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4' target='_blank'><i class='question circle outline icon' data-position='right center' data-content='Pangolin scores are computed on the server by running the Pangolin model with the user-selected parameters (ie. max distance).'></i></a></b> </td><td></td><td></td><td></td><td></td></tr>" + result
                 }
                 return result
               }).join("") +
@@ -736,7 +736,6 @@
               $("#response-box").show()
               $("#survey").hide()
 
-              $('.pangolin_header').hide()
               $('.pangolin_header').eq(0).show(); // show only first occurence of pangolin header
 
               // set url
