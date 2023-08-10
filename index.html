@@ -433,7 +433,7 @@
         if (typeof isDeltaScore === 'undefined') {
           isDeltaScore = false;
         }
-        score = parseFloat(score)
+        score = Math.abs(parseFloat(score))
         if (score == 0) {
           return "style='color:#BBBBBB'"
         }
@@ -559,7 +559,7 @@
                 const gnomAD_version = scores.hg === "38"? "gnomad_r3" : "gnomad_r2_1"
                 const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + scores.variant + "?dataset=" + gnomAD_version
                 const gene_name_fields = (scores.SYMBOL || "").split("---")
-                const gene_name = gene_name_fields[0].split(".")[0]  // remove gene version number
+                const gene_name = gene_name_fields[0].split(".")[0]  // remove gene version number  TODO remove this after switching Pangolin to use regular gene names
 
                 const is_canonical_transcript = gene_name_fields.length >= 4 && gene_name_fields[3] === "yes"
                 const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
