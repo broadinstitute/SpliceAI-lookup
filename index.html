@@ -121,7 +121,7 @@
                                             <td></td>
                                         </tr>
                                         <tr>
-                                            <td style="padding-right: 0px">NM_000552.4(VWF):c.3797C>A (p.Pro1266Gln)</td>
+                                            <td style="padding-right: 0px">NM_001089.3(ABCA3):c.875A>T (p.Glu292Val)</td>
                                             <td style="padding-left: 0px">
                                                 <a id="more-details2-button" href="#" onclick="$('.more-details2').show();$('#more-details2-button').hide();">[show more examples]</a>
                                             </td>
@@ -472,7 +472,7 @@
                 (is_pangolin ? PANGOLIN_SCORE_FIELDS : SPLICEAI_SCORE_FIELDS).forEach(function(k, i) {
                     splice_prediction_dict[k] = splice_prediction_values[i]
                     if (k.startsWith("DS_")) {
-                        splice_prediction_dict[k] = Math.abs(parseFloat(splice_prediction_dict[k]))
+                        splice_prediction_dict[k] = parseFloat(splice_prediction_dict[k])
                     }
                 })
 
@@ -546,7 +546,7 @@
                 const gnomAD_version = scores.hg === "38"? "gnomad_r3" : "gnomad_r2_1"
                 const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + scores.variant + "?dataset=" + gnomAD_version
                 const gene_name_fields = (scores.SYMBOL || "").split("---")
-                const gene_name = gene_name_fields[0]
+                const gene_name = gene_name_fields[0].split(".")[0]  // remove gene version number
 
                 const is_canonical_transcript = gene_name_fields.length >= 4 && gene_name_fields[3] === "yes"
                 const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
