@@ -153,7 +153,12 @@ VARIANT_RE = re.compile(
     "(?P<alt>[ACGT]+)"
 )
 
-REDIS = redis.Redis(host='localhost', port=6379, db=0)  # in-memory cache server which may or may not be running
+USE_REDIS = True
+
+if USE_REDIS:
+    REDIS = redis.Redis(host='localhost', port=6379, db=0)  # in-memory cache server which may or may not be running
+else:
+    REDIS = None
 
 
 def error_response(error_message, source=None):
@@ -194,6 +199,9 @@ def get_splicing_scores_redis_key(tool_name, variant, genome_version, distance, 
 
 
 def get_splicing_scores_from_redis(tool_name, variant, genome_version, distance, mask, use_precomputed_scores):
+    if REDIS is None:
+        return None
+
     key = get_splicing_scores_redis_key(tool_name, variant, genome_version, distance, mask, use_precomputed_scores)
     results = None
     try:
@@ -208,6 +216,9 @@ def get_splicing_scores_from_redis(tool_name, variant, genome_version, distance,
 
 
 def add_splicing_scores_to_redis(tool_name, variant, genome_version, distance, mask, use_precomputed_scores, results):
+    if REDIS is None:
+        return
+
     key = get_splicing_scores_redis_key(tool_name, variant, genome_version, distance, mask, use_precomputed_scores)
     try:
         results_string = json.dumps(results)
@@ -225,6 +236,9 @@ def exceeds_rate_limit(user_id, request_type):
 
     Return str: error message about exceeding the rate limit, or None if the rate limit was not exceeded
     """
+    if REDIS is None:
+        return False
+
     if request_type not in RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE:
         raise ValueError(f"Invalid 'request_type' arg value: {request_type}")
 
@@ -652,6 +666,9 @@ def get_liftover_redis_key(genome_version, chrom, start, end):
 
 
 def get_liftover_from_redis(hg, chrom, start, end):
+    if REDIS is None:
+        return None
+
     key = get_liftover_redis_key(hg, chrom, start, end)
     results = None
     try:
@@ -665,6 +682,9 @@ def get_liftover_from_redis(hg, chrom, start, end):
 
 
 def add_liftover_to_redis(hg, chrom, start, end, result):
+    if REDIS is None:
+        return
+
     key = get_liftover_redis_key(hg, chrom, start, end)
     try:
         results_string = json.dumps(result)
