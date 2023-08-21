@@ -6,7 +6,6 @@ import os
 import pandas as pd
 import pysam
 import re
-import redis
 import socket
 import subprocess
 import sys
@@ -156,6 +155,7 @@ VARIANT_RE = re.compile(
 USE_REDIS = True
 
 if USE_REDIS:
+    import redis
     REDIS = redis.Redis(host='localhost', port=6379, db=0)  # in-memory cache server which may or may not be running
 else:
     REDIS = None
