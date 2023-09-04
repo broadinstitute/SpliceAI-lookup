@@ -1,5 +1,10 @@
 <html>
 <head>
+    <script>
+        console.log("href:", location.href)
+        //const base_api_url = "http://localhost:8080"
+        const base_api_url = "https://spliceailookup-api.broadinstitute.org"
+    </script>
     <meta content="width=device-width, initial-scale=1" charset="utf-8" name="viewport" />
     <title>SpliceAI Lookup</title>
     <link rel="shortcut icon" href="/icon.png">
@@ -696,8 +701,6 @@
             console.log("Most severe consequence:", most_severe_consequence)
 
             // get SpliceAI and Pangolin scores from API endpoints in parallel
-            //const base_api_url = location.hostname == "" ? "http://localhost:8080" : "https://spliceailookup-api.broadinstitute.org"
-            const base_api_url = "https://spliceailookup-api.broadinstitute.org"
             const getJSON_promises = ["spliceai", "pangolin"].map((endpoint) => {
                 const promise = $.getJSON(`${base_api_url}/${endpoint}/`,
                     {
