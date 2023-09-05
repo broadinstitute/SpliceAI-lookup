@@ -361,7 +361,6 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
             print(f"ERROR: couldn't retrieve scores using tabix: {type(e)}: {e}", flush=True)
 
     # run the SpliceAI model to compute the scores
-    all_scores = []
     if not scores:
         error_message = exceeds_rate_limit(request.remote_addr, request_type="spliceai:model")
         if error_message:
@@ -373,22 +372,12 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
 
         record = VariantRecord(chrom, pos, ref, alt)
         try:
-            #scores, all_scores = get_delta_scores(
             scores = get_delta_scores(
                 record,
                 SPLICEAI_ANNOTATOR[genome_version],
                 distance_param,
                 mask_param)
             source = "spliceai:model"
-
-            #print("All scores:", flush=True)
-            #all_scores_transript0 = all_scores[0]
-            #all_scores_transript0["position"] = list(range(-distance_param, distance_param + 1))
-            #df = pd.DataFrame(all_scores_transript0)
-            #df = df.applymap(lambda x: "{:.2f}".format(x) if x >= 0.01 else "")
-            #print(df, flush=True)
-
-            #print(f"Computed: ", scores, flush=True)
         except Exception as e:
             return {
                 "variant": variant,
@@ -406,6 +395,19 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
 
     #scores = [s[s.index("|")+1:] for s in scores]  # drop allele field
 
+    # to reduce the response size, return all non-zero scores only for the canonial transcript (or the 1st transcript)
+    all_non_zero_scores = None
+    for i, transcript_scores in enumerate(scores):
+        if "ALL_NON_ZERO_SCORES" not in transcript_scores:
+            continue
+
+        gene_name = transcript_scores.get("SYMBOL", "")
+        gene_name_fields = gene_name.split("---")
+        if i == 0 or (len(gene_name_fields) > 3 and gene_name_fields[3] == "yes"):
+            all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
+
+        del transcript_scores["ALL_NON_ZERO_SCORES"]
+
     return {
         "variant": variant,
         "genome_version": genome_version,
@@ -415,6 +417,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
         "alt": alt,
         "scores": scores,
         "source": source,
+        "all_non_zero_scores": all_non_zero_scores,
     }
 
 
