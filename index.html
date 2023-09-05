@@ -1,9 +1,14 @@
 <html>
 <head>
     <script>
-        console.log("href:", location.href)
-        //const base_api_url = "http://localhost:8080"
-        const base_api_url = "https://spliceailookup-api.broadinstitute.org"
+        let base_api_url = "https://spliceailookup-api.broadinstitute.org"
+        if (location.origin && location.origin.startsWith("http") && !location.origin.includes("broadinstitute.org")) {
+            base_api_url = location.origin
+        }
+
+        //base_api_url = "http://localhost:8080"
+
+        console.log("Using SpliceAI-lookup API url:", base_api_url)
     </script>
     <meta content="width=device-width, initial-scale=1" charset="utf-8" name="viewport" />
     <title>SpliceAI Lookup</title>
@@ -45,6 +50,7 @@
             font-size: 10pt;
             margin-left: 5px;
             margin-top: 3px;
+            display: inline-block;
         }
 
         .only-large-screen {
@@ -96,15 +102,15 @@
                                     The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> optionally uses pre-computed
                                     scores provided by Illumina for SNVs and small InDels, but runs the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
                                     directly for scores not available in the pre-computed files - such as for larger InDels, non-default "Max distance" values, etc.<br />
-				    <br />
-				    NOTE: The server supports not more than several queries per-minute per-user. If you need to batch-process many variants, please use the
-				    <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
-				    to set up your own local instance of the API server or just run the underlying SpliceAI model directly.<br />
+                                    <br />
+                                    NOTE: The server supports not more than several queries per-minute per-user. If you need to batch-process many variants, please use the
+                                    <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
+                                    to set up your own local instance of the API server or just run the underlying SpliceAI model directly.<br />
                                     <br />
                                     For more information about the SpliceAI model, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>,
                                     and this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.<br />
                                     <br />
-				    Since February 2023, <a href="https://github.com/tkzeng/Pangolin" target="_blank">Pangolin scores</a> from [<a href="https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4" target="_blank">Zeng & Li 2022</a>] are also shown below the SpliceAI results.
+				                    Since February 2023, <a href="https://github.com/tkzeng/Pangolin" target="_blank">Pangolin scores</a> from [<a href="https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4" target="_blank">Zeng & Li 2022</a>] are also shown below the SpliceAI results.
                                 </div>
                             </div>
                             <br />
@@ -155,7 +161,7 @@
                                 </table>
                             </div>
                         </div>
-<!--
+
                         <br />
                         <div style="font-size: large; color: darkred">
                           <br />
@@ -165,7 +171,7 @@
                         </div>
                         <br />
                         <br />
--->
+
                         <div class="ui form" style="width:100%">
                             <div class="ui input" style="padding-bottom:30px; padding-right:8px; width:100%">
                                 <input id="search-box" type="text" style="width: 100%; padding: 7px 10px" placeholder="Enter a variant...">
@@ -231,6 +237,9 @@
                     <br />
                     <!-- <<div><i>What's New</i></div>
                     <br /> -->
+                    <b>Sept 5, 2023</b><br />
+                    - note transcript strand in SpliceAI results<br />
+                    <br />
                     <b>May 22, 2023</b><br />
                     - changed defaults to 'masked' and max distance to 500bp<br />
                     - retired <b>Illumina precomputed scores</b> since they were created using Gencode v24
@@ -356,7 +365,7 @@
         "MT": "NC_012920.1",
       }
 
-      const SPLICEAI_SCORE_FIELDS = "SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL|DS_AG_REF|DS_AG_ALT|DS_AL_REF|DS_AL_ALT|DS_DG_REF|DS_DG_ALT|DS_DL_REF|DS_DL_ALT".split("|")
+      //const SPLICEAI_SCORE_FIELDS = "SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL|DS_AG_REF|DS_AG_ALT|DS_AL_REF|DS_AL_ALT|DS_DG_REF|DS_DG_ALT|DS_DL_REF|DS_DL_ALT".split("|")
       const PANGOLIN_SCORE_FIELDS = "SYMBOL|DS_SG|DS_SL|DP_SG|DP_SL".split("|")  // splice_gain_score, splice_loss_score, splice_gain_pos, splice_loss_pos
 
       const CANONICAL_TRANSCRIPT_BACKGROUND_COLOR = "#eaf3ff"
@@ -471,15 +480,20 @@
             }
 
             response.scores.forEach(function(scores) {
-                const splice_prediction_values = scores.split("|")
-                const splice_prediction_dict = {};
-
-                (is_pangolin ? PANGOLIN_SCORE_FIELDS : SPLICEAI_SCORE_FIELDS).forEach(function(k, i) {
-                    splice_prediction_dict[k] = splice_prediction_values[i]
-                    if (k.startsWith("DS_")) {
-                        splice_prediction_dict[k] = parseFloat(splice_prediction_dict[k])
-                    }
-                })
+                let splice_prediction_dict = {}
+                if (is_pangolin) {
+                    const splice_prediction_values = scores.split("|")
+                    PANGOLIN_SCORE_FIELDS.forEach(function (k, i) {
+                        splice_prediction_dict[k] = splice_prediction_values[i]
+                        if (k.startsWith("DS_")) {
+                            splice_prediction_dict[k] = parseFloat(splice_prediction_dict[k])
+                        }
+                    })
+                } else {
+                    // the latest code in the SpliceAI fork @ http://github.com/bw2/SpliceAI returns the scores as a
+                    // dict already, so no need for parsing
+                    splice_prediction_dict = scores
+                }
 
                 const score_types = is_pangolin ? ["SG", "SL"] : ["DG", "DL", "AG", "AL"]
                 score_types.forEach(function(score_type) {
@@ -552,7 +566,7 @@
                 const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + scores.variant + "?dataset=" + gnomAD_version
                 const gene_name_fields = (scores.SYMBOL || "").split("---")
                 const gene_name = gene_name_fields[0].split(".")[0]  // remove gene version number  TODO remove this after switching Pangolin to use regular gene names
-
+                const strand = scores.STRAND == "-" ? "minus" : "plus"
                 const is_canonical_transcript = gene_name_fields.length >= 4 && gene_name_fields[3] === "yes"
                 const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
                 const is_protein_coding = !transcript_type || transcript_type == "protein_coding"
@@ -566,9 +580,9 @@
                     const gene_id_link = `<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1].split(".")[0]}" target="_blank">${gene_name_fields[1]}</a>`
                     const transcript_id_link = ` / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2].split(".")[0]}" target="_blank">${gene_name_fields[2]}</a>`
                     const canonical_transcript_text = is_canonical_transcript ? '<div class="smallLink">canonical transcript</div>' : ''
-                    const biotype_link = `<div class="smallLink"><a href="https://www.gencodegenes.org/pages/biotypes.html" target="_blank">biotype: ${transcript_type.replace(/_/g, " ")}</a></div>`
+                    const biotype_link = `<div class="smallLink"><a href="https://www.gencodegenes.org/pages/biotypes.html" target="_blank">${transcript_type.replace(/_/g, " ")}</a></div>`
                     const refseq_transcript_id_link = refseq_transcript_ids ? (" /" + refseq_transcript_ids.map(refseq_transcript_id => ` <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${refseq_transcript_id}" target="_blank">${refseq_transcript_id}</a>`).join(', ')) : ''
-                    gene_and_transcript_id = ` (${gene_id_link}${transcript_id_link}${refseq_transcript_id_link})<br /> ${biotype_link} ${canonical_transcript_text}`
+                    gene_and_transcript_id = ` (${gene_id_link}${transcript_id_link}${refseq_transcript_id_link})<br /><br class='only-large-screen' />${biotype_link}${canonical_transcript_text} <div class="smallLink"> (${strand} strand)</div>`
                 }
                 //round to 2 decimal places
                 if (scores.is_pangolin) {
