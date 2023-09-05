@@ -597,7 +597,6 @@ def run_splice_prediction_tool(tool_name):
     response_json['duration'] = duration
 
     if request.remote_addr not in DISABLE_LOGGING_FOR_IPS:
-        print(f"{logging_prefix}: {request.remote_addr}: {variant} response: {response_json}", flush=True)
         print(f"{logging_prefix}: {request.remote_addr}: {variant} took {duration}", flush=True)
 
     return Response(json.dumps(response_json), status=200, mimetype='application/json')
