@@ -404,7 +404,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
                      f"variant falling outside of all Gencode exons and introns.",
         }
 
-    scores = [s[s.index("|")+1:] for s in scores]  # drop allele field
+    #scores = [s[s.index("|")+1:] for s in scores]  # drop allele field
 
     return {
         "variant": variant,
@@ -801,8 +801,15 @@ def send_annotations(path):
 @app.route('/', strict_slashes=False, defaults={'path': ''})
 @app.route('/<path:path>/')
 def catch_all(path):
-    with open("README.md") as f:
-        return markdown2.markdown(f.read())
+    if not path or path == "index.html":
+        with open("index.html", "rt") as f:
+            html = f.read()
+        return Response(html, mimetype='text/html')
+    elif path == "favicon.ico":
+        return send_from_directory('', 'favicon.ico')
+    else:
+        with open("README.md") as f:
+            return markdown2.markdown(f.read())
 
 
 print("Initialization completed.", flush=True)
