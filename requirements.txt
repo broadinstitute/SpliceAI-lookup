@@ -1,7 +1,7 @@
 tensorflow==1.14.0   # for python3.6 on centos7
 keras==2.1.5
 #spliceai==1.3.1
-spliceai @ git+https://github.com/bw2/SpliceAI@d5b6d18
+spliceai @ git+https://github.com/bw2/SpliceAI@df04cc5
 flask
 flask-cors
 flask-talisman
