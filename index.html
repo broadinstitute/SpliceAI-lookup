@@ -102,15 +102,15 @@
                                     The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> optionally uses pre-computed
                                     scores provided by Illumina for SNVs and small InDels, but runs the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
                                     directly for scores not available in the pre-computed files - such as for larger InDels, non-default "Max distance" values, etc.<br />
-                                    <br />
-                                    NOTE: The server supports not more than several queries per-minute per-user. If you need to batch-process many variants, please use the
-                                    <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
-                                    to set up your own local instance of the API server or just run the underlying SpliceAI model directly.<br />
+				    <br />
+				    NOTE: The server supports not more than several queries per-minute per-user. If you need to batch-process many variants, please use the
+				    <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
+				    to set up your own local instance of the API server or just run the underlying SpliceAI model directly.<br />
                                     <br />
                                     For more information about the SpliceAI model, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>,
                                     and this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.<br />
                                     <br />
-				                    Since February 2023, <a href="https://github.com/tkzeng/Pangolin" target="_blank">Pangolin scores</a> from [<a href="https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4" target="_blank">Zeng & Li 2022</a>] are also shown below the SpliceAI results.
+				    Since February 2023, <a href="https://github.com/tkzeng/Pangolin" target="_blank">Pangolin scores</a> from [<a href="https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4" target="_blank">Zeng & Li 2022</a>] are also shown below the SpliceAI results.
                                 </div>
                             </div>
                             <br />
@@ -161,7 +161,6 @@
                                 </table>
                             </div>
                         </div>
-<!--
                         <br />
                         <div style="font-size: large; color: darkred">
                           <br />
@@ -171,7 +170,6 @@
                         </div>
                         <br />
                         <br />
--->
                         <div class="ui form" style="width:100%">
                             <div class="ui input" style="padding-bottom:30px; padding-right:8px; width:100%">
                                 <input id="search-box" type="text" style="width: 100%; padding: 7px 10px" placeholder="Enter a variant...">
@@ -237,23 +235,24 @@
                     <br />
                     <!-- <<div><i>What's New</i></div>
                     <br /> -->
-                    <b>Sept 5, 2023</b><br />
-                    - note transcript strand in SpliceAI results<br />
+                    <b>Sep 10, 2023</b><br />
+                    - added raw REF & ALT scores to the Pangolin results table<br />
+                    - added transcript strand to SpliceAI results<br />
                     <br />
                     <b>May 22, 2023</b><br />
                     - changed defaults to 'masked' and max distance to 500bp<br />
                     - retired <b>Illumina precomputed scores</b> since they were created using Gencode v24
                     and max distance = 50bp and so can differ from computed scores which are based on the latest Gencode.<br />
-                    <br />
-                    <b>May 12, 2023</b><br />
-                    - added REF & ALT score columns to show SpliceAI's underlying predictions for each haplotype (using <a href="https://github.com/Illumina/SpliceAI/pull/92">SpliceAI PR by @h-joshi</a>).
-                    The &#916;&nbsp; score column is the difference between these two scores.<br />
-                    - added support for MNPs (see <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/1">issue #1</a> & <a href="https://github.com/Illumina/SpliceAI/pull/119">SpliceAI PR by @kdahlo</a>)<br />
-                    - updated to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v43</a> (was previously on v42)<br />
 		            <br />
-
                     <a id="more-details3-button" href="#" onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
                     <div id="more-details3" style="display:none">
+                          <b>May 12, 2023</b><br />
+                          - added REF & ALT score columns to show SpliceAI's underlying predictions for each haplotype (using <a href="https://github.com/Illumina/SpliceAI/pull/92">SpliceAI PR by @h-joshi</a>).
+                          The &#916;&nbsp; score column is the difference between these two scores.<br />
+                          - added support for MNPs (see <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/1">issue #1</a> & <a href="https://github.com/Illumina/SpliceAI/pull/119">SpliceAI PR by @kdahlo</a>)<br />
+                          - updated to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v43</a> (was previously on v42)<br />
+    		            <br />
+
                         <b>May 10, 2023</b><br />
                         - fixed bug where "raw" Pangolin scores were shown regardless of whether the user selected "raw" or "masked".<br />
                         <br />
@@ -365,8 +364,6 @@
         "MT": "NC_012920.1",
       }
 
-      //const SPLICEAI_SCORE_FIELDS = "SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL|DS_AG_REF|DS_AG_ALT|DS_AL_REF|DS_AL_ALT|DS_DG_REF|DS_DG_ALT|DS_DL_REF|DS_DL_ALT".split("|")
-      const PANGOLIN_SCORE_FIELDS = "SYMBOL|DS_SG|DS_SL|DP_SG|DP_SL".split("|")  // splice_gain_score, splice_loss_score, splice_gain_pos, splice_loss_pos
 
       const CANONICAL_TRANSCRIPT_BACKGROUND_COLOR = "#eaf3ff"
       const CODING_TRANSCRIPT_BACKGROUND_COLOR = "white"
@@ -466,73 +463,59 @@
 
         let parsed_scores_or_errors = []
         responses.filter(r => r).forEach(function(response) {
-            const is_pangolin = response.source && response.source.startsWith("pangolin")
-            if (response.error) {
-                parsed_scores_or_errors.push({
-                    'error': response.error,
-                    'source': response.source,
-                    'is_pangolin': is_pangolin,
-                    'hg': response.hg,
-                    'variant': response.variant,
-                    'sort_key': 0,
-                })
-                return
-            }
+        const is_pangolin = response.source && response.source.startsWith("pangolin")
+        if (response.error) {
+            parsed_scores_or_errors.push({
+                'error': response.error,
+                'source': response.source,
+                'is_pangolin': is_pangolin,
+                'hg': response.hg,
+                'variant': response.variant,
+                'sort_key': 0,
+            })
+            return
+        }
 
-            response.scores.forEach(function(scores) {
-                let splice_prediction_dict = {}
-                if (is_pangolin) {
-                    const splice_prediction_values = scores.split("|")
-                    PANGOLIN_SCORE_FIELDS.forEach(function (k, i) {
-                        splice_prediction_dict[k] = splice_prediction_values[i]
-                        if (k.startsWith("DS_")) {
-                            splice_prediction_dict[k] = parseFloat(splice_prediction_dict[k])
-                        }
-                    })
-                } else {
-                    // the latest code in the SpliceAI fork @ http://github.com/bw2/SpliceAI returns the scores as a
-                    // dict already, so no need for parsing
-                    splice_prediction_dict = scores
-                }
+        response.scores.forEach(function(scores) {
 
-                const score_types = is_pangolin ? ["SG", "SL"] : ["DG", "DL", "AG", "AL"]
+            const score_types = is_pangolin ? ["SG", "SL"] : ["DG", "DL", "AG", "AL"]
                 score_types.forEach(function(score_type) {
                     try {
-                        splice_prediction_dict[score_type + "_url"] = getUCSCBrowserUrl(response.hg, response.chrom, response.pos + parseInt(splice_prediction_dict["DP_" + score_type]))
+                        scores[score_type + "_url"] = getUCSCBrowserUrl(response.hg, response.chrom, response.pos + parseInt(score["DP_" + score_type]))
                     } catch(e) {
-                        splice_prediction_dict[score_type + "_url"] = "#"
+                        scores[score_type + "_url"] = "#"
                     }
                 })
 
-                try {
-                    splice_prediction_dict["url"] = getUCSCBrowserUrl(response.hg, response.chrom, response.pos)
-                } catch(e) {
-                    splice_prediction_dict["url"] = "#"
-                }
+            try {
+                scores["url"] = getUCSCBrowserUrl(response.hg, response.chrom, response.pos)
+            } catch(e) {
+                scores["url"] = "#"
+            }
 
-                splice_prediction_dict['source'] = response.source
-                splice_prediction_dict['is_pangolin'] = is_pangolin
-                splice_prediction_dict['hg'] = response.hg
-                splice_prediction_dict['variant'] = response.variant
+            scores['source'] = response.source
+            scores['is_pangolin'] = is_pangolin
+            scores['hg'] = response.hg
+            scores['variant'] = response.variant
 
-                // compute sort key
-                const splice_prediction_tool = is_pangolin ? 1 : 0;
+            // compute sort key
+            const splice_prediction_tool = is_pangolin ? 1 : 0;
 
-                const gene_name_fields = (splice_prediction_dict["SYMBOL"] || "").split("---")
-                const gene_name = gene_name_fields[0]
-                const transcript_id = gene_name_fields.length >= 3 && gene_name_fields[2]
-                const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes") ? 0 : 1
-                const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
-                const is_protein_coding = !transcript_type || transcript_type == "protein_coding" ? 0 : 1
-                const refseq_transcript_id_is_in_query = gene_name_fields.length >= 6 && gene_name_fields[5] && gene_name_fields[5].split(",").some(refseq_transcript_id => response.raw.includes(refseq_transcript_id))
-                const contains_hgvs_transcript_id = response.raw.includes(transcript_id) || refseq_transcript_id_is_in_query ? 0 : 1;
+            const gene_name_fields = (scores["NAME"] || "").split("---")
+            const gene_name = gene_name_fields[0]
+            const transcript_id = gene_name_fields.length >= 3 && gene_name_fields[2]
+            const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes") ? 0 : 1
+            const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
+            const is_protein_coding = !transcript_type || transcript_type == "protein_coding" ? 0 : 1
+            const refseq_transcript_id_is_in_query = gene_name_fields.length >= 6 && gene_name_fields[5] && gene_name_fields[5].split(",").some(refseq_transcript_id => response.raw.includes(refseq_transcript_id))
+            const contains_hgvs_transcript_id = response.raw.includes(transcript_id) || refseq_transcript_id_is_in_query ? 0 : 1;
 
-                splice_prediction_dict['sort_key'] = `${splice_prediction_tool}${contains_hgvs_transcript_id}`
-                splice_prediction_dict['sort_key'] += `${is_protein_coding}${is_canonical_transcript}`
-                splice_prediction_dict['sort_key'] += `---${gene_name}`
+            scores['sort_key'] = `${splice_prediction_tool}${contains_hgvs_transcript_id}`
+            scores['sort_key'] += `${is_protein_coding}${is_canonical_transcript}`
+            scores['sort_key'] += `---${gene_name}`
 
-                parsed_scores_or_errors.push(splice_prediction_dict)
-            })
+            parsed_scores_or_errors.push(scores)
+        })
         })
 
         //sort by (gene name, is canonical transcript, is non-coding transcriipt)
@@ -564,7 +547,7 @@
                 const variant_ucsc_url = scores.url
                 const gnomAD_version = scores.hg === "38"? "gnomad_r3" : "gnomad_r2_1"
                 const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + scores.variant + "?dataset=" + gnomAD_version
-                const gene_name_fields = (scores.SYMBOL || "").split("---")
+                const gene_name_fields = (scores.NAME || "").split("---")
                 const gene_name = gene_name_fields[0].split(".")[0]  // remove gene version number  TODO remove this after switching Pangolin to use regular gene names
                 const strand = scores.STRAND == "-" ? "minus" : "plus"
                 const is_canonical_transcript = gene_name_fields.length >= 4 && gene_name_fields[3] === "yes"
@@ -581,13 +564,17 @@
                     const transcript_id_link = ` / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2].split(".")[0]}" target="_blank">${gene_name_fields[2]}</a>`
                     const canonical_transcript_text = is_canonical_transcript ? '<div class="smallLink">canonical transcript</div>' : ''
                     const biotype_link = `<div class="smallLink"><a href="https://www.gencodegenes.org/pages/biotypes.html" target="_blank">${transcript_type.replace(/_/g, " ")}</a></div>`
-                    const refseq_transcript_id_link = refseq_transcript_ids ? (" /" + refseq_transcript_ids.map(refseq_transcript_id => ` <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${refseq_transcript_id}" target="_blank">${refseq_transcript_id}</a>`).join(', ')) : ''
-                    gene_and_transcript_id = ` (${gene_id_link}${transcript_id_link}${refseq_transcript_id_link})<br /><br class='only-large-screen' />${biotype_link}${canonical_transcript_text} <div class="smallLink"> (${strand} strand)</div>`
+                    const refseq_transcript_id_link = refseq_transcript_ids ? (" /" + ` <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${refseq_transcript_ids[0]}" target="_blank">${refseq_transcript_ids[0]}</a>`) : ''
+                    gene_and_transcript_id = ` <div class="smallLink">(${gene_id_link}${transcript_id_link}${refseq_transcript_id_link})</div><br /><br class='only-large-screen' />${biotype_link}${canonical_transcript_text} <div class="smallLink"> (${strand} strand)</div>`
                 }
                 //round to 2 decimal places
                 if (scores.is_pangolin) {
                     scores.DS_SL = Math.round(scores.DS_SL * 100) / 100
                     scores.DS_SG = Math.round(scores.DS_SG * 100) / 100
+                    scores.SL_REF = Math.round(scores.SL_REF * 100) / 100
+                    scores.SL_ALT = Math.round(scores.SL_ALT * 100) / 100
+                    scores.SG_REF = Math.round(scores.SG_REF * 100) / 100
+                    scores.SG_ALT = Math.round(scores.SG_ALT * 100) / 100
                 } else {
                     scores.DS_AG = Math.round(scores.DS_AG * 100) / 100
                     scores.DS_AL = Math.round(scores.DS_AL * 100) / 100
@@ -620,9 +607,9 @@
                     "<a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+gene_name+"' class='smallLink' target='_blank'>GeneCards</a>" +
                   "</td>" +
                     (scores.is_pangolin ?
-                            "<td>Splice Loss</td><td "+getScoreStyle(scores.DS_SL, true)+">" + formatScore(scores.DS_SL) +"</td><td>" + (scores.DS_SL == 0 ? "" : scores.DP_SL+" bp") + "</td>"+
+                            "<td>Splice Loss</td><td "+getScoreStyle(scores.DS_SL, true)+">" + formatScore(scores.DS_SL) +"</td><td>" + (scores.DS_SL == 0 ? "" : scores.DP_SL+" bp") + "</td><td "+getScoreStyle(scores.SL_REF)+">" + formatScore(scores.SL_REF) + "</td><td "+getScoreStyle(scores.SL_ALT)+">" + formatScore(scores.SL_ALT) + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Splice Gain</td><td "+getScoreStyle(scores.DS_SG, true)+">" + formatScore(scores.DS_SG) +"</td><td>" + (scores.DS_SG == 0 ? "" : scores.DP_SG+" bp") + "</td>"
+                            "<td>Splice Gain</td><td "+getScoreStyle(scores.DS_SG, true)+">" + formatScore(scores.DS_SG) +"</td><td>" + (scores.DS_SG == 0 ? "" : scores.DP_SG+" bp") + "</td><td "+getScoreStyle(scores.SG_REF)+">" + formatScore(scores.SG_REF) + "</td><td "+getScoreStyle(scores.SG_ALT)+">" + formatScore(scores.SG_ALT) + "</td>"
                         :
                             "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL, true)+">" + formatScore(scores.DS_AL) +"</td><td>" + ((scores.DS_AL == 0 && scores.DS_AL_REF == 0 && scores.DS_AL_ALT == 0)? "" : scores.DP_AL+" bp") + "</td><td "+getScoreStyle(scores.DS_AL_REF)+">" + formatScore(scores.DS_AL_REF) + "</td><td "+getScoreStyle(scores.DS_AL_ALT)+">" + formatScore(scores.DS_AL_ALT) + "</td>"+
                             "</tr><tr style='background-color:" + background_color+"'>"+
@@ -635,7 +622,7 @@
                   "</tr>"
 
                 if(scores.is_pangolin) {
-                    result = "<tr class='pangolin_header' style='display:none'><td style='white-space: nowrap'><b>Pangolin scores: <a href='https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4' target='_blank'><i class='question circle outline icon' data-position='right center' data-content='Pangolin scores are computed on the server by running the Pangolin model with the user-selected parameters (ie. max distance).'></i></a></b> </td><td></td><td></td><td></td><td></td></tr>" + result
+                    result = "<tr class='pangolin_header' style='display:none'><td style='white-space: nowrap'><b>Pangolin scores: <a href='https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4' target='_blank'><i class='question circle outline icon' data-position='right center' data-content='Pangolin scores are computed on the server by running the Pangolin model with the user-selected parameters (ie. max distance).'></i></a></b> </td><td></td><td></td><td></td><td></td><td></td><td></td></tr>" + result
                 }
                 return result
               }).join("") +
@@ -684,19 +671,19 @@
             "https://" + ensembl_api_url_prefix + "rest.ensembl.org/vep/human/hgvs/" + variant_hgvs + "?content-type=application/json&vcf_string=1"
           ).catch(function(error) {
             let errorText = error.responseText
-            try {
-              errorText = JSON.parse(errorText).error
-            } catch(e) {
-              console.warn(e)
-            }
+                try {
+                    errorText = JSON.parse(errorText).error
+                } catch (e) {
+                    console.warn(e)
+                }
 
-            const refAlleleError = errorText.match(new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
-            if (refAlleleError) {
-                errorText = variant + " has unexpected reference allele. The hg" + genome_version + " reference allele should be: " + refAlleleError[1]
-            }
+                const refAlleleError = errorText.match(new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
+                if (refAlleleError) {
+                    errorText = variant + " has unexpected reference allele. The hg" + genome_version + " reference allele should be: " + refAlleleError[1]
+                }
 
-            errorText = "Ensembl API error: " + errorText
-            console.warn(errorText)
+                errorText = "Ensembl API error: " + errorText
+                console.warn(errorText)
             throw { responseText: errorText }
           }).then(function(response) {
             console.log("Esnembl API response", response)
