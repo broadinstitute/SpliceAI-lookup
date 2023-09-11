@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 
 # pangolin imports
 from pkg_resources import resource_filename
@@ -137,8 +138,6 @@ SPLICEAI_MAX_DISTANCE_LIMIT = 10000
 SPLICEAI_DEFAULT_DISTANCE = 500  # maximum distance between the variant and gained/lost splice site, defaults to 500
 SPLICEAI_DEFAULT_MASK = 0        # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
 USE_PRECOMPUTED_SCORES = 0       # whether to use precomputed scores by default
-
-SPLICEAI_SCORE_FIELDS = "ALLELE|SYMBOL|DS_AG|DS_AL|DS_DG|DS_DL|DP_AG|DP_AL|DP_DG|DP_DL".split("|")
 
 SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&distance=500&mask=0&precomputed=1&variant=chr8-140300615-C-G"
 
@@ -379,6 +378,8 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
                 mask_param)
             source = "spliceai:model"
         except Exception as e:
+            print(f"ERROR while computing SpliceAI scores for {variant}: {e}")
+            traceback.print_exc()
             return {
                 "variant": variant,
                 "source": "spliceai",
@@ -397,27 +398,30 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
 
     # to reduce the response size, return all non-zero scores only for the canonial transcript (or the 1st transcript)
     all_non_zero_scores = None
+    all_non_zero_scores_strand = None
     for i, transcript_scores in enumerate(scores):
         if "ALL_NON_ZERO_SCORES" not in transcript_scores:
             continue
 
-        gene_name = transcript_scores.get("SYMBOL", "")
+        gene_name = transcript_scores.get("NAME", "")
         gene_name_fields = gene_name.split("---")
         if i == 0 or (len(gene_name_fields) > 3 and gene_name_fields[3] == "yes"):
             all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
+            all_non_zero_scores_strand = transcript_scores["STRAND"]
 
         del transcript_scores["ALL_NON_ZERO_SCORES"]
 
     return {
         "variant": variant,
-        "genome_version": genome_version,
+        "genomeVersion": genome_version,
         "chrom": chrom,
         "pos": pos,
         "ref": ref,
         "alt": alt,
         "scores": scores,
         "source": source,
-        "all_non_zero_scores": all_non_zero_scores,
+        "allNonZeroScores": all_non_zero_scores,
+        "allNonZeroScoresStrand": all_non_zero_scores_strand,
     }
 
 
@@ -431,6 +435,9 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
     try:
         chrom, pos, ref, alt = parse_variant(variant)
     except ValueError as e:
+        print(f"ERROR while parsing variant {variant}: {e}")
+        traceback.print_exc()
+
         return {
             "variant": variant,
             "source": "pangolin",
@@ -467,40 +474,37 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
     scores = process_variant_using_pangolin(
         0, chrom, int(pos), ref, alt, pangolin_gene_db, PANGOLIN_MODELS, PangolinArgs)
 
-    if scores == -1:
+    if not scores:
         return {
             "variant": variant,
             "source": "pangolin",
             "error": f"ERROR: Pangolin was unable to compute scores for this variant",
         }
 
-    parsed_scores = []
-    for i, scores_for_gene in enumerate(scores.split("ENSG")):
-        if i == 0:
+    # to reduce the response size, return all non-zero scores only for the canonial transcript (or the 1st transcript)
+    all_non_zero_scores = None
+    all_non_zero_scores_strand = None
+    for i, transcript_scores in enumerate(scores):
+        if "ALL_NON_ZERO_SCORES" not in transcript_scores:
             continue
 
-        scores_for_gene = scores_for_gene.split("|")
+        if i == 0:
+            all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
+            all_non_zero_scores_strand = transcript_scores["STRAND"]
 
-        gene_id = "ENSG" + scores_for_gene[0]
-        splice_gain_pos, splice_gain_score = scores_for_gene[1].split(":")
-        splice_loss_pos, splice_loss_score = scores_for_gene[2].split(":")
-        warnings = scores_for_gene[3].replace("Warnings:", "").strip()
-        parsed_scores.append(
-            "|".join([gene_id, splice_gain_score, splice_loss_score, splice_gain_pos, splice_loss_pos])
-        )
-
-        if warnings:
-            print("Pangolin Warning:", warnings)
+        del transcript_scores["ALL_NON_ZERO_SCORES"]
 
     return {
         "variant": variant,
-        "genome_version": genome_version,
+        "genomeVersion": genome_version,
         "chrom": chrom,
         "pos": pos,
         "ref": ref,
         "alt": alt,
-        "scores": parsed_scores,
+        "scores": scores,
         "source": "pangolin",
+        "allNonZeroScores": all_non_zero_scores,
+        "allNonZeroScoresStrand": all_non_zero_scores_strand,
     }
 
 
@@ -803,8 +807,11 @@ def send_annotations(path):
 @app.route('/', strict_slashes=False, defaults={'path': ''})
 @app.route('/<path:path>/')
 def catch_all(path):
-    if not path or path == "index.html":
-        with open("index.html", "rt") as f:
+    if not path:
+        path = "index.html"
+
+    if path in {"index.html", "igv.min.js"}:
+        with open(path, "rt") as f:
             html = f.read()
         return Response(html, mimetype='text/html')
     elif path == "favicon.ico":
