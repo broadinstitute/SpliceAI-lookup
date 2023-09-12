@@ -239,7 +239,7 @@
                     <br /> -->
                     <b>Sep 10, 2023</b><br />
                     - added raw REF & ALT scores to the Pangolin results table<br />
-                    - added transcript strand to SpliceAI results<br />
+                    - added transcript strand to the results table<br />
                     <br />
                     <b>May 22, 2023</b><br />
                     - changed defaults to 'masked' and max distance to 500bp<br />
@@ -534,7 +534,7 @@
               "</td>" +
               "<td><b>&#916;&nbsp; type</b></td>" +
               "<td style='white-space: nowrap'><b>&#916;&nbsp; score</b>  " + "<i class='question circle outline icon' data-content='Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 500bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.2 or higher appear in green, 0.5 or higher appear in yellow, and 0.8 or higher appear in red.'></i>"+"</td>" +
-              "<td style='white-space: nowrap'><b>pre-mRNA position</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 500bp by default) to see how the variant affects the probabilities of different positions in the pre-mRNA being splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant.'></i>"+"</td>" +
+              "<td style='white-space: nowrap'><b>pre-mRNA position</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 500bp by default) to see how the variant affects the probabilities of different positions in the pre-mRNA being splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are to the left of the variant in genomic coords, regardless of transcript strand.'></i>"+"</td>" +
               "<td style='white-space: nowrap'><b>REF score</b>  "+ "<i class='question circle outline icon' data-content=\"SpliceAI's computed probability that the given pre-mRNA position is a splice acceptor or donor based on the reference haplotype sequence. SpliceAI computes delta scores by taking the difference between the REF and ALT score at each position.\"></i>"+"</td>" +
               "<td style='white-space: nowrap'><b>ALT score</b>  "+ "<i class='question circle outline icon' data-content=\"SpliceAI's computed probability that the given pre-mRNA position is a splice acceptor or donor based on the alternate haplotype sequence. SpliceAI computes delta scores by taking the difference between the REF and ALT score at each position.\"></i>"+"</td>" +
           "</tr>" + parsed_scores_or_errors.map(function(scores_or_error) {
@@ -568,6 +568,8 @@
                     const biotype_link = `<div class="smallLink"><a href="https://www.gencodegenes.org/pages/biotypes.html" target="_blank">${transcript_type.replace(/_/g, " ")}</a></div>`
                     const refseq_transcript_id_link = refseq_transcript_ids ? (" /" + ` <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${refseq_transcript_ids[0]}" target="_blank">${refseq_transcript_ids[0]}</a>`) : ''
                     gene_and_transcript_id = ` <div class="smallLink">(${gene_id_link}${transcript_id_link}${refseq_transcript_id_link})</div><br /><br class='only-large-screen' />${biotype_link}${canonical_transcript_text} <div class="smallLink"> (${strand} strand)</div>`
+                } else {
+                    gene_and_transcript_id = ` <div class="smallLink"> (${strand} strand)</div>`
                 }
                 //round to 2 decimal places
                 if (scores.is_pangolin) {
