@@ -399,15 +399,23 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
     # to reduce the response size, return all non-zero scores only for the canonial transcript (or the 1st transcript)
     all_non_zero_scores = None
     all_non_zero_scores_strand = None
+    all_non_zero_scores_transcript_id = None
     for i, transcript_scores in enumerate(scores):
         if "ALL_NON_ZERO_SCORES" not in transcript_scores:
             continue
 
         gene_name = transcript_scores.get("NAME", "")
         gene_name_fields = gene_name.split("---")
-        if i == 0 or (len(gene_name_fields) > 3 and gene_name_fields[3] == "yes"):
+        return_scores_for_this_transcript = (
+            # if we don't have info on which transcripts are canonical, return scores for the 1st transcript
+            len(gene_name_fields) <= 3 and i == 0) or (
+            # otherwise, return scores from the 1st canonical transcript
+            len(gene_name_fields) > 3 and gene_name_fields[3] == "yes" and all_non_zero_scores is None)
+
+        if return_scores_for_this_transcript:
             all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
             all_non_zero_scores_strand = transcript_scores["STRAND"]
+            all_non_zero_scores_transcript_id = gene_name_fields[2] if len(gene_name_fields) > 2 else gene_name_fields[0]
 
         del transcript_scores["ALL_NON_ZERO_SCORES"]
 
@@ -418,10 +426,12 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
         "pos": pos,
         "ref": ref,
         "alt": alt,
+        "distance": distance_param,
         "scores": scores,
         "source": source,
         "allNonZeroScores": all_non_zero_scores,
         "allNonZeroScoresStrand": all_non_zero_scores_strand,
+        "allNonZeroScoresTranscriptId": all_non_zero_scores_transcript_id,
     }
 
 
@@ -484,13 +494,21 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
     # to reduce the response size, return all non-zero scores only for the canonial transcript (or the 1st transcript)
     all_non_zero_scores = None
     all_non_zero_scores_strand = None
+    all_non_zero_scores_transcript_id = None
+    max_delta_score_sum = 0
     for i, transcript_scores in enumerate(scores):
         if "ALL_NON_ZERO_SCORES" not in transcript_scores:
             continue
 
-        if i == 0:
+        delta_score_sum = sum(abs(s.get("SG_ALT", 0) - s.get("SG_REF", 0)) for s in transcript_scores["ALL_NON_ZERO_SCORES"])
+        delta_score_sum += sum(abs(s.get("SL_ALT", 0) - s.get("SL_REF", 0)) for s in transcript_scores["ALL_NON_ZERO_SCORES"])
+
+        # return all_non_zero_scores for the transcript or gene with the highest delta score sum
+        if delta_score_sum > max_delta_score_sum:
             all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
             all_non_zero_scores_strand = transcript_scores["STRAND"]
+            all_non_zero_scores_transcript_id = transcript_scores["NAME"]
+            max_delta_score_sum = delta_score_sum
 
         del transcript_scores["ALL_NON_ZERO_SCORES"]
 
@@ -501,10 +519,12 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
         "pos": pos,
         "ref": ref,
         "alt": alt,
+        "distance": distance_param,
         "scores": scores,
         "source": "pangolin",
         "allNonZeroScores": all_non_zero_scores,
         "allNonZeroScoresStrand": all_non_zero_scores_strand,
+        "allNonZeroScoresTranscriptId": all_non_zero_scores_transcript_id,
     }
 
 
