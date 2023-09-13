@@ -4,11 +4,9 @@ import json
 import markdown2
 import os
 import pandas as pd
-import pysam
 import re
 import socket
 import subprocess
-import sys
 import tempfile
 import time
 import traceback
@@ -75,33 +73,13 @@ DISABLE_LOGGING_FOR_IPS = {f"63.143.42.{i}" for i in range(0, 256)}  # ignore up
 HG19_FASTA_PATH = os.path.expanduser("~/hg19.fa")
 HG38_FASTA_PATH = os.path.expanduser("~/hg38.fa")
 
-SPLICEAI_CACHE_FILES = {}
-if socket.gethostname() == "spliceai-lookup":
-    for filename in [
-        "spliceai_scores.masked.indel.hg19.vcf.gz",
-        "spliceai_scores.masked.indel.hg38.vcf.gz",
-        "spliceai_scores.masked.snv.hg19.vcf.gz",
-        "spliceai_scores.masked.snv.hg38.vcf.gz",
-        "spliceai_scores.raw.indel.hg19.vcf.gz",
-        "spliceai_scores.raw.indel.hg38.vcf.gz",
-        "spliceai_scores.raw.snv.hg19.vcf.gz",
-        "spliceai_scores.raw.snv.hg38.vcf.gz",
-    ]:
-        key = tuple(filename.replace("spliceai_scores.", "").replace(".vcf.gz", "").split("."))
-        full_path = os.path.join("/mnt/disks/cache", filename)
-        if os.path.isfile(full_path):
-            SPLICEAI_CACHE_FILES[key] = pysam.TabixFile(full_path)
-else:
-    SPLICEAI_CACHE_FILES = {
-        ("raw", "indel", "hg38"): pysam.TabixFile("./test_data/spliceai_scores.raw.indel.hg38_subset.vcf.gz"),
-        ("raw", "snv", "hg38"): pysam.TabixFile("./test_data/spliceai_scores.raw.snv.hg38_subset.vcf.gz"),
-        ("masked", "snv", "hg38"): pysam.TabixFile("./test_data/spliceai_scores.masked.snv.hg38_subset.vcf.gz"),
-    }
-
-GRCH37_ANNOTATIONS = "./annotations/gencode.v43lift37.annotation.txt.gz"
-GRCH38_ANNOTATIONS = "./annotations/gencode.v43.annotation.txt.gz"
-PANGOLIN_GRCH37_ANNOTATIONS = "./annotations/gencode.v43lift37.annotation.without_chr_prefix.db"
-PANGOLIN_GRCH38_ANNOTATIONS = "./annotations/gencode.v43.annotation.db"
+GENCODE_VERSION = "v44"
+SPLICEAI_GRCH37_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}lift37.basic.annotation.txt.gz"
+SPLICEAI_GRCH38_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}.basic.annotation.txt.gz"
+PANGOLIN_GRCH37_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}lift37.basic.annotation.without_chr_prefix.db"
+PANGOLIN_GRCH38_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}.basic.annotation.db"
+TRANSCRIPT_GRCH37_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}lift37.basic.annotation.transcript_annotations.json"
+TRANSCRIPT_GRCH38_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}.basic.annotation.transcript_annotations.json"
 
 PANGOLIN_MODELS = []
 for i in 0, 2, 4, 6:
@@ -122,7 +100,7 @@ ANNOTATION_INTERVAL_TREES = {
     "38": defaultdict(IntervalTree),
 }
 
-for genome_version, annotation_path in ("37", GRCH37_ANNOTATIONS), ("38", GRCH38_ANNOTATIONS):
+for genome_version, annotation_path in ("37", SPLICEAI_GRCH37_ANNOTATIONS), ("38", SPLICEAI_GRCH38_ANNOTATIONS):
     print(f"Loading {annotation_path}", flush=True)
     df = pd.read_table(annotation_path, dtype={"TX_START": int, "TX_END": int})
     for _, row in df.iterrows():
@@ -130,16 +108,40 @@ for genome_version, annotation_path in ("37", GRCH37_ANNOTATIONS), ("38", GRCH38
         ANNOTATION_INTERVAL_TREES[genome_version][chrom].add(Interval(row["TX_START"], row["TX_END"] + 0.1, row["#NAME"]))
 
 SPLICEAI_ANNOTATOR = {
-    "37": Annotator(HG19_FASTA_PATH, GRCH37_ANNOTATIONS),
-    "38": Annotator(HG38_FASTA_PATH, GRCH38_ANNOTATIONS),
+    "37": Annotator(HG19_FASTA_PATH, SPLICEAI_GRCH37_ANNOTATIONS),
+    "38": Annotator(HG38_FASTA_PATH, SPLICEAI_GRCH38_ANNOTATIONS),
 }
+
+ta37_f = open(TRANSCRIPT_GRCH37_ANNOTATIONS, "rt")
+ta38_f = open(TRANSCRIPT_GRCH38_ANNOTATIONS, "rt")
+TRANSCRIPT_ANNOTATIONS = {
+    "37": json.load(ta37_f),
+    "38": json.load(ta38_f),
+}
+ta37_f.close()
+ta38_f.close()
+
+TRANSCRIPT_PRIORITY_ORDER = {
+    "MS": 3,  # MANE select transcript
+    "MP": 2,  # MANE plus clinical transcript
+    "C": 1,   # canonical transcript
+    "N": 0
+}
+
+# check that json annotations exist for all transcripts in the SpliceAI annotations file
+for genome_version in "37", "38":
+    json_transcript_ids = set(TRANSCRIPT_ANNOTATIONS[genome_version])
+    df = pd.read_table(SPLICEAI_GRCH37_ANNOTATIONS if genome_version == "37" else SPLICEAI_GRCH38_ANNOTATIONS)
+    spliceai_annotation_transcript_ids = set(df["#NAME"].apply(lambda t: t.split(".")[0]))
+    transcript_ids_without_annotations = spliceai_annotation_transcript_ids - json_transcript_ids
+    if len(transcript_ids_without_annotations) > 0:
+        raise ValueError(f"Missing {len(transcript_ids_without_annotations)} transcripts in {genome_version} annotations: {transcript_ids_without_annotations}")
 
 SPLICEAI_MAX_DISTANCE_LIMIT = 10000
 SPLICEAI_DEFAULT_DISTANCE = 500  # maximum distance between the variant and gained/lost splice site, defaults to 500
 SPLICEAI_DEFAULT_MASK = 0        # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
-USE_PRECOMPUTED_SCORES = 0       # whether to use precomputed scores by default
 
-SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&distance=500&mask=0&precomputed=1&variant=chr8-140300615-C-G"
+SPLICEAI_EXAMPLE = f"/spliceai/?hg=38&distance=500&mask=0&variant=chr8-140300615-C-G"
 
 VARIANT_RE = re.compile(
     "(chr)?(?P<chrom>[0-9XYMTt]{1,2})"
@@ -193,15 +195,15 @@ class VariantRecord:
         return f"{self.chrom}-{self.pos}-{self.ref}-{self.alts[0]}"
 
 
-def get_splicing_scores_redis_key(tool_name, variant, genome_version, distance, mask, use_precomputed_scores):
-    return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}__pre{use_precomputed_scores}"
+def get_splicing_scores_redis_key(tool_name, variant, genome_version, distance, mask):
+    return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}"
 
 
-def get_splicing_scores_from_redis(tool_name, variant, genome_version, distance, mask, use_precomputed_scores):
+def get_splicing_scores_from_redis(tool_name, variant, genome_version, distance, mask):
     if REDIS is None:
         return None
 
-    key = get_splicing_scores_redis_key(tool_name, variant, genome_version, distance, mask, use_precomputed_scores)
+    key = get_splicing_scores_redis_key(tool_name, variant, genome_version, distance, mask)
     results = None
     try:
         results_string = REDIS.get(key)
@@ -214,11 +216,11 @@ def get_splicing_scores_from_redis(tool_name, variant, genome_version, distance,
     return results
 
 
-def add_splicing_scores_to_redis(tool_name, variant, genome_version, distance, mask, use_precomputed_scores, results):
+def add_splicing_scores_to_redis(tool_name, variant, genome_version, distance, mask, results):
     if REDIS is None:
         return
 
-    key = get_splicing_scores_redis_key(tool_name, variant, genome_version, distance, mask, use_precomputed_scores)
+    key = get_splicing_scores_redis_key(tool_name, variant, genome_version, distance, mask)
     try:
         results_string = json.dumps(results)
         REDIS.set(key, results_string)
@@ -292,7 +294,7 @@ def exceeds_rate_limit(user_id, request_type):
     return None
 
 
-def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use_precomputed_scores):
+def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
     try:
         chrom, pos, ref, alt = parse_variant(variant)
     except ValueError as e:
@@ -309,7 +311,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
         other_genome_version = OTHER_GENOME_VERSION[genome_version]
         other_genome_overlapping_intervals = ANNOTATION_INTERVAL_TREES[other_genome_version][chrom_without_chr].at(pos)
         if other_genome_overlapping_intervals:
-            other_genome_genes = " and ".join(sorted(set([str(i.data).split("---")[0] for i in other_genome_overlapping_intervals])))
+            other_genome_genes = " and ".join(sorted(set([str(i.data) for i in other_genome_overlapping_intervals])))
             return {
                 "variant": variant,
                 "source": "spliceai",
@@ -336,28 +338,6 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
 
     source = None
     scores = []
-
-    # check Illumina's pre-computed tables of spliceAI scores if the user OK'ed this and the variant is short enough to potentially be in there
-    if str(use_precomputed_scores) == "1" and (len(ref) <= 5 or len(alt) <= 2) and str(distance_param) == str(SPLICEAI_DEFAULT_DISTANCE):
-        # examples: ("masked", "snv", "hg19")  ("raw", "indel", "hg38")
-        key = (
-            "masked" if str(mask_param) == "1" else ("raw" if str(mask_param) == "0" else None),
-            "snv" if len(ref) == 1 and len(alt) == 1 else "indel",
-            "hg19" if genome_version == "37" else ("hg38" if genome_version == "38" else None),
-        )
-        try:
-            results = SPLICEAI_CACHE_FILES[key].fetch(chrom, pos-1, pos+1)
-            for line in results:
-                # ['1', '739023', '.', 'C', 'CT', '.', '.', 'SpliceAI=CT|AL669831.1|0.00|0.00|0.00|0.00|-1|-37|-48|-37']
-                fields = line.split("\t")
-                if fields[0] == chrom and int(fields[1]) == pos and fields[3] == ref and fields[4] == alt:
-                    scores.append(fields[7])
-            if scores:
-                source = "spliceai:lookup"
-                #print(f"Fetched: ", scores, flush=True)
-
-        except Exception as e:
-            print(f"ERROR: couldn't retrieve scores using tabix: {type(e)}: {e}", flush=True)
 
     # run the SpliceAI model to compute the scores
     if not scores:
@@ -400,24 +380,31 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
     all_non_zero_scores = None
     all_non_zero_scores_strand = None
     all_non_zero_scores_transcript_id = None
+    all_non_zero_scores_transcript_priority = -1
     for i, transcript_scores in enumerate(scores):
         if "ALL_NON_ZERO_SCORES" not in transcript_scores:
             continue
 
-        gene_name = transcript_scores.get("NAME", "")
-        gene_name_fields = gene_name.split("---")
-        return_scores_for_this_transcript = (
-            # if we don't have info on which transcripts are canonical, return scores for the 1st transcript
-            len(gene_name_fields) <= 3 and i == 0) or (
-            # otherwise, return scores from the 1st canonical transcript
-            len(gene_name_fields) > 3 and gene_name_fields[3] == "yes" and all_non_zero_scores is None)
+        transcript_id_without_version = transcript_scores.get("NAME", "").split(".")[0]
 
-        if return_scores_for_this_transcript:
+        # get json annotations for this transcript
+        transcript_annotations = TRANSCRIPT_ANNOTATIONS[genome_version].get(transcript_id_without_version)
+        if transcript_annotations is None:
+            raise ValueError(f"Missing annotations for {transcript_id_without_version} in {genome_version} annotations")
+
+        # add the extra transcript annotations from the json file to the transcript scores dict
+        transcript_scores.update(transcript_annotations)
+
+        # decide whether to use ALL_NON_ZERO_SCORES from this transcript
+        current_transcript_priority = TRANSCRIPT_PRIORITY_ORDER[transcript_annotations["t_priority"]]
+        if current_transcript_priority > all_non_zero_scores_transcript_priority:
+            all_non_zero_scores_transcript_priority = current_transcript_priority
             all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
-            all_non_zero_scores_strand = transcript_scores["STRAND"]
-            all_non_zero_scores_transcript_id = gene_name_fields[2] if len(gene_name_fields) > 2 else gene_name_fields[0]
+            all_non_zero_scores_strand = transcript_scores["t_strand"]
+            all_non_zero_scores_transcript_id = transcript_scores["t_id"]
 
-        del transcript_scores["ALL_NON_ZERO_SCORES"]
+        for redundant_key in "ALLELE", "NAME", "STRAND", "ALL_NON_ZERO_SCORES":
+            del transcript_scores[redundant_key]
 
     return {
         "variant": variant,
@@ -435,7 +422,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, use
     }
 
 
-def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use_precomputed_scores):
+def get_pangolin_scores(variant, genome_version, distance_param, mask_param):
     if genome_version not in ("37", "38"):
         raise ValueError(f"Invalid genome_version: {mask_param}")
 
@@ -500,6 +487,17 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
         if "ALL_NON_ZERO_SCORES" not in transcript_scores:
             continue
 
+        transcript_id_without_version = transcript_scores.get("NAME", "").split(".")[0]
+
+        # get json annotations for this transcript
+        transcript_annotations = TRANSCRIPT_ANNOTATIONS[genome_version].get(transcript_id_without_version)
+        if transcript_annotations is None:
+            raise ValueError(f"Missing annotations for {transcript_id_without_version} in {genome_version} annotations")
+
+        # add the extra transcript annotations from the json file to the transcript scores dict
+        transcript_scores.update(transcript_annotations)
+
+        # decide whether to use ALL_NON_ZERO_SCORES from this gene
         delta_score_sum = sum(abs(s.get("SG_ALT", 0) - s.get("SG_REF", 0)) for s in transcript_scores["ALL_NON_ZERO_SCORES"])
         delta_score_sum += sum(abs(s.get("SL_ALT", 0) - s.get("SL_REF", 0)) for s in transcript_scores["ALL_NON_ZERO_SCORES"])
 
@@ -510,7 +508,8 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, use
             all_non_zero_scores_transcript_id = transcript_scores["NAME"]
             max_delta_score_sum = delta_score_sum
 
-        del transcript_scores["ALL_NON_ZERO_SCORES"]
+        for redundant_key in "NAME", "STRAND", "ALL_NON_ZERO_SCORES":
+            del transcript_scores[redundant_key]
 
     return {
         "variant": variant,
@@ -591,30 +590,24 @@ def run_splice_prediction_tool(tool_name):
     if mask_param not in ("0", "1"):
         return error_response(f'Invalid "mask" value: "{mask_param}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n', source=tool_name)
 
-    use_precomputed_scores = params.get("precomputed", str(USE_PRECOMPUTED_SCORES))
-    if use_precomputed_scores not in ("0", "1"):
-        return error_response(f'Invalid "precomputed" value: "{use_precomputed_scores}". The value must be either "0" or "1". For example: {SPLICEAI_EXAMPLE}\n', source=tool_name)
-
-    use_precomputed_scores = int(use_precomputed_scores)
-
     if request.remote_addr not in DISABLE_LOGGING_FOR_IPS:
         print(f"{logging_prefix}: {request.remote_addr}: ======================", flush=True)
         print(f"{logging_prefix}: {request.remote_addr}: {variant} processing with hg={genome_version}, "
-              f"distance={distance_param}, mask={mask_param}, precomputed={use_precomputed_scores}", flush=True)
+              f"distance={distance_param}, mask={mask_param}", flush=True)
 
     # check REDIS cache before processing the variant
-    results = get_splicing_scores_from_redis(tool_name, variant, genome_version, distance_param, mask_param, use_precomputed_scores)
+    results = get_splicing_scores_from_redis(tool_name, variant, genome_version, distance_param, mask_param)
     if not results:
         if tool_name == "spliceai":
-            results = get_spliceai_scores(variant, genome_version, distance_param, int(mask_param), use_precomputed_scores)
+            results = get_spliceai_scores(variant, genome_version, distance_param, int(mask_param))
         elif tool_name == "pangolin":
             pangolin_mask_param = "True" if mask_param == "1" else "False"
-            results = get_pangolin_scores(variant, genome_version, distance_param, pangolin_mask_param, use_precomputed_scores)
+            results = get_pangolin_scores(variant, genome_version, distance_param, pangolin_mask_param)
         else:
             raise ValueError(f"Invalid tool_name: {tool_name}")
 
         if "error" not in results:
-            add_splicing_scores_to_redis(tool_name, variant, genome_version, distance_param, mask_param, use_precomputed_scores, results)
+            add_splicing_scores_to_redis(tool_name, variant, genome_version, distance_param, mask_param, results)
 
     response_json = {}
     response_json.update(params)  # copy input params to output
