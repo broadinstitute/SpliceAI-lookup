@@ -1,5 +1,9 @@
 #%%
 
+"""This script creates a json file with annotation fields for each transcript id, including
+whether it's a "MANE select" transcript, canonical transcript, etc.
+"""
+
 import argparse
 import collections
 from collections import defaultdict, Counter
@@ -7,21 +11,17 @@ import gzip
 from intervaltree import IntervalTree, Interval
 import os
 import pandas as pd
-from pprint import pprint
 import re
-import spliceai
-
+import sys
+sys.path.append(os.path.expanduser("~/code/SpliceAI"))          # code from https://github.com/bw2/SpliceAI
+sys.path.append(os.path.expanduser("~/code/annotation-utils"))  # code from https://github.com/bw2/annotation-utils
 
 # import from https://github.com/bw2/annotation-utils
 from annotations.get_ensembl_db_info import get_gene_id_to_canonical_transcript_id, CURRENT_ENSEMBL_DATABASE
+from annotations.get_MANE_table import get_MANE_ensembl_transcript_table
 
-#%%
-official_annotations_gene_names = set()
-for genome_version in "37", "38":
-    official_annotations_path = os.path.join(os.path.dirname(spliceai.__file__), f"annotations/grch{genome_version}.txt")
-    with open(official_annotations_path, "rt") as f:
-        official_annotations_gene_names.update({line.split("\t")[0] for line in f})
-
+# cd to the dir that contains this script
+os.chdir(os.path.expanduser("~/code/SpliceAI-lookup/annotations"))
 
 #%%
 
@@ -32,20 +32,7 @@ test_args = None
 
 #%%
 
-"""
-I was originally going to only include "protein coding" transcripts, but saw that the default 
-SpliceAI annotations include some genes from various other categories  (though I couldn't figure out what 
-their filtering criteria was).
-AFAIK the only downside with including too many is you end up with pseudo- or anti-sense transcripts overlapping 
-your main genes, and SpliceAI outputting many scores for each variant. I could also include lincRNAs and anything 
-else that doesn't overlap the genes in the above set.
-
-4-9-2021 - will try including all transcripts    
-"""
-SKIP_SECONDARY_TRANSCRIPTS = False
-
-#%%
-
+test_args = ["./gencode.v44.basic.annotation.gtf.gz"]
 p = argparse.ArgumentParser(description="""This script takes a Gencode .gtf.gz file
     and outputs an annotation file which can be passed to SpliceAI instead of 
     the default SpliceAI annotations which are still on Gencode v24. 
@@ -114,12 +101,30 @@ TRANSCRIPT_TYPES_BY_PRIORITY = [
     'misc_RNA',
 ]
 
+# update the ENSG to RefSeq id map
+os.system("./download_ENSG_to_RefSeq_mapping.sh")
 
 ENST_to_refseq_map = collections.defaultdict(set)
 with open("./ENST_to_RefSeq_map.txt", "rt") as f:
     for line in f:
         ENST_id, refseq_id = line.strip().split("\t")
         ENST_to_refseq_map[ENST_id].add(refseq_id)
+
+#%%
+
+# Retrieve all MANE_select transcripts
+MANE_df = get_MANE_ensembl_transcript_table("transcript")
+MANE_df = MANE_df[MANE_df.tag.isin({"MANE_Plus_Clinical", "MANE_Select"})]
+
+MANE_select_gene_ids_to_transcript_ids_without_version_number = {
+    row.gene_id.split(".")[0]: row.transcript_id.split(".")[0]
+    for _, row in MANE_df[MANE_df.tag == "Mane_Select"][["gene_id", "transcript_id"]].iterrows()
+}
+
+MANE_plus_clinical_gene_ids_to_transcript_ids_without_version_number = {
+    row.gene_id.split(".")[0]: row.transcript_id.split(".")[0]
+    for _, row in MANE_df[MANE_df.tag == "MANE_Plus_Clinical"][["gene_id", "transcript_id"]].iterrows()
+}
 
 #%%
 
@@ -147,10 +152,7 @@ def parse_gencode_file(gencode_gtf_path):
             strand = fields[6]
 
             transcript_type_counter[meta_fields["transcript_type"]] += 1
-            if meta_fields["gene_name"] in official_annotations_gene_names:
-                priority = "primary"
-                transcript_type_summary_counter["Including gene name from default SpliceAI annotation file"] += 1
-            elif meta_fields["transcript_type"] == "protein_coding":
+            if meta_fields["transcript_type"] == "protein_coding":
                 priority = "primary"
                 transcript_type_summary_counter["Including new protein-coding gene"] += 1
             else:
@@ -193,25 +195,59 @@ all_exons_by_priority = {
 print(f"Getting canonical transcripts from {CURRENT_ENSEMBL_DATABASE}")
 gene_id_to_canonical_transcript_id = get_gene_id_to_canonical_transcript_id()
 
-for record in parse_gencode_file(args.gtf_gz_path):
+genes_without_canonical_transcripts = 0
+genes_without_MANE_select_transcripts = 0
+total_transcripts = 0
+
+gene_set_all = set()
+gene_set_without_MANE_select = set()
+
+transcript_id_to_composite_name = {}
+for record in parse_gencode_file(os.path.expanduser(args.gtf_gz_path)):
     priority = record["priority"]
     transcript_type = record["transcript_type"]
 
-    is_canonical_transcript = "no"
     gene_id_without_version = record["gene_id"].split(".")[0]
+
+    total_transcripts += 1
+    gene_set_all.add(gene_id_without_version)
+
     transcript_id_without_version = record["transcript_id"].split(".")[0]
-    if gene_id_without_version not in gene_id_to_canonical_transcript_id:
-        #print(f"WARNING: no canonical transcript for " + record["gene_id"])
-        pass
-    elif transcript_id_without_version == gene_id_to_canonical_transcript_id[gene_id_without_version]:
-        is_canonical_transcript = "yes"
+
+    # set the is_main_transcript variable
+    is_main_transcript = "N"  # possible values are "MS" (for MANE select), "MP" (for MANE plus), "C" (for canonical) and "N" (for none of the above)
+    if is_main_transcript == "N":
+        if gene_id_without_version not in MANE_select_gene_ids_to_transcript_ids_without_version_number:
+            #print("WARNING: no MANE select transcript for " + record["gene_id"])
+            genes_without_MANE_select_transcripts += 1
+            gene_set_without_MANE_select.add(gene_id_without_version)
+        elif transcript_id_without_version == MANE_select_gene_ids_to_transcript_ids_without_version_number[gene_id_without_version]:
+            is_main_transcript = "MS"
+
+    if is_main_transcript == "N":
+        if gene_id_without_version not in MANE_plus_clinical_gene_ids_to_transcript_ids_without_version_number:
+            pass
+        elif transcript_id_without_version == MANE_plus_clinical_gene_ids_to_transcript_ids_without_version_number[gene_id_without_version]:
+            is_main_transcript = "MP"
+
+    if is_main_transcript == "N":
+        if gene_id_without_version not in gene_id_to_canonical_transcript_id:
+            print(f"WARNING: no canonical transcript for " + record["gene_id"])
+            genes_without_canonical_transcripts += 1
+        elif transcript_id_without_version == gene_id_to_canonical_transcript_id[gene_id_without_version]:
+            is_main_transcript = "C"
+
 
     refseq_transcript_ids_set = ENST_to_refseq_map[transcript_id_without_version]
-    name = "---".join([record["gene_name"], record["gene_id"], record["transcript_id"], is_canonical_transcript, record["transcript_type"], ",".join(refseq_transcript_ids_set)])
+    name = "---".join([record["gene_name"], record["gene_id"], record["transcript_id"], is_main_transcript, record["transcript_type"], ",".join(refseq_transcript_ids_set)])
     key = (record["chrom"], name, record["strand"])
-
     all_exons_by_priority[priority][transcript_type][key].add((int(record['start_1based']), int(record['end_1based'])))
+    transcript_id_to_composite_name[transcript_id_without_version] = name
 
+
+print(f"{genes_without_canonical_transcripts:,d} out of {total_transcripts:,d} transcripts are from genes without canonical transcripts")
+print(f"{genes_without_MANE_select_transcripts:,d} out of {total_transcripts:,d} transcripts are from genes without MANE select transcripts")
+print(f"{len(gene_set_without_MANE_select):,d} out of {len(gene_set_all):,d} genes don't have a MANE select transcript")
 
 #%%
 
@@ -224,9 +260,10 @@ def transcript_type_order(transcript_type):
 
 # reformat the aggregated records into a list which can be turned into a pandas DataFrame
 output_records = []
-interval_trees = defaultdict(IntervalTree)
-skipped_transcript_type_counter = Counter()
 used_transcript_type_counter = Counter()
+if SKIP_SECONDARY_TRANSCRIPTS:
+    interval_trees = defaultdict(IntervalTree)
+    skipped_transcript_type_counter = Counter()
 for priority in all_exons_by_priority:
     for transcript_type in sorted(all_exons_by_priority[priority].keys(), key=transcript_type_order):
         current_exon_sets = all_exons_by_priority[priority][transcript_type]
@@ -239,17 +276,17 @@ for priority in all_exons_by_priority:
             tx_end_1based = max([end_1based for _, end_1based in exons_set])
 
             # check for overlap with previously-added transcripts
-            if SKIP_SECONDARY_TRANSCRIPTS and priority != "primary" and interval_trees[chrom].overlaps(Interval(tx_start_0based, tx_end_1based)):
-                # skip any secondary transcripts that overlap already-added primary transcripts
-                overlapping_genes = sorted(set([i.data for i in interval_trees[chrom][tx_start_0based:tx_end_1based]]))
-                #print(f"Skipping {priority} {transcript_type} gene {gene_name} since it overlaps {len(overlapping_genes)} gene(s): " +
-                #    ", ".join(overlapping_genes[:5]) + ("..." if len(overlapping_genes) > 5 else ""))
-                skipped_transcript_type_counter[transcript_type] += 1
-                continue
+            if SKIP_SECONDARY_TRANSCRIPTS:
+                if priority != "primary" and interval_trees[chrom].overlaps(Interval(tx_start_0based, tx_end_1based)):
+                    # skip any secondary transcripts that overlap already-added primary transcripts
+                    overlapping_genes = sorted(set([i.data for i in interval_trees[chrom][tx_start_0based:tx_end_1based]]))
+                    #print(f"Skipping {priority} {transcript_type} gene {gene_name} since it overlaps {len(overlapping_genes)} gene(s): " +
+                    #    ", ".join(overlapping_genes[:5]) + ("..." if len(overlapping_genes) > 5 else ""))
+                    skipped_transcript_type_counter[transcript_type] += 1
+                    continue
+                interval_trees[chrom].add(Interval(tx_start_0based, tx_end_1based + 0.1, gene_name))
 
             used_transcript_type_counter[transcript_type] += 1
-
-            interval_trees[chrom].add(Interval(tx_start_0based, tx_end_1based + 0.1, gene_name))
 
             exon_starts_0based = sorted([start_1based - 1 for start_1based, _ in exons_set])
             exon_ends_1based = sorted([end_1based for _, end_1based in exons_set])
@@ -265,26 +302,59 @@ for priority in all_exons_by_priority:
             })
 
 
-print("Used transcript types counter:")
+print("Transcript types counter:")
 for k, v in sorted(used_transcript_type_counter.items(), key=lambda i: -i[1]):
     print(f"{v:10d}: {k}")
 
-print("Skipped transcript types counter:")
-for k, v in sorted(skipped_transcript_type_counter.items(), key=lambda i: -i[1]):
-    print(f"{v:10d}: {k}")
+if SKIP_SECONDARY_TRANSCRIPTS:
+    print("Skipped transcript types counter:")
+    for k, v in sorted(skipped_transcript_type_counter.items(), key=lambda i: -i[1]):
+        print(f"{v:10d}: {k}")
 
 #%%
 
-# generate output table
+# generate output table for SpliceAI
+
 output_df = pd.DataFrame(output_records)
 output_df = output_df[["#NAME", "CHROM", "STRAND", "TX_START", "TX_END", "EXON_START", "EXON_END"]]
 
-#%%
 #output_df[output_df['#NAME'] == "FGF16"]
 output_path = re.sub(".gtf.gz$", "", os.path.basename(args.gtf_gz_path)) + ".txt.gz"
 
 output_df.to_csv(output_path, index=False, sep="\t")
 
-print(f"Wrote {len(output_df)} records to {os.path.abspath(output_path)}")
+print(f"Wrote {len(output_df):,d} records to {os.path.abspath(output_path)}")
 
+#%%
+
+
+# generate a GTF for pangolin where the gene name has been replaced with the composite name
+pangolin_gtf_output_path = re.sub(".gtf.gz$", "", os.path.basename(args.gtf_gz_path)) + ".for_pangolin.gtf.gz"
+with gzip.open(args.gtf_gz_path, "rt") as f, gzip.open(pangolin_gtf_output_path, "wt") as f2:
+    for line in f:
+        if line.startswith("#"):
+            print(line.strip())
+            continue
+        fields = line.strip().split("\t")
+        if fields[2] != "transcript":
+            continue
+
+        meta_fields = {}
+        for meta_field in fields[8].strip("; ").split(";"):
+            key, value = meta_field.strip().replace('"', '').split()
+            meta_fields[key] = value
+
+        transcript_id_without_version = meta_fields["transcript_id"].split(".")[0]
+        if transcript_id_without_version not in transcript_id_to_composite_name:
+            print(f"WARNING: no composite name for {transcript_id_without_version}")
+            continue
+
+        meta_fields["gene_name"] = transcript_id_to_composite_name[transcript_id_without_version]
+        meta_fields["gene_id"] = transcript_id_to_composite_name[transcript_id_without_version]
+        meta_fields["transcript_id"] = transcript_id_to_composite_name[transcript_id_without_version]
+
+        fields[8] = "; ".join([f'{k} "{v}"' for k, v in meta_fields.items()])
+        f2.write("\t".join(fields) + "\n")
+
+print(f"Done writing to {pangolin_gtf_output_path}")
 #%%
