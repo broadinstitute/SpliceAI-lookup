@@ -61,13 +61,13 @@ def main():
         transcript_priority = compute_transcript_priority(transcript_id=transcript_id_without_version)
         refseq_transcript_id = esnembl_ENST_to_RefSeq_ids.get(transcript_id_without_version)
         output_json[transcript_id_without_version] = {
-            "gene_name": record["gene_name"],
-            "gene_id": record["gene_id"],
-            "transcript_id": record["transcript_id"],
-            "transcript_type": record["transcript_type"],
-            "transcript_strand": record["strand"],
-            "transcript_priority": transcript_priority,
-            "transcript_refseq_id": refseq_transcript_id,
+            "g_name": record["gene_name"],
+            "g_id": record["gene_id"],
+            "t_id": record["transcript_id"],
+            "t_type": record["transcript_type"],
+            "t_strand": record["strand"],
+            "t_priority": transcript_priority,
+            "t_refseq_id": refseq_transcript_id,
         }
 
     output_path = re.sub(".gtf.gz$", "", os.path.basename(args.gtf_gz_path)) + ".transcript_annotations.json"
