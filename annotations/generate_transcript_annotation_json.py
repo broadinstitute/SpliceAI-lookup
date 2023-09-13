@@ -45,12 +45,13 @@ def main():
     esnembl_ENST_to_RefSeq_ids = get_ensembl_ENST_to_RefSeq_ids(database=args.ensembl_database)
     print(f"Downloaded {len(esnembl_ENST_to_RefSeq_ids):,d} ENST to RefSeq mappings")
     for key, refseq_ids in esnembl_ENST_to_RefSeq_ids.items():
-        esnembl_ENST_to_RefSeq_ids[key] = list(sorted(refseq_ids))[0]
+        esnembl_ENST_to_RefSeq_ids[key] = list(sorted(refseq_ids))
 
     MANE_df["ensembl_ENST_without_version"] = MANE_df["Ensembl_nuc"].apply(lambda s: s.split(".")[0])
     MANE_ensembl_ENST_to_RefSeq_id = dict(MANE_df[["ensembl_ENST_without_version", "RefSeq_nuc"]].itertuples(index=False))
     print(f"Got {len(MANE_ensembl_ENST_to_RefSeq_id):,d} MANE ENST to RefSeq mappings, of which "
           f"{len(set(MANE_ensembl_ENST_to_RefSeq_id) - set(esnembl_ENST_to_RefSeq_ids)):,d} are unique.")
+    MANE_ensembl_ENST_to_RefSeq_id = {k: [v] for k, v in MANE_ensembl_ENST_to_RefSeq_id.items()}
     esnembl_ENST_to_RefSeq_ids.update(MANE_ensembl_ENST_to_RefSeq_id)
 
     print(f"Parsing {args.gtf_gz_path}")
@@ -59,7 +60,7 @@ def main():
         transcript_id_without_version = record["transcript_id"].split(".")[0]
 
         transcript_priority = compute_transcript_priority(transcript_id=transcript_id_without_version)
-        refseq_transcript_id = esnembl_ENST_to_RefSeq_ids.get(transcript_id_without_version)
+        refseq_transcript_ids = esnembl_ENST_to_RefSeq_ids.get(transcript_id_without_version)
         output_json[transcript_id_without_version] = {
             "g_name": record["gene_name"],
             "g_id": record["gene_id"],
@@ -67,7 +68,7 @@ def main():
             "t_type": record["transcript_type"],
             "t_strand": record["strand"],
             "t_priority": transcript_priority,
-            "t_refseq_id": refseq_transcript_id,
+            "t_refseq_ids": refseq_transcript_ids,
         }
 
     output_path = re.sub(".gtf.gz$", "", os.path.basename(args.gtf_gz_path)) + ".transcript_annotations.json"
