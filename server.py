@@ -498,8 +498,10 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param):
         transcript_scores.update(transcript_annotations)
 
         # decide whether to use ALL_NON_ZERO_SCORES from this gene
-        delta_score_sum = sum(abs(s.get("SG_ALT", 0) - s.get("SG_REF", 0)) for s in transcript_scores["ALL_NON_ZERO_SCORES"])
-        delta_score_sum += sum(abs(s.get("SL_ALT", 0) - s.get("SL_REF", 0)) for s in transcript_scores["ALL_NON_ZERO_SCORES"])
+        delta_score_sum = sum(abs(float(s.get("SG_ALT", 0)) - float(s.get("SG_REF", 0)))
+                              for s in transcript_scores["ALL_NON_ZERO_SCORES"])
+        delta_score_sum += sum(abs(float(s.get("SL_ALT", 0)) - float(s.get("SL_REF", 0)))
+                               for s in transcript_scores["ALL_NON_ZERO_SCORES"])
 
         # return all_non_zero_scores for the transcript or gene with the highest delta score sum
         if delta_score_sum > max_delta_score_sum:
@@ -598,13 +600,17 @@ def run_splice_prediction_tool(tool_name):
     # check REDIS cache before processing the variant
     results = get_splicing_scores_from_redis(tool_name, variant, genome_version, distance_param, mask_param)
     if not results:
-        if tool_name == "spliceai":
-            results = get_spliceai_scores(variant, genome_version, distance_param, int(mask_param))
-        elif tool_name == "pangolin":
-            pangolin_mask_param = "True" if mask_param == "1" else "False"
-            results = get_pangolin_scores(variant, genome_version, distance_param, pangolin_mask_param)
-        else:
-            raise ValueError(f"Invalid tool_name: {tool_name}")
+        try:
+            if tool_name == "spliceai":
+                results = get_spliceai_scores(variant, genome_version, distance_param, int(mask_param))
+            elif tool_name == "pangolin":
+                pangolin_mask_param = "True" if mask_param == "1" else "False"
+                results = get_pangolin_scores(variant, genome_version, distance_param, pangolin_mask_param)
+            else:
+                raise ValueError(f"Invalid tool_name: {tool_name}")
+        except Exception as e:
+            traceback.print_exc()
+            return error_response(f"ERROR: {e}", source=tool_name)
 
         if "error" not in results:
             add_splicing_scores_to_redis(tool_name, variant, genome_version, distance_param, mask_param, results)
