@@ -161,7 +161,7 @@
                                 </table>
                             </div>
                         </div>
-<!--
+
                         <br />
                         <div style="font-size: large; color: darkred">
                           <br />
@@ -171,7 +171,7 @@
                         </div>
                         <br />
                         <br />
--->
+
                         <div class="ui form" style="width:100%">
                             <div class="ui input" style="padding-bottom:30px; padding-right:8px; width:100%">
                                 <input id="search-box" type="text" style="width: 100%; padding: 7px 10px" placeholder="Enter a variant...">
@@ -237,7 +237,8 @@
                     <br />
                     <!-- <<div><i>What's New</i></div>
                     <br /> -->
-                    <b>Sep 10, 2023</b><br />
+                    <b>Sep 14, 2023</b><br />
+                    - updated to Gencode v44 basic annotation<br />
                     - added raw REF & ALT scores to the Pangolin results table<br />
                     - added transcript strand to the results table<br />
                     <br />
@@ -503,13 +504,12 @@
             // compute sort key
             const splice_prediction_tool = is_pangolin ? 1 : 0;
 
-            const gene_name_fields = (scores["NAME"] || "").split("---")
-            const gene_name = gene_name_fields[0]
-            const transcript_id = gene_name_fields.length >= 3 && gene_name_fields[2]
-            const is_canonical_transcript = (gene_name_fields.length >= 4 && gene_name_fields[3] === "yes") ? 0 : 1
-            const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
+            const gene_name = scores['g_name']
+            const transcript_id = scores['t_id']
+            const is_canonical_transcript = (scores['t_priority'] == "C" || scores['t_priority'] == "MS") ? 0 : 1
+            const transcript_type = scores['t_type']
             const is_protein_coding = !transcript_type || transcript_type == "protein_coding" ? 0 : 1
-            const refseq_transcript_id_is_in_query = gene_name_fields.length >= 6 && gene_name_fields[5] && gene_name_fields[5].split(",").some(refseq_transcript_id => response.raw.includes(refseq_transcript_id))
+            const refseq_transcript_id_is_in_query = (scores['t_refseq_ids'] || []).some(refseq_transcript_id => response.raw.includes(refseq_transcript_id))
             const contains_hgvs_transcript_id = response.raw.includes(transcript_id) || refseq_transcript_id_is_in_query ? 0 : 1;
 
             scores['sort_key'] = `${splice_prediction_tool}${contains_hgvs_transcript_id}`
@@ -549,28 +549,25 @@
                 const variant_ucsc_url = scores.url
                 const gnomAD_version = scores.hg === "38"? "gnomad_r3" : "gnomad_r2_1"
                 const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + scores.variant + "?dataset=" + gnomAD_version
-                const gene_name_fields = (scores.NAME || "").split("---")
-                const gene_name = gene_name_fields[0].split(".")[0]  // remove gene version number  TODO remove this after switching Pangolin to use regular gene names
-                const strand = scores.STRAND == "-" ? "minus" : "plus"
-                const is_canonical_transcript = gene_name_fields.length >= 4 && gene_name_fields[3] === "yes"
-                const transcript_type = gene_name_fields.length >= 5 && gene_name_fields[4]
+
+                const gene_name = scores['g_name'].split(".")[0]  // remove gene version number  TODO remove this after switching Pangolin to use regular gene names
+                const strand = scores['t_strand'] == "-" ? "minus" : "plus"
+                const is_canonical_transcript = scores['t_priority'] == "C" || scores['t_priority'] == "MS"
+                const transcript_type = scores['t_type']
                 const is_protein_coding = !transcript_type || transcript_type == "protein_coding"
-                const refseq_transcript_ids = gene_name_fields.length >= 6 && gene_name_fields[5] && gene_name_fields[5].split(",")
+                const refseq_transcript_ids = scores['t_refseq_ids']
                 const background_color = !is_protein_coding ? NON_CODING_TRANSCRIPT_BACKGROUND_COLOR : (
                     is_canonical_transcript ? CANONICAL_TRANSCRIPT_BACKGROUND_COLOR : CODING_TRANSCRIPT_BACKGROUND_COLOR
                 )
 
                 let gene_and_transcript_id = ""
-                if (gene_name_fields.length >= 3 ) {
-                    const gene_id_link = `<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${gene_name_fields[1].split(".")[0]}" target="_blank">${gene_name_fields[1]}</a>`
-                    const transcript_id_link = ` / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${gene_name_fields[2].split(".")[0]}" target="_blank">${gene_name_fields[2]}</a>`
-                    const canonical_transcript_text = is_canonical_transcript ? '<div class="smallLink">canonical transcript</div>' : ''
-                    const biotype_link = `<div class="smallLink"><a href="https://www.gencodegenes.org/pages/biotypes.html" target="_blank">${transcript_type.replace(/_/g, " ")}</a></div>`
-                    const refseq_transcript_id_link = refseq_transcript_ids ? (" /" + ` <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${refseq_transcript_ids[0]}" target="_blank">${refseq_transcript_ids[0]}</a>`) : ''
-                    gene_and_transcript_id = ` <div class="smallLink">(${gene_id_link}${transcript_id_link}${refseq_transcript_id_link})</div><br /><br class='only-large-screen' />${biotype_link}${canonical_transcript_text} <div class="smallLink"> (${strand} strand)</div>`
-                } else {
-                    gene_and_transcript_id = ` <div class="smallLink"> (${strand} strand)</div>`
-                }
+                const gene_id_link = `<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${scores['g_id'].split(".")[0]}" target="_blank">${scores['g_id']}</a>`
+                const transcript_id_link = ` / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${scores['t_id'].split(".")[0]}" target="_blank">${scores['t_id']}</a>`
+                const canonical_transcript_text = is_canonical_transcript ? '<div class="smallLink">canonical transcript</div>' : ''
+                const biotype_link = `<div class="smallLink"><a href="https://www.gencodegenes.org/pages/biotypes.html" target="_blank">${transcript_type.replace(/_/g, " ")}</a></div>`
+                const refseq_transcript_id_link = refseq_transcript_ids ? (" /" + ` <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${refseq_transcript_ids[0]}" target="_blank">${refseq_transcript_ids[0]}</a>`) : ''
+                gene_and_transcript_id = ` <div class="smallLink">(${gene_id_link}${transcript_id_link}${refseq_transcript_id_link})</div><br /><br class='only-large-screen' />${biotype_link}${canonical_transcript_text} <div class="smallLink"> (${strand} strand)</div>`
+
                 //round to 2 decimal places
                 if (scores.is_pangolin) {
                     scores.DS_SL = Math.round(scores.DS_SL * 100) / 100
