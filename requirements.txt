@@ -1,6 +1,6 @@
 tensorflow==1.14.0   # for python3.6 on centos7
 keras==2.1.5
-spliceai @ git+https://github.com/bw2/SpliceAI@b1bc235   # if the correct version isn't being installed, clone the repo and install from the local directory by running python3 setup.py install
+spliceai @ git+https://github.com/bw2/SpliceAI   # if the latest version isn't being installed, clone the repo and install from the local directory by running python3 setup.py install
 flask
 flask-cors
 flask-talisman
@@ -15,4 +15,4 @@ gffutils
 biopython
 pyfastx
 pyvcf>=0.6.8    # if you get an installation error like "use_2to3 is invalid", downgrade to setuptools==57.5.0, install pyvcf, then upgrade setuptools. 
-pangolin @ git+https://github.com/bw2/Pangolin@e12dd28   # if the correct version isn't being installed, clone the repo and install from the local directory by running python3 setup.py install
+pangolin @ git+https://github.com/bw2/Pangolin     # if the latest version isn't being installed, clone the repo and install from the local directory by running python3 setup.py install
