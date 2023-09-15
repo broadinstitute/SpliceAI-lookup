@@ -98,19 +98,18 @@
                                     <a id="more-details1-button" href="#" onclick="$('#more-details1').show();$('#more-details1-button').hide();">[more details]</a>
                                 <div id="more-details1" style="display:none">
                                     <br />
-                                    This web interface and the underlying <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> are developed and maintained by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.<br />
-                                    The <a href="https://spliceailookup-api.broadinstitute.org/" target="_blank">SpliceAI server</a> optionally uses pre-computed
-                                    scores provided by Illumina for SNVs and small InDels, but runs the <a href="https://github.com/Illumina/SpliceAI" target="_blank">SpliceAI model</a>
-                                    directly for scores not available in the pre-computed files - such as for larger InDels, non-default "Max distance" values, etc.<br />
-				    <br />
-				    NOTE: The server supports not more than several queries per-minute per-user. If you need to batch-process many variants, please use the
-				    <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
-				    to set up your own local instance of the API server or just run the underlying SpliceAI model directly.<br />
+                                    This website is developed and maintained by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.<br />
+                                    When the user enters a variant, the website runs SpliceAI and Pangolin models on this variant and then displays the scores.<br />
                                     <br />
-                                    For more information about the SpliceAI model, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a> and <a href="https://github.com/Illumina/SpliceAI" target="_blank">github.com/Illumina/SpliceAI</a>,
-                                    and this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.<br />
+                                    For more information about SpliceAI, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a>
+                                    and this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.
+                                    For more information about Pangolin, see [<a href="https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4" target="_blank">Zeng & Li 2022</a>].<br />
                                     <br />
-				    Since February 2023, <a href="https://github.com/tkzeng/Pangolin" target="_blank">Pangolin scores</a> from [<a href="https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4" target="_blank">Zeng & Li 2022</a>] are also shown below the SpliceAI results.
+
+                                    NOTE: This server supports no more than several queries per-minute per-user. If you need to batch-process many variants, please use the
+                                    <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
+                                    to set up your own local instance of the API server or just run the SpliceAI and Pangolin models directly.<br />
+                                    <br />
                                 </div>
                             </div>
                             <br />
@@ -237,18 +236,18 @@
                     <br />
                     <!-- <<div><i>What's New</i></div>
                     <br /> -->
-                    <b>Sep 14, 2023</b><br />
+                    <b>Sep 15, 2023</b><br />
+                    - go to the <a href="https://broadinstitute.github.io/SpliceAI-lookup-dev/index.html"><b>BETA version</b></a> of this site to try new features and <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">send feedback</a><br/>
                     - updated to Gencode v44 basic annotation<br />
                     - added raw REF & ALT scores to the Pangolin results table<br />
-                    - added transcript strand to the results table<br />
                     <br />
-                    <b>May 22, 2023</b><br />
-                    - changed defaults to 'masked' and max distance to 500bp<br />
-                    - retired <b>Illumina precomputed scores</b> since they were created using Gencode v24
-                    and max distance = 50bp and so can differ from computed scores which are based on the latest Gencode.<br />
-		            <br />
                     <a id="more-details3-button" href="#" onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
                     <div id="more-details3" style="display:none">
+                        <b>May 22, 2023</b><br />
+                        - changed defaults to 'masked' and max distance to 500bp<br />
+                        - retired <b>Illumina precomputed scores</b> since they were created using Gencode v24
+                        and max distance = 50bp and so can differ from computed scores which are based on the latest Gencode.<br />
+                        <br />
                           <b>May 12, 2023</b><br />
                           - added REF & ALT score columns to show SpliceAI's underlying predictions for each haplotype (using <a href="https://github.com/Illumina/SpliceAI/pull/92">SpliceAI PR by @h-joshi</a>).
                           The &#916;&nbsp; score column is the difference between these two scores.<br />
