@@ -425,7 +425,7 @@
           if (score == null || isNaN(score)) {
               return ""
           } else {
-              return parseFloat(score).toFixed(2)
+              return Math.abs(parseFloat(score)).toFixed(2)
           }
       }
 
