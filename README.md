@@ -60,6 +60,6 @@ The server uses ~1.5 Gb RAM per server thread.
 ---
 #### For Developers
 
-The front-end of the spliceailookup.broadinstitute.org website is entirely within the [index.html](index.html) file and uses plain ES6 javascript, along with the jQuery, Semantic UI libraries. Also, it uses a [custom version of igv.js](https://github.com/bw2/igv.js) which has some additional track types not (yet?) available in the official igv.js repo. The server-side code is contained within [server.py](server.py) and based around the Flask library. 
+The front-end of the [spliceailookup.broadinstitute.org](https://spliceailookup.broadinstitute.org) is in [index.html](index.html) and uses ES6 javascript, along with the jQuery, Semantic UI libraries. Also, it uses a [custom version of igv.js](https://github.com/bw2/igv.js) with some extra track types not (yet?) available in the official igv.js repo. The server-side code is in [server.py](server.py) and based around the Flask library. 
 
 
