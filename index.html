@@ -160,7 +160,7 @@
                                 </table>
                             </div>
                         </div>
-<!--
+
                         <br />
                         <div style="font-size: large; color: darkred">
                           <br />
@@ -170,7 +170,7 @@
                         </div>
                         <br />
                         <br />
--->
+
                         <div class="ui form" style="width:100%">
                             <div class="ui input" style="padding-bottom:30px; padding-right:8px; width:100%">
                                 <input id="search-box" type="text" style="width: 100%; padding: 7px 10px" placeholder="Enter a variant...">
@@ -234,10 +234,13 @@
                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website.
                     <a href="https://github.com/illumina/SpliceAI" target="_blank">SpliceAI/issues</a>: issues with the underlying SpliceAI model.<br />
                     <br />
-                    <!-- <<div><i>What's New</i></div>
-                    <br /> -->
-                    <b>Sep 15, 2023</b><br />
+                    <!-- <<div><i>What's New</i></div><br /> -->
+                    <b>Sep 26, 2023</b><br />
                     - visit the <a href="https://broadinstitute.github.io/SpliceAI-lookup-dev/index.html"><b>BETA version</b></a> of this site to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">provide feedback</a> on new features & visualizations before they are released here<br/>
+                    - Fixed Pangolin bug that could cause masked scores to be computed incorrectly whenever a variant overlapped more than one gene. More
+                    details are provided by @kazmiekr @ https://github.com/invitae/pangolin/pull/5<br />
+                    <br />
+                    <b>Sep 15, 2023</b><br />
                     - updated to Gencode v44 basic annotation<br />
                     - added raw REF & ALT scores to the Pangolin results table<br />
                     <br />
