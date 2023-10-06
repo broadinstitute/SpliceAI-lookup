@@ -1,12 +1,12 @@
 <html>
 <head>
     <script>
-        let base_api_url = "https://spliceailookup-api.broadinstitute.org"
+        let baseApiUrl = "https://spliceailookup-api.broadinstitute.org"
         if (location.origin && location.origin.startsWith("http") && !location.origin.includes("broadinstitute.org")) {
-            base_api_url = location.origin
+            baseApiUrl = location.origin
         }
 
-        console.log("Using SpliceAI-lookup API url:", base_api_url)
+        console.log("Using SpliceAI-lookup API url:", baseApiUrl)
     </script>
     <meta content="width=device-width, initial-scale=1" charset="utf-8" name="viewport"/>
     <title>SpliceAI Lookup</title>
