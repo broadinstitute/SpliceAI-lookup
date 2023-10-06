@@ -6,47 +6,88 @@
             base_api_url = location.origin
         }
 
-        //base_api_url = "http://localhost:8080"
-
         console.log("Using SpliceAI-lookup API url:", base_api_url)
     </script>
-    <meta content="width=device-width, initial-scale=1" charset="utf-8" name="viewport" />
+    <meta content="width=device-width, initial-scale=1" charset="utf-8" name="viewport"/>
     <title>SpliceAI Lookup</title>
     <link rel="shortcut icon" href="/icon.png">
 
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/semantic-ui@2.4.2/dist/semantic.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/semantic-ui@2.4.2/dist/semantic.min.css"/>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/semantic-ui@2.4.2/dist/semantic.min.js"></script>
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/underscore@1.12.0/underscore-min.js"></script>
 
-    <!-- Global site tag (gtag.js) - Google Analytics -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-172722632-1"></script>
+    <script type="text/javascript" src="https://storage.googleapis.com/tgg-viewer/igv.js-bw2/dist/igv.min.js"></script>
+
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-483HVKZCL1"></script>
     <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', 'UA-172722632-1');
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-483HVKZCL1');
     </script>
     <style>
+        :root {
+            --MAIN_TRANSCRIPT_BACKGROUND_COLOR: #eaf3ff;
+            --CODING_TRANSCRIPT_BACKGROUND_COLOR: white;
+            --NON_CODING_TRANSCRIPT_BACKGROUND_COLOR: #e5e5e5;
+        }
+
+        .coding-transcript {
+            background-color: var(--CODING_TRANSCRIPT_BACKGROUND_COLOR);
+        }
+
+        .non-coding-transcript {
+            background-color: var(--NON_CODING_TRANSCRIPT_BACKGROUND_COLOR);
+        }
+
+        .main-transcript {
+            background-color: var(--MAIN_TRANSCRIPT_BACKGROUND_COLOR);
+        }
+
         body {
             overflow-x: scroll;
         }
+
         body, .ui.form, label {
             font-size: 11pt !important;
         }
+
         td {
             padding: 5px 15px;
         }
-        .upperBorder {
-            border-top: 1px solid black;
+
+        .form-checkbox {
+            margin-left: 15px;
+            margin-bottom: 10px;
         }
+
+        .igv-track-checkbox {
+            margin-right: 15px;
+            margin-bottom: 10px;
+        }
+
+        #pangolin-header th {
+            border-top: 1px solid rgba(34, 36, 38, .15);
+        }
+
         table {
             font-size: 11pt !important;
-            border-collapse: collapse;
+            border-collapse: collapse !important;
             border-left: 0px !important;
             border-right: 0px !important;
+            width: 100%;
         }
-        .smallLink {
+
+        .table-header {
+            color: #666666 !important;
+        }
+
+        th div {
+            font-weight: normal;
+        }
+
+        .small-link {
             font-size: 10pt;
             margin-left: 5px;
             margin-top: 3px;
@@ -58,9 +99,9 @@
         }
 
         .transcript-color-legend {
-            border-style:solid;
-            min-width:23px;
-            display:inline-block;
+            border-style: solid;
+            min-width: 23px;
+            display: inline-block;
             margin-left: 20px;
         }
 
@@ -85,8 +126,8 @@
     </style>
 </head>
 <body>
-    <div class="ui stackable grid">
-      <div class="row">
+<div class="ui stackable grid">
+    <div class="row">
         <div class="one wide column only-large-screen"></div>
         <div class="ten wide column">
             <div class="ui grid">
@@ -94,8 +135,11 @@
                     <div class="twelve wide column">
                         <div style="padding:25px 0px">
                             <div>
-                                <div style="display:inline-block; min-width: 430px; ">Enter a variant below to see its <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf" target="_blank">SpliceAI</a> and <a href="https://github.com/tkzeng/Pangolin" target="_blank">Pangolin</a> scores. </div>
-                                    <a id="more-details1-button" href="#" onclick="$('#more-details1').show();$('#more-details1-button').hide();">[more details]</a>
+                                <div style="display:inline-block; min-width: 700px; ">Enter a variant below to see its
+                                    <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf" target="_blank">SpliceAI</a>
+                                    and <a href="https://github.com/tkzeng/Pangolin" target="_blank">Pangolin</a> scores
+                                </div>
+                                <a id="more-details1-button" href="#" onclick="$('#more-details1').show();$('#more-details1-button').hide();">[more details]</a>
                                 <div id="more-details1" style="display:none">
                                     <br />
                                     This website is developed and maintained by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.<br />
@@ -112,55 +156,29 @@
                                     <br />
                                 </div>
                             </div>
-                            <br />
+                            <br/>
                             <div style="padding-left: 0px; color: gray">
                                 <table>
-                                    <thead style="text-align: left">
-                                        <tr>
-                                            <th style="padding-bottom: 20px; min-width:430px">Examples &nbsp; (on hg38): </th>
-                                            <th></th>
-                                        </tr>
-                                    </thead>
+                                    <thead style="text-align: left"><tr><th style="padding-bottom: 20px; min-width:430px">Examples &nbsp; (on hg38):</th><th></th></tr></thead>
                                     <tbody>
-                                        <tr>
-                                            <td>chr8-140300616-T-G</td>
-                                            <td></td>
-                                        </tr>
-                                        <tr>
-                                            <td>chr8 &nbsp; 140300616 &nbsp; T &nbsp; G</td>
-                                            <td></td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding-right: 0px">NM_001089.3(ABCA3):c.875A>T (p.Glu292Val)</td>
-                                            <td style="padding-left: 0px">
-                                                <a id="more-details2-button" href="#" onclick="$('.more-details2').show();$('#more-details2-button').hide();">[show more examples]</a>
-                                            </td>
-                                        </tr>
-                                        <tr style="display:none;" class="more-details2">
-                                            <td>8:140300616 T&gt;G</td>
-                                            <td>'chr' <i>prefix is optional</i></td>
-                                        </tr>
-                                        <tr style="display:none;" class="more-details2">
-                                            <td>1:930130:C:G </td>
-                                            <td><i>position with overlapping genes</i></td>
-                                        </tr>
-                                        <tr style="display:none;" class="more-details2">
-                                            <td>1-1042601-A-AGAGAG </td>
-                                            <td><i>insertion of GAGAG</i></td>
-                                        </tr>
-                                        <tr style="display:none;" class="more-details2">
-                                            <td>1-1042466-GGGC-G</td>
-                                            <td><i>deletion of GGC</i></td>
-                                        </tr>
-                                        <tr style="display:none;" class="more-details2">
-                                            <td>NM_000249.4(MLH1):c.116G>A</td>
-                                            <td><i>another HGVS example</i></td>
-                                        </tr>
+                                    <tr><td>chr8-140300616-T-G</td><td></td></tr>
+                                    <tr><td>chr8 &nbsp; 140300616 &nbsp; T &nbsp; G</td><td></td></tr>
+                                    <tr>
+                                        <td style="padding-right: 0px">NM_001089.3(ABCA3):c.875A>T (p.Glu292Val)</td>
+                                        <td style="padding-left: 0px">
+                                            <a id="more-details2-button" href="#"
+                                               onclick="$('.more-details2').show();$('#more-details2-button').hide();">[show more examples]</a>
+                                        </td>
+                                    </tr>
+                                    <tr style="display:none;" class="more-details2"><td>8:140300616 T&gt;G</td><td>'chr' <i>prefix is optional</i></td></tr>
+                                    <tr style="display:none;" class="more-details2"><td>1:930130:C:G</td><td><i>position with overlapping genes</i></td></tr>
+                                    <tr style="display:none;" class="more-details2"><td>1-1042601-A-AGAGAG</td><td><i>insertion of GAGAG</i></td></tr>
+                                    <tr style="display:none;" class="more-details2"><td>1-1042466-GGGC-G</td><td><i>deletion of GGC</i></td></tr>
+                                    <tr style="display:none;" class="more-details2"><td>NM_000249.4(MLH1):c.116G>A</td><td><i>another HGVS example</i></td></tr>
                                     </tbody>
                                 </table>
                             </div>
                         </div>
-
 <!--
                         <br />
                         <div style="font-size: large; color: darkred">
@@ -176,51 +194,37 @@
                             <div class="ui input" style="padding-bottom:30px; padding-right:8px; width:100%">
                                 <input id="search-box" type="text" style="width: 100%; padding: 7px 10px" placeholder="Enter a variant...">
                             </div>
-                            <!-- div class="field" style="padding-bottom: 10px;">
-                                <textarea id="search-box2" rows="1" style="width: 100%" placeholder="Enter variant..."></textarea>
-                            </div -->
+                            <div class="field" style="padding-right:10px; white-space:nowrap">
+                                <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Genome version:</b></span>
+                                <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                    <input type="radio" name="hg" value="37"/><label>hg19</label>
+                                </div>
+                                <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                    <input type="radio" name="hg" value="38" checked/><label>hg38</label>
+                                </div>
+                            </div>
                             <div class="ui stackable grid">
                                 <div class="row">
                                     <div class="thirteen wide column">
-                                        <div class="field" style="padding-right:10px; white-space:nowrap">
-                                            <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Genome version:</b></span>
-                                            <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                                <input type="radio" name="hg" value="37" /><label>hg19</label>
-                                            </div>
-                                            <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                                <input type="radio" name="hg" value="38" checked /><label>hg38</label>
-                                            </div>
-                                        </div>
-                                        <div class="field" style="padding-right:10px; white-space:nowrap">
-                                            <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Score type:</b></span>
-                                            <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                                <input type="radio" name="mask" value="1" checked /><label>masked</label>
-                                            </div>
-                                            <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                                <input type="radio" name="mask" value="0" /><label>raw</label>
-                                            </div>
-                                            <i style="margin-left:20px" class="question circle outline icon" data-position="right center" data-content="Splicing changes corresponding to strengthening annotated splice sites and weakening unannotated splice sites are typically much less pathogenic than weakening annotated splice sites and strengthening unannotated splice sites. Selecting 'masked' will hide the score for such splicing changes and show 0 instead. Selecting 'raw' will show all scores. SpliceAI developers recommend using 'raw' scores for alternative splicing analysis and 'masked' scores for variant interpretation."></i>
-                                        </div>
-                                        <div class="field" style="padding-right:10px; white-space:nowrap">
+                                        <div class="field">
                                             <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Max distance:</b></span>
                                             <div class="ui input" style="padding-left:15px; padding-bottom:10px; padding-right:8px; width:100px">
                                                 <input id="max-distance-input" type="text" value="500" style="padding:7px 10px">
                                             </div>
-                                            <i class="question circle outline icon" data-position="right center" data-content="For each variant, SpliceAI looks within a window (+/- 500bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distance specified here controls the size of this window. The maximum allowed value is 10,000bp."></i>
+                                            <i class="question circle outline icon" data-position="right center"
+                                               data-content="For each variant, SpliceAI looks within a window (+/- 500bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distance specified here controls the size of this window. The maximum allowed value is 10,000bp."></i>
+
+                                            <div class="ui checkbox form-checkbox"><input type="checkbox" name="mask"><label>masked scores</label></div>
+                                            <i style="margin-left:10px" class="question circle outline icon" data-position="right center"
+                                               data-content="Selecting this checkbox will mask scores that strengthen annotated splice sites or weaken unannotated splice sites and show 0 instead. Such changes are considered less likely to be pathogenic than those that weaken annotated splice sites and strengthen unannotated splice sites. Uncheck this box to show all scores. SpliceAI developers recommend using 'masked' scores for variant interpretation while unmasked scores are recommended for alternative splicing analysis."></i>
+
+                                            <div class="ui checkbox form-checkbox"><input type="checkbox" name="show-ref-alt"><label>REF & ALT score columns</label></div>
+                                            <i style="margin-left:10px" class="question circle outline icon" data-position="right center"
+                                               data-content="Selecting this checkbox will add two extra columns to the results. These will contain the raw SpliceAI and Pangolin predictions for the reference haplotype and the alternate haplotype. The delta scores represent the difference between these reference and alternate scores."></i>
                                         </div>
-                                        <!--div class="field" style="padding-right:10px; padding-bottom:12px; white-space:nowrap">
-                                            <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Use Illumina's pre-computed scores:</b></span>
-                                            <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                                <input type="radio" name="use-precomputed-scores" value="1" /><label>yes</label>
-                                            </div>
-                                            <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                                <input type="radio" name="use-precomputed-scores" value="0" checked /><label>no</label>
-                                            </div>
-                                            <i style="margin-left:20px" class="question circle outline icon" data-position="right center" data-content="Illumina provides pre-computed SpliceAI scores for all SNPs and small InDels within Gencode v24 canonical transcripts. If 'yes' is selected here, the server will quickly check these pre-computed files to see if it can avoid the relatively slow step of running the SpliceAI model. Even with 'yes' selected, it will still run the model if it finds that the pre-computed files don't contain the variant. Selecting 'no' will cause the server to always skip the pre-computed files and run the model. The benefit of skipping the pre-computed files is that, although the scores may take longer, they will always be computed for Gencode v38 transcripts and will include ENSG and ENST ids in addition to the gene name."></i>
-                                        </div-->
                                     </div>
                                     <div class="three wide column">
-                                        <button id="submit-button" class="ui primary button" style="margin-bottom: 15px">Submit</button>
+                                        <button id="submit-button" class="ui primary button" style="margin-bottom: 15px; margin-right:10px; float: right">Submit</button>
                                     </div>
                                 </div>
                             </div>
@@ -232,76 +236,231 @@
         <div class="four wide column">
             <div class="only-large-screen" style="padding:25px 0px">
                 <div>
-                    <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website.
-                    <a href="https://github.com/illumina/SpliceAI" target="_blank">SpliceAI/issues</a>: issues with the underlying SpliceAI model.<br />
-                    <br />
-                    <!-- <<div><i>What's New</i></div><br /> -->
-                    <b>Sep 26, 2023</b><br />
-                    - visit the <a href="https://broadinstitute.github.io/SpliceAI-lookup-dev/index.html"><b>BETA version</b></a> of this site to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">provide feedback</a> on new features & visualizations before they are released here<br/>
-                    - Fixed Pangolin bug that could cause masked scores to be computed incorrectly whenever a variant overlapped more than one gene. More
-                    details are provided by <a href="https://github.com/invitae/pangolin/pull/5">@kazmiekr</a><br />
-                    <br />
-                    <b>Sep 15, 2023</b><br />
-                    - updated to Gencode v44 basic annotation<br />
-                    - added raw REF & ALT scores to the Pangolin results table<br />
-                    <br />
-                    <a id="more-details3-button" href="#" onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
-                    <div id="more-details3" style="display:none">
-                        <b>May 22, 2023</b><br />
-                        - changed defaults to 'masked' and max distance to 500bp<br />
-                        - retired <b>Illumina precomputed scores</b> since they were created using Gencode v24
-                        and max distance = 50bp and so can differ from computed scores which are based on the latest Gencode.<br />
-                        <br />
-                          <b>May 12, 2023</b><br />
-                          - added REF & ALT score columns to show SpliceAI's underlying predictions for each haplotype (using <a href="https://github.com/Illumina/SpliceAI/pull/92">SpliceAI PR by @h-joshi</a>).
-                          The &#916;&nbsp; score column is the difference between these two scores.<br />
-                          - added support for MNPs (see <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/1">issue #1</a> & <a href="https://github.com/Illumina/SpliceAI/pull/119">SpliceAI PR by @kdahlo</a>)<br />
-                          - updated to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v43</a> (was previously on v42)<br />
-    		            <br />
-
-                        <b>May 10, 2023</b><br />
-                        - fixed bug where "raw" Pangolin scores were shown regardless of whether the user selected "raw" or "masked".<br />
-                        <br />
-
-                        <b>Feb 5, 2023</b><br />
-                        - show <a href="https://github.com/tkzeng/Pangolin">Pangolin scores</a> in addition to SpliceAI scores.<br />
-                        <br />
-                        <b>June 2, 2021</b><br />
-                        - show RefSeq ids for the subset of Ensembl ENST ids (~30%) that have one or more matching RefSeq NM ids according to Ensembl. See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/8">issue #8</a> for details.<br />
-                        <br />
-                        <b>April 11, 2021</b><br />
-                        - show gray background for non-coding transcripts<br />
-                        - switch to showing all non-coding transcripts. (Previously, transcripts with Gencode biotypes
-                          like <i>lncRNA</i>, <i>processed_pseudogene</i>, <i>processed_transcript</i>, <i>retained_intron</i>, and
-                          <i>nonsense_mediated_decay</i> were filtered out if they overlapped <i>protein_coding</i> transcripts).
-                          See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/6#issuecomment-816942824">issue #6</a> for details.<br />
+                    <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website<br />
+                    <br/>
+                    <div>
+                        <b>Related web tools:</b><br/>
+                        <a href="https://liftover.broadinstitute.org" target="_blank">liftover</a>: for variants/positions/intervals (hg19 <=> hg38 <=> T2T)<br/>
+                        <a href="https://cma-search.broadinstitute.org" target="_blank">CMA search</a>: search OMIM by interval, gene or phenotype<br/>
+                        <a href="https://tgg-viewer.broadinstitute.org" target="_blank">TGG Viewer</a>: igv.js-based web viewer for public reference tracks and, optionally, private data in Google Storage buckets<br/>
                     </div>
-                </div>
-                <br />
-                <div>
-                    <b>Related web tools:</b><br />
-                    <a href="https://liftover.broadinstitute.org">liftover</a>: for variants/positions/intervals (hg19 <=> hg38 <=> T2T)<br />
-                    <a href="https://cma-search.broadinstitute.org">CMA search</a>: search OMIM by interval, gene or phenotype<br />
+                    <br/>
+                    <b>October 5, 2023</b><br/>
+                    - fixed Pangolin bug identified by <a href="https://github.com/invitae/pangolin/pull/5">@kazmiekr</a> where variants that overlap more than one gene showed incorrect masked scores<br />
+                    - <a href="https://github.com/pj-sullivan">@pj-sullivan</a> added controls to show/hide transcripts<br/>
+                    - added MANE Select transcript labels<br/>
+                    - updated to gencode v44 "basic" annotations (instead of comprehensive). These have fewer transcripts per gene.<br/>
+                    - added igv.js visualizations<br/>
+                    <br/>
+
+                    <a id="more-details3-button" href="#"
+                       onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
+                    <div id="more-details3" style="display:none">
+                        <b>May 22, 2023</b><br/>
+                        - changed defaults to 'masked' and max distance to 500bp<br/>
+                        - retired <b>Illumina precomputed scores</b> since they were created using Gencode v24
+                        and max distance = 50bp and so can differ from computed scores which are based on the latest Gencode.<br/>
+                        <br/>
+                        <b>May 12, 2023</b><br/>
+                        - added REF & ALT score columns to show SpliceAI's underlying predictions for each haplotype
+                        (using <a href="https://github.com/Illumina/SpliceAI/pull/92">SpliceAI PR by @h-joshi</a>).
+                        The &#916;&nbsp; score column is the difference between these two scores.<br/>
+                        - added support for MNPs (see <a
+                            href="https://github.com/broadinstitute/SpliceAI-lookup/issues/1">issue #1</a> & <a
+                            href="https://github.com/Illumina/SpliceAI/pull/119">SpliceAI PR by @kdahlo</a>)<br/>
+                        - updated to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v43</a> (was previously on v42)<br/>
+                        <br/>
+                        <b>May 10, 2023</b><br/>
+                        - fixed bug where "raw" Pangolin scores were shown regardless of whether the user selected "raw" or "masked".<br/>
+                        <br/>
+
+                        <b>Feb 5, 2023</b><br/>
+                        - show <a href="https://github.com/tkzeng/Pangolin">Pangolin scores</a> in addition to SpliceAI scores.<br/>
+                        <br/>
+                        <b>June 2, 2021</b><br/>
+                        - show RefSeq ids for the subset of Ensembl ENST ids (~30%) that have one or more matching
+                        RefSeq NM ids according to Ensembl. See <a
+                            href="https://github.com/broadinstitute/SpliceAI-lookup/issues/8">issue #8</a> for details.<br/>
+                        <br/>
+                        <b>April 11, 2021</b><br/>
+                        - show gray background for non-coding transcripts<br/>
+                        - switch to showing all non-coding transcripts. (Previously, transcripts with Gencode biotypes
+                        like <i>lncRNA</i>, <i>processed_pseudogene</i>, <i>processed_transcript</i>,
+                        <i>retained_intron</i>, and
+                        <i>nonsense_mediated_decay</i> were filtered out if they overlapped <i>protein_coding</i> transcripts).
+                        See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/6#issuecomment-816942824">issue #6</a> for details.<br/>
+                    </div>
                 </div>
             </div>
         </div>
         <div class="one wide column only-large-screen"></div>
-      </div>
-      <div class="row">
-          <div class="one wide column only-large-screen"></div>
-          <div class="fourteen wide column">
-              <div class="results-div">
-                  <div id="error-box" style="color:darkred"></div>
-                  <div id="response-box"></div>
-              </div>
-          </div>
-          <div class="one wide column only-large-screen"></div>
-      </div>
     </div>
+    <div class="row">
+        <div class="one wide column only-large-screen"></div>
+        <div class="fourteen wide column">
+            <div class="results-div">
+                <div id="response-box">
+                    <table id="spliceai-table" class="ui stackable table">
+                        <thead id="spliceai-header">
+                        <tr>
+                            <th style="background-color:white" colspan="7">SpliceAI scores: <a href="https://www.cell.com/cell/pdf/S0092-8674(18)31629-5.pdf" target="_blank">
+                                <i class="question circle outline icon" data-position='right center'
+                                   data-content="SpliceAI scores are computed for each transcript on the server by running the SpliceAI model with the user-selected parameters (ie. max distance)."></i></a>
+                            </th>
+                        </tr>
+                        <tr>
+                            <th class="table-header">Variant</th>
+                            <th class="table-header">Gene
+                                <div style="float:right;">
+                                    <span class='transcript-color-legend'
+                                          style="background-color: var(--MAIN_TRANSCRIPT_BACKGROUND_COLOR)!important">&nbsp;</span>
+                                    = <span class="main-transcript-label">MANE Select</span> transcript
+                                    <span class='transcript-color-legend'
+                                          style="background-color: var(--NON_CODING_TRANSCRIPT_BACKGROUND_COLOR)!important">&nbsp;</span>
+                                    = non-coding transcript
+                                </div>
+                            </th>
+                            <th class="table-header">&#916;&nbsp; type</th>
+                            <th class="table-header" style="white-space: nowrap">&#916;&nbsp; score<i class='question circle outline icon'
+                                                                                 data-content="Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 500bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.2 or higher appear in green, 0.5 or higher appear in yellow, and 0.8 or higher appear in red."></i>
+                            </th>
+                            <th class="table-header" style="white-space: nowrap">position<i class='question circle outline icon'
+                                                                                data-content="For each variant, SpliceAI looks within a window (+/- 500bp by default) to see how the variant affects the probabily of different positions serving as splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are to the left of the variant in genomic coords, regardless of transcript strand."></i>
+                            </th>
+                            <th class="table-header ref-score-column" style="white-space: nowrap">
+                                REF score<i class='question circle outline icon'
+                                            data-content="SpliceAI's computed probability that the given position is a splice acceptor or donor based on the reference haplotype sequence. SpliceAI computes delta scores by taking the difference between the REF and ALT score at each position."></i>
+                            </th>
+                            <th class="table-header alt-score-column" style="white-space: nowrap">
+                                ALT score<i class='question circle outline icon'
+                                            data-content="SpliceAI's computed probability that the given position is a splice acceptor or donor based on the alternate haplotype sequence. SpliceAI computes delta scores by taking the difference between the REF and ALT score at each position."></i>
+                            </th>
+                        </tr>
+                        </thead>
+                    </table>
+                    <table id="transcript-button-table" class="ui stackable table" style="border: none !important">
+                        <tbody>
+                        <tr>
+                            <td style="padding: 10px 0px 10px 0px">
+                                <div class="ui buttons">
+                                    <button id="main-transcript-button" class="ui button" onclick="updateTranscriptButtons('main')">
+                                        <span class="main-transcript-label">MANE Select</span> Transcript
+                                    </button>
+                                    <div class="or"></div>
+                                    <button id="all-transcript-button" class="ui button" onclick="updateTranscriptButtons('all')">
+                                        All Transcripts
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                    <table id="pangolin-table" class="ui stackable table">
+                        <thead id="pangolin-header">
+                            <tr>
+                                <th style="background-color:white" colspan="7">Pangolin scores: <a
+                                        href='https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4'
+                                        target="_blank"><i class='question circle outline icon' data-position='right center'
+                                                           data-content="Pangolin scores are computed for each transcript on the server by running the SpliceAI model with the user-selected parameters (ie. max distance)."></i></a>
+                                </th>
+                            </tr>
+                            <tr>
+                                <th class="table-header">Variant</th>
+                                <th class="table-header">Gene</th>
+                                <th class="table-header">&#916;&nbsp; type</th>
+                                <th class="table-header" style="white-space: nowrap">&#916;&nbsp; score<i class='question circle outline icon'
+                                                                                     data-content="Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 500bp by default). Pangolin does not recommend specific score thresholds; however, here scores of 0.2 or higher appear in green, 0.5 or higher appear in yellow, and 0.8 or higher appear in red."></i>
+                                </th>
+                                <th class="table-header" style="white-space: nowrap">position<i class='question circle outline icon'
+                                                                                    data-content="For each variant, Pangolin looks within a window (+/- 500bp by default) to see how the variant affects the probability of splicing occuring at different positions. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant."></i>
+                                </th>
+                                <th class="table-header ref-score-column" style="white-space: nowrap">
+                                    REF score<i class='question circle outline icon'
+                                    data-content="Pangolin's computed probability that the given position is a splice site based on the reference haplotype sequence."></i></th>
+                                <th class="table-header alt-score-column" style="white-space: nowrap">
+                                    ALT score<i class='question circle outline icon'
+                                                data-content="Pangolin's computed probability that the given position is a splice site based on the alternate haplotype sequence."></i></th>
+                            </tr>
+                        </thead>
+                    </table>
+                    <table id="igv-table" class="ui stackable table" style="margin-top: 30px; display: none">
+                        <thead style="background-color:white">
+                        <tr>
+                            <th style="background-color:white" colspan="5"><b>Visualizations:</b></th>
+                        </tr>
+                        <tr>
+                            <th class="table-header">SpliceAI &amp; Pangolin results
+                                <i class="question circle outline icon" data-position="right center"
+                                   data-content="These tracks display the computed SpliceAI and Pangolin scores for the variant entered by the user"></i>
+                            </th>
+                            <th class="table-header">GTEx RNA: average per sample
+                                <i class="question circle outline icon" data-position="right center"
+                                   data-content="These tracks summarize all splice junctions and per-base read depths in GTEx v8 RNA-seq samples for a specific tissue. Both the read depths and splice junction read counts are divided by the number of samples, and so represent the per-sample average."></i>
+                            </th>
+                            <th class="table-header">GTEx RNA: all splice junctions
+                                <i class="question circle outline icon" data-position="right center"
+                                   data-content="These tracks show the splice junctions and per-base read depths in GTEx v8 RNA-seq samples from a specific tissue. The read depths and splice junction read counts are summed across all samples from that tissue."></i>
+                            </th>
+                            <th class="table-header">SpliceAI: all precomputed scores
+                                <i class="question circle outline icon" data-position="right center"
+                                   data-content="These tracks summarize the original precomputed SpliceAI score tables made available by Illumina."></i>
+                            </th>
+                            <th class="table-header">Reference
+                                <i class="question circle outline icon" data-position="right center"
+                                   data-content="Miscellaneous reference tracks"></i>
+                            </th>
+                        </tr>
+                        </thead>
+                        <tr>
+                            <td>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-variant" checked><label>variant track</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-ref-alt" checked><label>SpliceAI REF &amp; ALT scores</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-delta-scores" checked><label>SpliceAI &#916;&nbsp; scores</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-pangolin-delta-scores" checked><label>Pangolin &#916;&nbsp; scores</label></div>
+                            </td>
+                            <td>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-blood"><label>blood</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-fibroblasts"><label>fibroblasts</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-muscle"><label>muscle</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-lymphocytes"><label>LCLs</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-brain-cortex"><label>brain cortex</label></div>
+                            </td>
+                            <td>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-blood-all"><label>blood</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-fibroblasts-all"><label>fibroblasts</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-muscle-all"><label>muscle</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-lymphocytes-all"><label>LCLs</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-brain-cortex-all"><label>brain cortex</label></div>
+                            </td>
+                            <td>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-precomputed-gain-0.5"><label>gain ≥ 0.5</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-precomputed-loss-0.5"><label>loss ≥ 0.5</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-precomputed-gain-0.2"><label>gain ≥ 0.2</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-precomputed-loss-0.2"><label>loss ≥ 0.2</label></div>
+                            </td>
+                            <td>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-100-mer-mappability"><label>100-mer mappability</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-segdups"><label>segmental duplications</label></div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td colspan="5" style="padding-left: 0px">
+                                <button id="show-igv-button" class="ui primary button" style="margin-bottom: 15px">Show</button>
+                            </td>
+                        </tr>
+                    </table>
+                    <div id="igv-div" style="width:100%; padding-top:25px; display: none"></div>
+                </div>
+                <div id="error-box" style="color:darkred; padding:10px 0px; font-size:medium"></div>
+            </div>
+        </div>
+        <div class="one wide column only-large-screen"></div>
+    </div>
+</div>
 
-    <script>
-      const VARIANT_RE = new RegExp(
-	"^[\\s]*" +
+<script>
+    const VARIANT_RE = new RegExp(
+        "^[\\s]*" +
         "(chr)?([0-9XYMTt]{1,2})" +
         "[-\\p{Pd}\\s:]+" +
         "([0-9,]+)" +
@@ -310,460 +469,718 @@
         "[-\\p{Pd}\\s:>]+" +
         "([ACGT]+)",
         'iu'
-      )
+    )
 
-      const GRCH37_contigs = {
-        "1": "NC_000001.10",
-        "2": "NC_000002.11",
-        "3": "NC_000003.11",
-        "4": "NC_000004.11",
-        "5": "NC_000005.9",
-        "6": "NC_000006.11",
-        "7": "NC_000007.13",
-        "8": "NC_000008.10",
-        "9": "NC_000009.11",
-        "10": "NC_000010.10",
-        "11": "NC_000011.9",
-        "12": "NC_000012.11",
-        "13": "NC_000013.10",
-        "14": "NC_000014.8",
-        "15": "NC_000015.9",
-        "16": "NC_000016.9",
-        "17": "NC_000017.10",
-        "18": "NC_000018.9",
-        "19": "NC_000019.9",
-        "20": "NC_000020.10",
-        "21": "NC_000021.8",
-        "22": "NC_000022.10",
-        "X": "NC_000023.10",
-        "Y": "NC_000024.9",
-        "M":  "NC_012920.1",
-        "MT": "NC_012920.1",
-      }
+    const TRANSCRIPT_PRIORITY = {
+        "MS": 3,
+        "MP": 2,
+        "C": 1,
+        "N": 0,
+    }
 
-      const GRCH38_contigs = {
-        "1" : "NC_000001.11",
-        "2" : "NC_000002.12",
-        "3" : "NC_000003.12",
-        "4" : "NC_000004.12",
-        "5" : "NC_000005.10",
-        "6" : "NC_000006.12",
-        "7" : "NC_000007.14",
-        "8" : "NC_000008.11",
-        "9" : "NC_000009.12",
-        "10": "NC_000010.11",
-        "11": "NC_000011.10",
-        "12": "NC_000012.12",
-        "13": "NC_000013.11",
-        "14": "NC_000014.9",
-        "15": "NC_000015.10",
-        "16": "NC_000016.10",
-        "17": "NC_000017.11",
-        "18": "NC_000018.10",
-        "19": "NC_000019.10",
-        "20": "NC_000020.11",
-        "21": "NC_000021.9",
-        "22": "NC_000022.11",
-        "X" : "NC_000023.11",
-        "Y" : "NC_000024.10",
-        "M":  "NC_012920.1",
-        "MT": "NC_012920.1",
-      }
+    // store user settings at the time of the last 'submit', as well as the resulting responses from the server
+    let lastGenomeVersion, lastSpliceaiResponseJson, lastPangolinResponseJson
 
+    const formatScore = (score) => {
+        if (score == null) {
+            return ""
+        }
+        return Math.abs(parseFloat(score)).toFixed(2)
+    }
 
-      const CANONICAL_TRANSCRIPT_BACKGROUND_COLOR = "#eaf3ff"
-      const CODING_TRANSCRIPT_BACKGROUND_COLOR = "white"
-      const NON_CODING_TRANSCRIPT_BACKGROUND_COLOR = "#e5e5e5"
+    const getScoreStyle = (score) => {
+        score = parseFloat(score)
 
-      function parseVariant(variant) {
-        const m = variant.match(VARIANT_RE)
-        if (m) {
-          const chrom = m[2].toUpperCase()
-          return {
-            chrom: chrom,
-            pos: m[3].replace(/,/g, ""),
-            ref: m[4],
-            alt: m[5],
-          }
+        if (Math.abs(score) < 0.01) {
+            return `style='color:#BBBBBB;'`
         }
 
-        return null
-      }
+        let color
+        if (Math.abs(score) >= 0.8) {
+            color = "#fccfb8"
+        } else if (Math.abs(score) >= 0.5) {
+            color = "#fff19d"
+        } else if (Math.abs(score) >= 0.2) {
+            color = "#cdffd7"
+        } else {
+            return ""
+        }
+        return `style='background-color:${color};'`
+    }
 
+    const getUCSCBrowserUrl = (genomeVersion, chrom, pos) => {
+        const genomeVers = genomeVersion.replace('37', '19')
+        const chromWithoutPrefix = chrom.toUpperCase().replace('CHR', '')
 
-      function parseVariantToHGVS(variant, genome_version) {
-        const m = variant.match(VARIANT_RE)
-        if (m) {
-          let chrom = m[2].toUpperCase()
-          if (genome_version == "37") {
-            chrom = GRCH37_contigs[chrom]
-          } else if(genome_version == "38") {
-            chrom = GRCH38_contigs[chrom]
-          } else {
-            throw "Invalid genome_version: " + genome_version
-          }
+        return `https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg${genomeVers}&position=chr${chromWithoutPrefix}:${pos}`
+    }
 
-          const pos = parseInt(m[3].replace(/,/g, ""))
-          const ref = m[4]
-          const alt = m[5]
+    const showError = (errorMessage) => {
+        $("#error-box").html( $("#error-box").html() + `<br />${errorMessage.toString()}<br />`)
+        $("#error-box").show()
+    }
 
-          if (ref.length > 1 && alt.length > 1) {
-            variant = chrom + ":g." + pos + "_" + (pos + ref.length - 1) + "delins" + alt
-          } else if (ref.length == alt.length) {
-            variant = chrom + ":g." + pos + ref + ">" + alt
-          } else if (ref.length > alt.length) {
-            //deletion (https://varnomen.hgvs.org/recommendations/DNA/variant/deletion/)
-            variant = chrom + ":g." + (pos + 1) + "_" + (pos + ref.length - alt.length) + "del"
-          } else if (ref.length < alt.length) {
-            //insertion (https://varnomen.hgvs.org/recommendations/DNA/variant/insertion/)
-            variant = chrom + ":g." + pos + "_" + (pos + 1) + "ins" + alt.slice(1)
-          }
+    const normalizeVariant = async (variant, genomeVersion) => {
+        /* Convert the given variant to a standardized "{chrom}-{pos}-{ref}-{alt}" string using a regular expression, or
+         * if that fails, assume the variant is in HGVS notation and try using the Ensembl hgvs API to convert it.
+         *
+         * Args:
+         *  variant (string): user input text
+         *  genomeVersion (string): "37" or "38"
+         *
+         * Return:
+         *  string: the input variant reformatted as a "{chrom}-{pos}-{ref}-{alt}" string
+         */
 
-          console.log("Parsed variant", variant)
+        const matchedRegExp = variant.match(VARIANT_RE)
+        if (matchedRegExp) {
+            // was able to parse the user input using a simple reg-exp
+            const chrom = matchedRegExp[2].toUpperCase()
+            const pos = parseInt(matchedRegExp[3].replace(/,/g, ""))
+            const ref = matchedRegExp[4]
+            const alt = matchedRegExp[5]
+
+            return `${chrom}-${pos}-${ref}-${alt}`
         }
 
-        return variant
-      }
+        // otherwise try calling the Ensembl API on the user input
+        const ensemblApiUrl = `https://${genomeVersion == '37' ? 'grch37.' : ''}rest.ensembl.org/vep/human/hgvs/${variant.trim()}?content-type=application/json&vcf_string=1`
 
-      function formatScore(score) {
-          if (score == null || isNaN(score)) {
-              return ""
-          } else {
-              return Math.abs(parseFloat(score)).toFixed(2)
-          }
-      }
-
-      function getScoreStyle(score, isDeltaScore) {
-        if (typeof isDeltaScore === 'undefined') {
-          isDeltaScore = false;
-        }
-        score = Math.abs(parseFloat(score))
-        if (score == 0) {
-          return "style='color:#BBBBBB'"
-        }
-        const opacity = isDeltaScore ? 1 : 0.3;
-        const RED_BACKGROUND = "rgba(252, 207, 184, " + opacity + ")"       // #fccfb8
-        const YELLOW_BACKGROUND = "rgba(255, 241, 157, " + opacity + ")" //fff19d
-        const GREEN_BACKGROUND = "rgba(205, 255, 215, " + opacity + ")"  //cdffd7
-
-        let result = "style='"
-        if(score >= 0.8) {
-            result += "background-color:"+RED_BACKGROUND+";"
-        } else if (score >= 0.5) {
-            result += "background-color:"+YELLOW_BACKGROUND+";"
-        } else if (score >= 0.2) {
-            result += "background-color:"+GREEN_BACKGROUND+";"
-        }
-        result += "'"
-        return result;
-      }
-
-      function getUCSCBrowserUrl(genome_version, chrom, pos) {
-
-        genome_version = genome_version.replace('37', '19')
-        chrom = chrom.toUpperCase().replace('CHR', '')
-        return "https://genome.ucsc.edu/cgi-bin/hgTracks?db=hg" + genome_version + "&position=chr" + chrom + ":" + pos
-      }
-
-      function generateResultsTable(responses) {
-
-        let parsed_scores_or_errors = []
-        responses.filter(r => r).forEach(function(response) {
-        const is_pangolin = response.source && response.source.startsWith("pangolin")
-        if (response.error) {
-            parsed_scores_or_errors.push({
-                'error': response.error,
-                'source': response.source,
-                'is_pangolin': is_pangolin,
-                'hg': response.hg,
-                'variant': response.variant,
-                'sort_key': 0,
-            })
-            return
+        let ensemblApiResponse
+        try {
+            ensemblApiResponse = await fetch(ensemblApiUrl)
+        } catch(e) {
+            console.error(e)
+            throw Error(`Ensembl API call failed: Unable to reach server`)
         }
 
-        response.scores.forEach(function(scores) {
+        const ensemblApiResponseJson = await ensemblApiResponse.json()
+        console.log(`Ensembl API response:`, ensemblApiResponseJson)
 
-            const score_types = is_pangolin ? ["SG", "SL"] : ["DG", "DL", "AG", "AL"]
-                score_types.forEach(function(score_type) {
+        if (!ensemblApiResponse.ok || ensemblApiResponseJson.error) {
+            let errorText =`${ensemblApiResponseJson.error}`
+            const unableToParseHGVSErrorMatch = errorText.match("Unable to parse HGVS notation")
+            if (unableToParseHGVSErrorMatch) {
+                errorText = `Ensembl API is unable to parse the variant ${variant}`
+            }
+            const refAlleleErrorMatch = errorText.match(
+                new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
+            if (refAlleleErrorMatch) {
+                errorText = `${variant} has an unexpected reference allele. The hg${genomeVersion} reference allele should be ${refAlleleErrorMatch[1]}`
+            }
+
+            throw new Error(errorText);
+        }
+
+        if (!ensemblApiResponseJson[0] || !ensemblApiResponseJson[0].vcf_string) {
+            throw new Error(`Unexpected response: ${ensemblApiResponseJson}`);
+        }
+        return ensemblApiResponseJson[0].vcf_string
+    }
+
+
+    /*
+    const generateVariantAnnotationTable = async (normalizedVariant, genomeVersion) => {
+        const matchedRegExp = normalizedVariant.match(VARIANT_RE)
+        if (!matchedRegExp) {
+            console.error(`Unable to parse normalized variant: ${normalizedVariant}`)
+            return {}
+        }
+        // was able to parse the user input using a simple reg-exp
+        const chrom = matchedRegExp[2].toUpperCase()
+        const pos = parseInt(matchedRegExp[3].replace(/,/g, ""))
+        const ref = matchedRegExp[4]
+        const alt = matchedRegExp[5]
+
+        const myVariantApiUrl = `https://myvariant.info/v1/variant/chr${chrom}:g.${pos}${ref}>${alt}${genomeVersion == '38' ? '?assembly=hg38' : ''}`
+
+        let myVariantApiResponse
+        try {
+            myVariantApiResponse = await fetch(myVariantApiUrl)
+        } catch(e) {
+            console.error(e)
+            throw Error(`MyVariant API call failed: ${e}`)
+        }
+
+        const myVariantApiResponseJson = await myVariantApiResponse.json()
+        console.log(`MyVariant API response:`, myVariantApiResponseJson)
+
+        return myVariantApiResponseJson
+    }
+    */
+
+
+    const generateResultsTable = async (normalizedVariant, tool, variant, genomeVersion, maxDistance, mask, showRefAltScoreColumns) => {
+        /* Generate the results table to show either the SpliceAI or Pangolin scores */
+
+        const variantTokens = (normalizedVariant || "---").split("-")
+        const chrom = variantTokens[0]
+        const pos = variantTokens[1]
+        const ref = variantTokens[2]
+        const alt = variantTokens[3]
+
+        const urlArgs = `hg=${genomeVersion}&distance=${maxDistance}&mask=${mask}&variant=${chrom}-${pos}-${ref}-${alt}&raw=${variant}`
+
+        let apiResponse
+        try {
+            apiResponse = await fetch(`${baseApiUrl}/${tool.toLowerCase()}/?${urlArgs}`)
+        } catch(e) {
+            throw Error(`${tool} API call failed: Unable to reach server`)
+        }
+
+        const apiResponseJson = await apiResponse.json()
+        console.log(`${tool} API response:`, apiResponseJson)
+
+        if (!apiResponse.ok || apiResponseJson.error) {
+            throw Error(`${tool} API call error ${apiResponseJson.error ? `: ${apiResponseJson.error}` : ""}`)
+        }
+
+        //if (tool == "SpliceAI") throw Error(`${tool} error!!`)  // for testing API errors
+
+        //sort transcripts
+        apiResponseJson.scores = _(apiResponseJson.scores).sortBy((s) => (  //compute sort key
+                100*(s['t_priority'].startsWith("M") ? 0 : 1) +
+                10* (s['t_type'] == "protein_coding" ? 0 : 1) +
+                -1*  TRANSCRIPT_PRIORITY[s['t_priority']]
+        )).values()
+
+
+        const TRANSCRIPT_PRIORITY_VIEW_LOOKUP = {
+            "MS": `<a href="https://www.ncbi.nlm.nih.gov/refseq/MANE" target="_blank">MANE Select transcript</a>`,
+            "MP": `<a href="https://www.ncbi.nlm.nih.gov/refseq/MANE" target="_blank">MANE Plus Clinical transcript</a>`,
+            "C": "Canonical transcript",
+        }
+
+        const transcriptCategories = {}
+        const tableRows = []
+        for (const scores of apiResponseJson.scores) {
+            const isPangolin = tool.toLowerCase() == "pangolin"
+            const subRowCount = isPangolin ? 2 : 4
+            const strand = scores['t_strand'] == "-" ? "minus" : "plus"
+            const gnomadVersion = genomeVersion === "38" ? "gnomad_r3" : "gnomad_r2_1"
+            const isMainTranscript = scores['t_priority'] != "N" && (scores['t_priority'] != "C" || transcriptCategories["MS"] == undefined)
+            const refSeqLink = scores['t_refseq_ids']? `/ <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${scores['t_refseq_ids'][0]}" target="_blank">${scores['t_refseq_ids'][0]}</a>` : ""
+
+            transcriptCategories[scores['t_priority']] = true
+
+            const resultRowClasses = [`${tool.toLowerCase()}-result-row`]
+            if (isMainTranscript) {
+                resultRowClasses.push("main-transcript")
+            } else {
+                resultRowClasses.push("non-main-transcript")
+            }
+            if(scores['t_type'] == "protein_coding") {
+                resultRowClasses.push("coding-transcript")
+            } else {
+                resultRowClasses.push("non-coding-transcript")
+            }
+
+            $(`#${tool.toLowerCase()}-header`).nextAll().remove()
+            let row = `<tr class="${resultRowClasses.join(' ')}">
+                <td rowspan="${subRowCount}" style="vertical-align: top">
+                    <div style="margin-right:10px; display: inline-block">${variant}</div><br class="only-large-screen"/>
+                    <br class="only-large-screen"/>
+                    <a href="${getUCSCBrowserUrl(genomeVersion, chrom, pos)}" class="small-link" target="_blank">UCSC</a>,
+                    <a href="https://gnomad.broadinstitute.org/variant/${variant}?dataset=${gnomadVersion}" class="small-link" target="_blank">gnomAD</a>
+                </td>
+                <td rowspan="${subRowCount}" style="vertical-align: top">
+                    <div style="margin-right:10px; display: inline-block">
+                        ${scores['g_name']}
+                            <div class="small-link"> (
+                                <a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${scores['g_id'].split('.')[0]}" target="_blank">${scores['g_id']}</a>
+                                 / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${scores['t_id'].split('.')[0]}" target="_blank">${scores['t_id']}</a>
+                                 ${refSeqLink})
+                            </div><br />
+                            <br class="only-large-screen" />
+                        <div class="small-link"><a href="https://www.gencodegenes.org/pages/biotypes.html" target="_blank">${scores['t_type'].replace(/_/g, " ")}</a></div>
+                        <div class="small-link">${scores['t_priority'] != "N" ? TRANSCRIPT_PRIORITY_VIEW_LOOKUP[scores['t_priority']] : ""}</div>
+                        <div class="small-link"> (${strand} strand)</div>
+                    </div><br class="only-large-screen" />
+                    <br class="only-large-screen" />
+                    <a href="https://www.omim.org/search?search=${scores['g_name']}" class="small-link" target="_blank">OMIM</a>,
+                    <a href="https://gtexportal.org/home/gene/${scores['g_name']}" class="small-link" target="_blank">GTEx</a>,
+                    <a href="https://gnomad.broadinstitute.org/gene/${scores['g_name']}?dataset=${gnomadVersion}" class="small-link" target="_blank">gnomAD</a>,
+                    <a href="https://search.clinicalgenome.org/kb/genes?page=1&size=25&search=${scores['g_name']}" class="small-link" target="_blank">ClinGen</a>,
+                    <a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${scores['g_name']}" class="small-link" target="_blank">Ensembl</a>,
+                    <a href="https://decipher.sanger.ac.uk/gene/${scores['g_name']}" class="small-link" target="_blank">Decipher</a>,
+                    <a href="https://www.genecards.org/cgi-bin/carddisp.pl?gene=${scores['g_name']}" class="small-link" target="_blank">GeneCards</a>
+                </td>`
+
+            for (const [i, label, DS, DP, RAW_REF, RAW_ALT] of (
+                isPangolin ? [
+                    [0, "Splice Loss", "DS_SL", "DP_SL", "SL_REF", "SL_ALT"],
+                    [1, "Splice Gain", "DS_SG", "DP_SG", "SG_REF", "SG_ALT"],
+                ] : [
+                    [0, "Acceptor Loss", "DS_AL", "DP_AL", "DS_AL_REF", "DS_AL_ALT"],
+                    [1, "Donor Loss",    "DS_DL", "DP_DL", "DS_DL_REF", "DS_DL_ALT"],
+                    [2, "Acceptor Gain", "DS_AG", "DP_AG", "DS_AG_REF", "DS_AG_ALT"],
+                    [3, "Donor Gain",    "DS_DG", "DP_DG", "DS_DG_REF", "DS_DG_ALT"],
+                ])) {
+                if (i > 0) {
+                    row += `</tr><tr class="${resultRowClasses.join(' ')}">`
+                }
+                row += `<td>${label}</td>
+                        <td ${getScoreStyle(scores[DS])}>${formatScore(scores[DS])}</td>
+                        <td>${
+                            (
+                                parseFloat(scores[DS]) == 0 &&
+                                parseFloat(scores[RAW_REF]) == 0 &&
+                                parseFloat(scores[RAW_ALT]) == 0
+                            )? "" : scores[DP] + " bp"}
+                        </td>`
+                if (showRefAltScoreColumns == "1") {
+                    row += `<td class="ref-score-column">${formatScore(scores[RAW_REF])}</td>
+                            <td class="alt-score-column">${formatScore(scores[RAW_ALT])}</td>`
+                }
+            }
+            row += "</tr>"
+
+            tableRows.push(row)
+        }
+
+        $("#response-box").show()
+        $(`#${tool.toLowerCase()}-header`).after(tableRows.join(""))
+
+        if (transcriptCategories["MS"]) {
+            $(".main-transcript-label").html("MANE Select")
+        } else if (transcriptCategories["MP"]) {
+            $(".main-transcript-label").html("MANE Plus Clinical")
+        } else if (transcriptCategories["C"]) {
+            $(".main-transcript-label").html("Canonical")
+        } else {
+            $("#transcript-button-table").hide()
+        }
+        if (Object.keys(transcriptCategories).length > 1) {
+            $("#transcript-button-table").show()
+            updateTranscriptButtons("main")
+        }
+
+        return apiResponseJson
+    }
+
+    const updateTranscriptButtons = (category) => {
+        $("#main-transcript-button, #all-transcript-button").removeClass("primary")
+        $(`#${category}-transcript-button`).addClass("primary")
+
+        if (category == "main") {
+            $(".spliceai-result-row").hide()
+            $(".spliceai-result-row.main-transcript").show()
+        } else if (category == "all") {
+            $(".spliceai-result-row").show()
+        }
+    }
+
+    const updateVisualizationCheckboxes = (readFromLocalStorage) => {
+        /** 
+         * Retrieve and save the current state of checkboxes in the Visualization section, or set the state of these 
+         * checkboxes based on cookies / local storage.
+         */
+        let tracksToShow
+        if (readFromLocalStorage) {
+            // default tracks
+            tracksToShow = {
+                "igv-variant": true,
+                "igv-spliceai-ref-alt": true,
+                "igv-spliceai-delta-scores": true,
+                "igv-pangolin-delta-scores": true,
+            }
+
+            // if there are tracksToShow in local storage, overwrite defaults with those settings
+            const fromStorage = localStorage.getItem("tracksToShow")
+            if (fromStorage) {
+                const fromStorageJson = JSON.parse(fromStorage)
+                for (const key of Object.keys(fromStorageJson)) {
+                    tracksToShow[key] = fromStorageJson[key]
                     try {
-                        scores[score_type + "_url"] = getUCSCBrowserUrl(response.hg, response.chrom, response.pos + parseInt(score["DP_" + score_type]))
-                    } catch(e) {
-                        scores[score_type + "_url"] = "#"
+                        $(`input[name='${key}']`).prop( "checked", tracksToShow[key] )
+                    } catch (e) {
+                        console.log(e)
                     }
-                })
-
-            try {
-                scores["url"] = getUCSCBrowserUrl(response.hg, response.chrom, response.pos)
-            } catch(e) {
-                scores["url"] = "#"
+                }
+                //console.log("Retrieved tracksToShow from local storage", tracksToShow)
             }
-
-            scores['source'] = response.source
-            scores['is_pangolin'] = is_pangolin
-            scores['hg'] = response.hg
-            scores['variant'] = response.variant
-
-            // compute sort key
-            const splice_prediction_tool = is_pangolin ? 1 : 0;
-
-            const gene_name = scores['g_name']
-            const transcript_id = scores['t_id']
-            const is_canonical_transcript = (scores['t_priority'] == "C" || scores['t_priority'] == "MS") ? 0 : 1
-            const transcript_type = scores['t_type']
-            const is_protein_coding = !transcript_type || transcript_type == "protein_coding" ? 0 : 1
-            const refseq_transcript_id_is_in_query = (scores['t_refseq_ids'] || []).some(refseq_transcript_id => response.raw.includes(refseq_transcript_id))
-            const contains_hgvs_transcript_id = response.raw.includes(transcript_id) || refseq_transcript_id_is_in_query ? 0 : 1;
-
-            scores['sort_key'] = `${splice_prediction_tool}${contains_hgvs_transcript_id}`
-            scores['sort_key'] += `${is_protein_coding}${is_canonical_transcript}`
-            scores['sort_key'] += `---${gene_name}`
-
-            parsed_scores_or_errors.push(scores)
-        })
-        })
-
-        //sort by (gene name, is canonical transcript, is non-coding transcriipt)
-        parsed_scores_or_errors = _.chain(parsed_scores_or_errors).sortBy('sort_key').value()
-
-        console.log("Parsed scores:", parsed_scores_or_errors)
-
-        return "<table class='ui stackable table'>" +
-          "<tr>" +
-              "<td><b>variant</b></td>" +
-              "<td><b>gene</b><div style='float:right;'>" +
-                `<span class='transcript-color-legend' style='background-color:${CANONICAL_TRANSCRIPT_BACKGROUND_COLOR}!important'>&nbsp;</span> = canonical transcript ` +
-                `<span class='transcript-color-legend' style='background-color:${NON_CODING_TRANSCRIPT_BACKGROUND_COLOR}!important'>&nbsp;</span> = non-coding transcript` +
-              "</td>" +
-              "<td><b>&#916;&nbsp; type</b></td>" +
-              "<td style='white-space: nowrap'><b>&#916;&nbsp; score</b>  " + "<i class='question circle outline icon' data-content='Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 500bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.2 or higher appear in green, 0.5 or higher appear in yellow, and 0.8 or higher appear in red.'></i>"+"</td>" +
-              "<td style='white-space: nowrap'><b>pre-mRNA position</b>  "+ "<i class='question circle outline icon' data-content='For each variant, SpliceAI looks within a window (+/- 500bp by default) to see how the variant affects the probabilities of different positions in the pre-mRNA being splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are to the left of the variant in genomic coords, regardless of transcript strand.'></i>"+"</td>" +
-              "<td style='white-space: nowrap'><b>REF score</b>  "+ "<i class='question circle outline icon' data-content=\"SpliceAI's computed probability that the given pre-mRNA position is a splice acceptor or donor based on the reference haplotype sequence. SpliceAI computes delta scores by taking the difference between the REF and ALT score at each position.\"></i>"+"</td>" +
-              "<td style='white-space: nowrap'><b>ALT score</b>  "+ "<i class='question circle outline icon' data-content=\"SpliceAI's computed probability that the given pre-mRNA position is a splice acceptor or donor based on the alternate haplotype sequence. SpliceAI computes delta scores by taking the difference between the REF and ALT score at each position.\"></i>"+"</td>" +
-          "</tr>" + parsed_scores_or_errors.map(function(scores_or_error) {
-                if (scores_or_error.error) {
-                    return "<tr>" +
-                        "<td colspan='7'>" +
-                            "<div style='color:darkred'>" + ( scores_or_error.is_pangolin ? 'Pangolin ' : 'SpliceAI ' ) + scores_or_error.error + "</div>" +
-                        "</td>" +
-                    "</tr>"
-                }
-                let scores = scores_or_error
-                const variant_ucsc_url = scores.url
-                const gnomAD_version = scores.hg === "38"? "gnomad_r3" : "gnomad_r2_1"
-                const variant_gnomAD_url = "https://gnomad.broadinstitute.org/variant/" + scores.variant + "?dataset=" + gnomAD_version
-
-                const gene_name = scores['g_name'].split(".")[0]  // remove gene version number  TODO remove this after switching Pangolin to use regular gene names
-                const strand = scores['t_strand'] == "-" ? "minus" : "plus"
-                const is_canonical_transcript = scores['t_priority'] == "C" || scores['t_priority'] == "MS"
-                const transcript_type = scores['t_type']
-                const is_protein_coding = !transcript_type || transcript_type == "protein_coding"
-                const refseq_transcript_ids = scores['t_refseq_ids']
-                const background_color = !is_protein_coding ? NON_CODING_TRANSCRIPT_BACKGROUND_COLOR : (
-                    is_canonical_transcript ? CANONICAL_TRANSCRIPT_BACKGROUND_COLOR : CODING_TRANSCRIPT_BACKGROUND_COLOR
-                )
-
-                let gene_and_transcript_id = ""
-                const gene_id_link = `<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${scores['g_id'].split(".")[0]}" target="_blank">${scores['g_id']}</a>`
-                const transcript_id_link = ` / <a href="https://useast.ensembl.org/Homo_sapiens/Transcript/Summary?t=${scores['t_id'].split(".")[0]}" target="_blank">${scores['t_id']}</a>`
-                const canonical_transcript_text = is_canonical_transcript ? '<div class="smallLink">canonical transcript</div>' : ''
-                const biotype_link = `<div class="smallLink"><a href="https://www.gencodegenes.org/pages/biotypes.html" target="_blank">${transcript_type.replace(/_/g, " ")}</a></div>`
-                const refseq_transcript_id_link = refseq_transcript_ids ? (" /" + ` <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${refseq_transcript_ids[0]}" target="_blank">${refseq_transcript_ids[0]}</a>`) : ''
-                gene_and_transcript_id = ` <div class="smallLink">(${gene_id_link}${transcript_id_link}${refseq_transcript_id_link})</div><br /><br class='only-large-screen' />${biotype_link}${canonical_transcript_text} <div class="smallLink"> (${strand} strand)</div>`
-
-                //round to 2 decimal places
-                if (scores.is_pangolin) {
-                    scores.DS_SL = Math.round(scores.DS_SL * 100) / 100
-                    scores.DS_SG = Math.round(scores.DS_SG * 100) / 100
-                    scores.SL_REF = Math.round(scores.SL_REF * 100) / 100
-                    scores.SL_ALT = Math.round(scores.SL_ALT * 100) / 100
-                    scores.SG_REF = Math.round(scores.SG_REF * 100) / 100
-                    scores.SG_ALT = Math.round(scores.SG_ALT * 100) / 100
-                } else {
-                    scores.DS_AG = Math.round(scores.DS_AG * 100) / 100
-                    scores.DS_AL = Math.round(scores.DS_AL * 100) / 100
-                    scores.DS_DL = Math.round(scores.DS_DL * 100) / 100
-                    scores.DS_DG = Math.round(scores.DS_DG * 100) / 100
-                    scores.DS_AL_REF = Math.round(scores.DS_AL_REF * 100) / 100
-                    scores.DS_AL_ALT = Math.round(scores.DS_AL_ALT * 100) / 100
-                    scores.DS_DL_REF = Math.round(scores.DS_DL_REF * 100) / 100
-                    scores.DS_DL_ALT = Math.round(scores.DS_DL_ALT * 100) / 100
-                    scores.DS_AG_REF = Math.round(scores.DS_AG_REF * 100) / 100
-                    scores.DS_AG_ALT = Math.round(scores.DS_AG_ALT * 100) / 100
-                    scores.DS_DG_REF = Math.round(scores.DS_DG_REF * 100) / 100
-                    scores.DS_DG_ALT = Math.round(scores.DS_DG_ALT * 100) / 100
-                }
-
-                let result= "<tr class='upperBorder' style='background-color:" + background_color+"'>" +
-                  "<td rowspan='" + (scores.is_pangolin ? 2: 4) + "' style='vertical-align: top'>" +
-                  "<div style='margin-right:10px; display: inline-block'>" + scores.variant + "</div><br class='only-large-screen'/><br class='only-large-screen'/>" +
-                    "<a href='"+variant_ucsc_url+"' class='smallLink' target='_blank'>UCSC</a>, " +
-                    "<a href='"+variant_gnomAD_url+"' class='smallLink' target='_blank'>gnomAD</a>" +
-                  "</td>"+
-                  "<td rowspan='" + (scores.is_pangolin ? 2: 4) + "' style='vertical-align: top'>" +
-                    "<div style='margin-right:10px; display: inline-block'>"+gene_name+(gene_and_transcript_id || '') +"</div><br class='only-large-screen'/><br class='only-large-screen'/>" +
-                    "<a href='https://www.omim.org/search?search="+gene_name+"' class='smallLink' target='_blank'>OMIM</a>, " +
-                    "<a href='https://gtexportal.org/home/gene/"+gene_name+"' class='smallLink' target='_blank'>GTEx</a>, " +
-                    "<a href='https://gnomad.broadinstitute.org/gene/"+gene_name+"?dataset="+gnomAD_version+"' class='smallLink' target='_blank'>gnomAD</a>, " +
-                    "<a href='https://search.clinicalgenome.org/kb/genes?page=1&size=25&search="+gene_name+"' class='smallLink' target='_blank'>ClinGen</a>, <br class='only-large-screen'/>" +
-                    "<a href='https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g="+gene_name+"' class='smallLink' target='_blank'>Ensembl</a>, " +
-                    "<a href='https://decipher.sanger.ac.uk/gene/"+gene_name+"' class='smallLink' target='_blank'>Decipher</a>, " +
-                    "<a href='https://www.genecards.org/cgi-bin/carddisp.pl?gene="+gene_name+"' class='smallLink' target='_blank'>GeneCards</a>" +
-                  "</td>" +
-                    (scores.is_pangolin ?
-                            "<td>Splice Loss</td><td "+getScoreStyle(scores.DS_SL, true)+">" + formatScore(scores.DS_SL) +"</td><td>" + (scores.DS_SL == 0 ? "" : scores.DP_SL+" bp") + "</td><td "+getScoreStyle(scores.SL_REF)+">" + formatScore(scores.SL_REF) + "</td><td "+getScoreStyle(scores.SL_ALT)+">" + formatScore(scores.SL_ALT) + "</td>"+
-                            "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Splice Gain</td><td "+getScoreStyle(scores.DS_SG, true)+">" + formatScore(scores.DS_SG) +"</td><td>" + (scores.DS_SG == 0 ? "" : scores.DP_SG+" bp") + "</td><td "+getScoreStyle(scores.SG_REF)+">" + formatScore(scores.SG_REF) + "</td><td "+getScoreStyle(scores.SG_ALT)+">" + formatScore(scores.SG_ALT) + "</td>"
-                        :
-                            "<td>Acceptor Loss</td><td "+getScoreStyle(scores.DS_AL, true)+">" + formatScore(scores.DS_AL) +"</td><td>" + ((scores.DS_AL == 0 && scores.DS_AL_REF == 0 && scores.DS_AL_ALT == 0)? "" : scores.DP_AL+" bp") + "</td><td "+getScoreStyle(scores.DS_AL_REF)+">" + formatScore(scores.DS_AL_REF) + "</td><td "+getScoreStyle(scores.DS_AL_ALT)+">" + formatScore(scores.DS_AL_ALT) + "</td>"+
-                            "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Donor Loss</td><td "+getScoreStyle(scores.DS_DL, true)+">" + formatScore(scores.DS_DL) +"</td><td>" + ((scores.DS_DL == 0 && scores.DS_DL_REF == 0 && scores.DS_DL_ALT == 0)? "" : scores.DP_DL+" bp") + "</td><td "+getScoreStyle(scores.DS_DL_REF)+">" + formatScore(scores.DS_DL_REF) + "</td><td "+getScoreStyle(scores.DS_DL_ALT)+">" + formatScore(scores.DS_DL_ALT) + "</td>"+
-                            "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Acceptor Gain</td><td "+getScoreStyle(scores.DS_AG, true)+">" + formatScore(scores.DS_AG) +"</td><td>" + ((scores.DS_AG == 0 && scores.DS_AG_REF == 0 && scores.DS_AG_ALT == 0)? "" : scores.DP_AG+" bp") + "</td><td "+getScoreStyle(scores.DS_AG_REF)+">" + formatScore(scores.DS_AG_REF) + "</td><td "+getScoreStyle(scores.DS_AG_ALT)+">" + formatScore(scores.DS_AG_ALT) + "</td>"+
-                            "</tr><tr style='background-color:" + background_color+"'>"+
-                            "<td>Donor Gain</td><td "+getScoreStyle(scores.DS_DG, true)+">" + formatScore(scores.DS_DG) +"</td><td>" + ((scores.DS_DG == 0 && scores.DS_DG_REF == 0 && scores.DS_DG_ALT == 0)? "" : scores.DP_DG+" bp") + "</td><td "+getScoreStyle(scores.DS_DG_REF)+">" + formatScore(scores.DS_DG_REF) + "</td><td "+getScoreStyle(scores.DS_DG_ALT)+">" + formatScore(scores.DS_DG_ALT) + "</td>"
-                    ) +
-                  "</tr>"
-
-                if(scores.is_pangolin) {
-                    result = "<tr class='pangolin_header' style='display:none'><td style='white-space: nowrap'><b>Pangolin scores: <a href='https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4' target='_blank'><i class='question circle outline icon' data-position='right center' data-content='Pangolin scores are computed on the server by running the Pangolin model with the user-selected parameters (ie. max distance).'></i></a></b> </td><td></td><td></td><td></td><td></td><td></td><td></td></tr>" + result
-                }
-                return result
-              }).join("") +
-          "</table>"
-      }
-
-      $.urlParam = function (name) {
-        const results = new RegExp('[\?&#]?' + name + '=([^&#]*)').exec(window.location.hash);
-        return (results !== null) ? decodeURIComponent(results[1]) || 0 : false;
-      }
-
-      $(document).ready(function() {
-        $('.ui.radio.checkbox').checkbox()
-        $('.question').popup()
-        $("#search-box").focus()
-
-        $("#search-box,#max-distance-input").keydown(function (event) {
-          if ((event.keyCode || event.which) == 13) {
-            $("#submit-button").click()
-          }
-        });
-
-        $("#submit-button").click(function() {
-          const variant = $("#search-box").val().trim()
-          if (!variant) {
-            return
-          }
-
-          const genome_version = $("input[name='hg']:checked").val().trim()
-          const mask = $("input[name='mask']:checked").val().trim()
-          const max_distance = $("#max-distance-input").val().trim()
-          //const use_precomputed_scores = $("input[name='use-precomputed-scores']:checked").val().trim()
-          const variant_hgvs = parseVariantToHGVS(variant, genome_version)
-
-          $("#error-box").hide()
-          $("#response-box").hide()
-
-          $("#submit-button").addClass(["loading", "disabled"])
-
-          let ensembl_api_url_prefix = ""
-          if (genome_version == "37") {
-            ensembl_api_url_prefix = "grch37."
-          }
-
-          $.getJSON(
-            "https://" + ensembl_api_url_prefix + "rest.ensembl.org/vep/human/hgvs/" + variant_hgvs + "?content-type=application/json&vcf_string=1"
-          ).catch(function(error) {
-            let errorText = error.responseText
-                try {
-                    errorText = JSON.parse(errorText).error
-                } catch (e) {
-                    console.warn(e)
-                }
-
-                const refAlleleError = errorText.match(new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
-                if (refAlleleError) {
-                    errorText = variant + " has unexpected reference allele. The hg" + genome_version + " reference allele should be: " + refAlleleError[1]
-                }
-
-                errorText = "Ensembl API error: " + errorText
-                console.warn(errorText)
-            throw { responseText: errorText }
-          }).then(function(response) {
-            console.log("Esnembl API response", response)
-            if (!response || !response[0]) {
-              throw { responseText: "Unable to parse Ensembl API repsonse: " + response }
+            
+        } else {
+            // retrieve state from checkboxes
+            tracksToShow = {}
+            for (const name of ["igv-variant", "igv-spliceai-ref-alt", "igv-spliceai-delta-scores", "igv-pangolin-delta-scores", "igv-100-mer-mappability", "igv-segdups"]) {
+                tracksToShow[name] = $(`input[name='${name}']`).prop("checked")
             }
+            for (const minScore of [0.5, 0.2]) {   //0.2,  hide the >= 0.2 tracks for now
+                for (const splicePredictionType of ["loss", "gain"]) {
+                    const name = `igv-spliceai-precomputed-${splicePredictionType}-${minScore}`
+                    tracksToShow[name] = $(`input[name='${name}']`).prop("checked")
+                }
+            }
+            for (const tissue of ["blood", "fibroblasts", "muscle", "lymphocytes", "brain-cortex"]) {
+                tracksToShow[`igv-gtex-${tissue}`] = $(`input[name='igv-gtex-${tissue}']`).prop("checked")
+                tracksToShow[`igv-gtex-${tissue}-all`] = $(`input[name='igv-gtex-${tissue}-all']`).prop("checked")
+            }
+            //console.log("Set local storage tracksToShow", tracksToShow)
+            localStorage.setItem("tracksToShow", JSON.stringify(tracksToShow))
+        }
+        
+        return tracksToShow
+    }
+    
+    
+    const generateIgvConfig = (spliceaiResponseJson, pangolinResponseJson, genomeVersion) => {
+        /* Generates an igv.js config json objects based on the predicted scores from SpliceAI and/or Pangolin
+        *
+        * Args:
+        *   allNonZeroScoresFromSpliceAI (array): an array of acceptor/donor loss/gain scores from SpliceAI
+        *   allNonZeroScoresFromPangolin (array): an array of acceptor/donor loss/gain scores from Pangolin
+        *   genomeVersion (string): "37" or "38"
+        *
+        * Return:
+        *   object: an igv.js config json object
+        */
 
-            const vcf_string = (response[0].vcf_string || "---").split("-")
-            const chrom = vcf_string[0]
-            const pos = vcf_string[1]
-            const ref = vcf_string[2]
-            const alt = vcf_string[3]
-            const most_severe_consequence = (response[0].most_severe_consequence || "").replace(/_/g, " ")
+        const apiResponseJson = spliceaiResponseJson || pangolinResponseJson
+        let chrom = apiResponseJson.chrom
+        chrom = `chr${chrom.replace('chr', '')}`
+        const variantPos = apiResponseJson.pos
+        const variantRef = apiResponseJson.ref
+        const variantAlt = apiResponseJson.alt
 
-            console.log("chrom:", chrom, "pos:", pos, "ref:", ref, "alt:", alt)
-            console.log("Most severe consequence:", most_severe_consequence)
+        const tracksToShow = updateVisualizationCheckboxes(false)
+        
+        let minPos = 1e9
+        let maxPos = 0
+        for (const apiResponse of [spliceaiResponseJson, pangolinResponseJson]) {
+            if (!apiResponse) {
+                continue
+            }
+            for (const scores of apiResponse.allNonZeroScores) {
+                scores["chr"] = chrom
+                scores["start"] = scores["pos"]
+                scores["end"] = scores["pos"]
+                minPos = Math.min(minPos, scores["pos"])
+                maxPos = Math.max(maxPos, scores["pos"])
+            }
+        }
 
-            // get SpliceAI and Pangolin scores from API endpoints in parallel
-            const getJSON_promises = ["spliceai", "pangolin"].map((endpoint) => {
-                const promise = $.getJSON(`${base_api_url}/${endpoint}/`,
+        // specify IGV tracks and the data to display in them
+        const tracks = []
+
+        tracks.push({
+            name: "Refseq",
+            format: "refgene",
+            url: genomeVersion == "38" ?
+                "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/database/ncbiRefSeq.txt.gz" :
+                "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/database/ncbiRefSeq.txt.gz",
+            indexed: false,
+            infoURL: "https://www.ncbi.nlm.nih.gov/gene/?term=$$",
+            height: 100,
+        })
+
+        if (tracksToShow["igv-variant"]) {
+            tracks.push({
+                name: "Variant (?) ",
+                type: "vcf",
+                description: `This track shows the location of the <b>${chrom}:${variantPos} ${variantRef}>${variantAlt}</b> variant`,
+                height: 30,
+                features: [
                     {
-                        hg: genome_version,
-                        distance: max_distance,
-                        mask: mask,
-                        //precomputed: use_precomputed_scores,
-                        variant: chrom + '-' + pos + '-' + ref + '-' + alt,
-                        raw: variant,
-                    }
-                )
-                return promise
+                        chr: chrom,   //see createVCFVariant function in the igv.js repo for the allowed fields
+                        pos: variantPos,
+                        start: variantPos - 1,
+                        end: variantPos,
+                        referenceAllele: variantRef,
+                        alternateBases: variantAlt,
+                        names: ".", // id in VCF
+                        info: {
+                            variant: `${chrom}-${variantPos}-${variantRef}-${variantAlt}`,
+                        }
+                    },
+                ],
+            })
+        }
+
+        if (spliceaiResponseJson) {
+            if (tracksToShow["igv-spliceai-ref-alt"]) {
+                tracks.push({
+                    name: `SpliceAI (?)`,
+                    description: `This track shows SpliceAI scores for the
+                                    <span style="color:#0000B4"><b>reference sequence</b></span> (without the variant) and the
+                                    <span style="color:#05d0d2"><b>alternate sequence</b></span> (with the variant). <br />
+                                    An <b>A</b> (acceptor) or <b>D</b> (donor) symbol is shown where SpliceAI predicts there to be a splice donor or acceptor with score ≥ 0.01. <br/>
+                                    These symbols are shown up-side-down when the score for the alternate sequence is lower than the score for the reference sequence.
+                                    Numberical labels represent scores for the reference sequence. These predictions are based on the pre-mRNA sequence for transcript <br />
+                                    <b>${spliceaiResponseJson.allNonZeroScoresTranscriptId}</b> (${spliceaiResponseJson.allNonZeroScoresStrand == '-' ? 'minus' : 'plus'} strand)
+                                    within a +/- ${spliceaiResponseJson.distance}bp window around <b>${chrom}:${variantPos} ${variantRef}>${variantAlt}</b>.`,
+                    height: 100,
+                    rawOrDelta: "raw",
+                    tool: "SpliceAI",
+                    type: "spliceprediction",
+                    features: spliceaiResponseJson.allNonZeroScores,
+                    strand: spliceaiResponseJson.allNonZeroScoresStrand,
+                })
+            }
+            if (tracksToShow["igv-spliceai-delta-scores"]) {
+                tracks.push({
+                    name: `SpliceAI (?)`,
+                    description: `This track shows <b>A</b> (acceptor) and <b>D</b> (donor) symbols at positions where SpliceAI predicts a delta score ≥ 0.01. <br/>
+                                  Vertical lines are <b style="color:#FF0000">red</b> for delta scores ≥ 0.8,
+                                  <b style="color:#FFCB1F">yellow</b> for delta scores ≥ 0.5, and
+                                  <b style="color:#1fb839">green</b> for delta scores ≥ 0.2<br />
+                                  These predictions are based on the pre-mRNA sequence for transcript
+                                  <b>${spliceaiResponseJson.allNonZeroScoresTranscriptId}</b> (${spliceaiResponseJson.allNonZeroScoresStrand == '-' ? 'minus' : 'plus'} strand)<br />
+                                  within a +/- ${spliceaiResponseJson.distance}bp window around <b>${chrom}:${variantPos} ${variantRef}>${variantAlt}</b>.`,
+                    height: 200,
+                    rawOrDelta: "delta",
+                    tool: "SpliceAI",
+                    type: "spliceprediction",
+                    features: spliceaiResponseJson.allNonZeroScores,
+                    strand: spliceaiResponseJson.allNonZeroScoresStrand,
+                })
+            }
+        }
+
+        if (pangolinResponseJson) {
+            if (tracksToShow["igv-pangolin-delta-scores"]) {
+
+                tracks.push({
+                    name: `Pangolin (?)`,
+                    description: `This track shows a <b>P</b> at positions where Pangolin predicts a delta score ≥ 0.01. <br/>
+                                  Vertical lines are <b style="color:#FF0000">red</b> for delta scores ≥ 0.8,
+                                  <b style="color:#FFCB1F">yellow</b> for delta scores ≥ 0.5, and
+                                  <b style="color:#1fb839">green</b> for delta scores ≥ 0.2<br />
+                                  These predictions are based on the pre-mRNA sequence for transcript
+                                  <b>${pangolinResponseJson.allNonZeroScoresTranscriptId}</b> (${pangolinResponseJson.allNonZeroScoresStrand == '-' ? 'minus' : 'plus'} strand)<br />
+                                  within a +/- ${pangolinResponseJson.distance}bp window around <b>${chrom}:${variantPos} ${variantRef}>${variantAlt}</b>.`,
+                    height: 200,
+                    rawOrDelta: "delta",
+                    tool: "Pangolin",
+                    type: "spliceprediction",
+                    features: pangolinResponseJson.allNonZeroScores,
+                    strand: pangolinResponseJson.allNonZeroScoresStrand,
+                })
+            }
+        }
+
+        const gencodeTrackPath = genomeVersion == "37" ?
+            "gs://tgg-viewer/ref/GRCh37/gencode_v44/gencode.v44.hg19.sorted.txt.gz" :
+            "gs://tgg-viewer/ref/GRCh38/gencode_v44/gencode.v44.hg38.sorted.txt.gz"
+
+        tracks.push({
+            name: "Gencode v44",
+            format: 'refgene',
+            url: gencodeTrackPath,
+            indexURL: `${gencodeTrackPath}.tbi`,
+            indexed: true,
+            searchable: true,
+            height: 350,
+            visibilityWindow: -1,
+            order: 1000001,
+            displayMode: 'EXPANDED',
+            color: 'rgb(76,171,225)',
+        })
+
+
+        for (const minScore of [0.5, 0.2]) {   //0.2,  hide the >= 0.2 tracks for now
+            for (const splicePredictionType of ["loss", "gain"]) {
+                if (tracksToShow[`igv-spliceai-precomputed-${splicePredictionType}-${minScore}`]) {
+                    tracks.push(
+                        {
+                            name: `SpliceAI: A or D ${splicePredictionType} ≥ ${minScore} (?)`,
+                            description: `This track visualizes Illumina's precomputed SpliceAI score tables for SNVs and small INDELs.<br/>
+                                 Each genomic location of an SNV or INDEL variant with a SpliceAI &#916; score ≥ ${minScore} is shown as the origin of an arrow.<br />
+                                 The arrow points to the location where that variant would likely cause acceptor or donor ${splicePredictionType}.
+                                 Clicking on the arrow displays additional details.`,
+                            type: "spliceJunctions",
+                            height: 100,
+                            url: `gs://tgg-viewer/ref/GRCh38/spliceai/spliceai_scores.raw.snps_and_indels.hg38.filtered.sorted.score_${minScore}.splice_${splicePredictionType}.bed.gz`,
+                            indexURL: `gs://tgg-viewer/ref/GRCh38/spliceai/spliceai_scores.raw.snps_and_indels.hg38.filtered.sorted.score_${minScore}.splice_${splicePredictionType}.bed.gz.tbi`,
+                        }
+                    )
+                }
+            }
+        }
+
+
+        for (const [filenamePrefix, tissue, sampleCount] of [
+            ["GTEX_blood.755_samples", "blood", 755],
+            ["GTEX_fibs.504_samples", "fibroblasts", 504],
+            ["GTEX_muscle.803_samples", "muscle", 803],
+            ["GTEX_lymphocytes.174_samples", "lymphocytes", 174],
+            ["GTEX_brain_cortex.255_samples", "brain-cortex", 255],
+            //["GTEX_frontal_cortex.209_samples", "frontal cortex", 803],
+        ]) {
+            for (const normalized of [true, false]) {
+                if (!tracksToShow[`igv-gtex-${tissue}${normalized ? '' : '-all'}`]) {
+                    continue
+                }
+
+                const filenameSuffix = normalized ? ".normalized" : ""
+                tracks.push({
+                    name: `GTEx ${tissue}: ${normalized ? 'per-sample average:': `summed over all ${sampleCount} samples`} (?)`,
+                    description: `This track shows the combined splice junctions from all ${sampleCount} ${tissue} samples available in GTEx v8.
+                                  Splice junctions are labeled with the total number of RNA-seq reads that supported the junction, summed across the ${sampleCount} samples${normalized ? ' and divided by ' + sampleCount: ''}.
+                                  The coverage track shows the total number of RNA-seq reads that overlap each position, summed across all samples${normalized ? ' and divided by ' + sampleCount: ''}.`,
+                    type: "merged",
+                    height: 100,
+                    tracks: [{
+                        type: "wig",
+                        format: "bigwig",
+                        url: `gs://tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.bigWig`,
+                    }, {
+                        type: 'spliceJunctions',
+                        format: 'bed',
+                        minJunctionEndsVisible: 1,
+                        colorBy: 'strand',
+                        minTotalReads: 3,
+                        url: `gs://tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.junctions.bed.gz`,
+                        indexURL: `gs://tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.junctions.bed.gz.tbi`,
+                    }],
+                })
+            }
+        }
+
+        if (tracksToShow["igv-100-mer-mappability"]) {
+            tracks.push({
+                name: "100-mer mappability (?)",
+                description: "100bp k-mer mappability track from UCSC. Lower values indicate regions that are not unique",
+                type: "wig",
+                format: "bigwig",
+                url: "gs://tgg-viewer/ref/GRCh38/mappability/GRCh38_no_alt_analysis_set_GCA_000001405.15-k100_m2.bw",
+                height: 100,
+            })
+        }
+
+        if (tracksToShow["igv-segdups"]) {
+            tracks.push({
+                name: "SegDups (?)",
+                description: "Segmental duplications track from UCSC",
+                format: "gtf",
+                url: "gs://tgg-viewer/ref/GRCh38/segdups/segdups.gtf.gz",
+                indexURL: "gs://tgg-viewer/ref/GRCh38/segdups/segdups.gtf.gz.tbi",
+                height: 100,
+            })
+        }
+
+        let locusMargin = maxPos - minPos < 200 ? 15 : 50
+
+        // igv.js reference genome specs are copied from https://igv.org/genomes/genomes.json
+        // These must be specified explicitly rather than just setting the reference to "hg19" or "hg38" so that
+        // the RefSeq gene track can be the first track (as described in https://github.com/igvteam/igv.js/issues/1518)
+        let reference = genomeVersion == "37" ? {
+            "id": "hg19",
+            "name": "Human (GRCh37/hg19)",
+            "fastaURL": "https://igv-genepattern-org.s3.amazonaws.com/genomes/seq/hg19/hg19.fasta",
+            "indexURL": "https://igv-genepattern-org.s3.amazonaws.com/genomes/seq/hg19/hg19.fasta.fai",
+            "cytobandURL": "https://igv-genepattern-org.s3.amazonaws.com/genomes/seq/hg19/cytoBand.txt",
+            "aliasURL": "https://s3.amazonaws.com/igv.org.genomes/hg19/hg19_alias.tab",
+            "chromosomeOrder": "chr1, chr2, chr3, chr4, chr5, chr6, chr7, chr8, chr9, chr10, chr11, chr12, chr13, chr14, chr15, chr16, chr17, chr18, chr19, chr20, chr21, chr22, chrX, chrY",
+            "tracks": tracks,
+        } : {
+            "id": "hg38",
+            "name": "Human (GRCh38/hg38)",
+            "fastaURL": "https://igv-genepattern-org.s3.amazonaws.com/genomes/seq/hg38/hg38.fa",
+            "indexURL": "https://igv-genepattern-org.s3.amazonaws.com/genomes/seq/hg38/hg38.fa.fai",
+            "cytobandURL": "https://s3.amazonaws.com/igv.org.genomes/hg38/annotations/cytoBandIdeo.txt.gz",
+            "aliasURL": "https://s3.amazonaws.com/igv.org.genomes/hg38/hg38_alias.tab",
+            "chromosomeOrder": "chr1, chr2, chr3, chr4, chr5, chr6, chr7, chr8, chr9, chr10, chr11, chr12, chr13, chr14, chr15, chr16, chr17, chr18, chr19, chr20, chr21, chr22, chrX, chrY",
+            "tracks": tracks,
+        }
+
+        return {
+            reference: reference,
+            locus: `${chrom}:${minPos - locusMargin}-${maxPos + locusMargin}`,
+        }
+    }
+
+    const updateIgvBrowser = async (spliceaiResponseJson, pangolinResponseJson, genomeVersion) => {
+        if ((spliceaiResponseJson && spliceaiResponseJson.allNonZeroScores) || (
+            pangolinResponseJson && pangolinResponseJson.allNonZeroScores)) {
+            const igvConfig = generateIgvConfig(spliceaiResponseJson, pangolinResponseJson, genomeVersion)
+            if (!window.igvBrowser) {
+                // create igv.js browser object if it hasn't been created yet
+                window.igvBrowser = await igv.createBrowser(document.getElementById("igv-div"), igvConfig)
+            } else {
+                console.log("Updating igv config to", igvConfig)
+                await window.igvBrowser.loadSessionObject(igvConfig)
+            }
+        }
+    }
+
+
+    const handleSubmit = async () => {
+        // get user inputs from form elements
+        const variant = $("#search-box").val().trim()
+        if (!variant) return
+        const genomeVersion = $("input[name='hg']:checked").val().trim()
+        const maxDistance = $("#max-distance-input").val().trim()
+        const mask = $(`input[name='mask']`).prop("checked") ? "1" : "0";
+        const showRefAltColumns = $(`input[name='show-ref-alt']`).prop("checked") ? "1" : "0";
+
+        //start processing submit
+        $("#submit-button").addClass(["loading", "disabled"])
+        $("#response-box, #transcript-button-table, #error-box").hide()
+        $("#error-box").html("")
+
+        $(".ref-score-column, .alt-score-column").toggle(showRefAltColumns == "1")
+
+
+        // make API calls
+        try {
+            const normalizedVariant = await normalizeVariant(variant, genomeVersion)
+
+            //let [spliceaiResponseJson, pangolinResponseJson, variantAnnotationsJson] = await Promise.all([
+            let [spliceaiResponseJson, pangolinResponseJson] = await Promise.all([
+                generateResultsTable(normalizedVariant, "SpliceAI", variant, genomeVersion, maxDistance, mask, showRefAltColumns),
+                generateResultsTable(normalizedVariant, "Pangolin", variant, genomeVersion, maxDistance, mask, showRefAltColumns),
+                //generateVariantAnnotationTable(normalizedVariant, genomeVersion),
+            ].map(p => p.catch(e => ({'error': e.message}))))  // if an error is thrown, return {'error': e} instead of the JSON response
+
+            if (spliceaiResponseJson.error) {
+                showError(`SpliceAI API error: ${spliceaiResponseJson.error}`)
+                spliceaiResponseJson = null
+                $("#spliceai-table, #transcript-button-table").hide()
+            } else {
+                $("#spliceai-table, #transcript-button-table").show()
+            }
+
+            if (pangolinResponseJson.error) {
+                showError(`Pangolin API error: ${pangolinResponseJson.error}`)
+                pangolinResponseJson = null
+                $("#pangolin-table").hide()
+            } else {
+                $("#pangolin-table").show()
+            }
+
+            // update url params
+            window.location.hash = "#" + $.param({
+                variant: variant,
+                hg: genomeVersion,
+                distance: maxDistance,
+                mask: mask,
+                ra: showRefAltColumns,
             })
 
-            return Promise.all(getJSON_promises.map(p => p.catch(e => console.log(e))))
+            lastGenomeVersion = genomeVersion
+            lastSpliceaiResponseJson = spliceaiResponseJson
+            lastPangolinResponseJson = pangolinResponseJson
 
-          }).then(function(response) {
-              console.log("spliceai API response was:", response[0])
-              console.log("pangolin API response was:", response[1])
-
-              $("#error-box").hide()
-              $("#response-box").html(generateResultsTable(response))
-              $("#response-box").show()
-              $('.pangolin_header').eq(0).show(); // show only first occurence of pangolin header
-
-              // set url
-              window.location.hash = "#" + $.param({
-                  variant: variant,
-                  hg: genome_version,
-                  distance: max_distance,
-                  mask: mask,
-                  //precomputed: use_precomputed_scores,
-              })
-
-          }).catch(function(error) {
-
-            $("#response-box").hide()
-            let errorText = error.responseText
-            try {
-              errorText = JSON.parse(errorText).error
-            } catch(e) {
+            if (spliceaiResponseJson != null || pangolinResponseJson != null) {
+                $("#igv-table").show()
+                $("#igv-div").hide()
+                $("#show-igv-button").text("Show")
             }
+        } catch(e) {
+            console.error(e)
+            showError(e.message)
+        }
 
-            if (!errorText) {
-                errorText = "ERROR: Unable to reach the SpliceAI-lookup API server. Either the API server is down or your internet isn't working."
-            }
-            console.warn(errorText)
-            $("#error-box").html(errorText)
-            $("#error-box").show()
-          }).always(function() {
-            $("#submit-button").removeClass(["loading", "disabled"]);
-            $('.question').popup()
-          })
-        })
+        //done processing submit
+        $("#submit-button").removeClass(["loading", "disabled"])
+    }
 
+    const applyUrlSettingsToFormElements = () => {
+        // get optional settings from the url and update form settings
         const hgFromUrl = $.urlParam('hg')
-        if (hgFromUrl) {
-          $("input[name='hg'][value='"+hgFromUrl+"']").prop("checked", true)
+        if (hgFromUrl && (hgFromUrl == "38" || hgFromUrl == "37")) {
+            $(`input[name='hg'][value='${hgFromUrl}']`).prop("checked", true)
         }
 
         const maxDistanceFromUrl = $.urlParam('distance')
@@ -773,23 +1190,73 @@
 
         const maskFromUrl = $.urlParam('mask')
         if (maskFromUrl) {
-          $("input[name='mask'][value='"+maskFromUrl+"']").prop("checked", true)
+            $(`input[name='mask']`).prop("checked", maskFromUrl == "1")
+        } else {
+            $(`input[name='mask']`).prop("checked", true)  //default to mask
         }
 
-        /*
-        const precomputedFromUrl = $.urlParam('precomputed')
-        if (precomputedFromUrl) {
-          $("input[name='use-precomputed-scores'][value='"+precomputedFromUrl+"']").prop("checked", true)
+        const showRefAltColumnsFromUrl = $.urlParam('ra')
+        if (showRefAltColumnsFromUrl) {
+            $(`input[name='show-ref-alt']`).prop("checked", showRefAltColumnsFromUrl == "1")
         }
-        */
 
+        //update the variant input box last and trigger a search
         const variantFromUrl = $.urlParam('variant')
         if (variantFromUrl) {
-          $("#search-box").val(variantFromUrl)
-          $("#submit-button").click()
+            $("#search-box").val(variantFromUrl)
+            $("#submit-button").click()
         }
-      })
+    }
 
-    </script>
+    /*
+    const toggleRefAltScoreColumns = () => {
+        const currentText = $("#toggle-ref-alt-scores-button").html()
+
+        if (currentText.match(/Show/i)) {
+            $(".ref-alt-score-column").show()
+            $("#toggle-ref-alt-scores-button").removeClass('primary')
+            $("#toggle-ref-alt-scores-button").html('Hide REF & ALT Scores')
+        } else {
+            $(".ref-alt-score-column").hide()
+            $("#toggle-ref-alt-scores-button").addClass('primary')
+            $("#toggle-ref-alt-scores-button").html('Show REF & ALT Scores')
+        }
+    }
+    */
+
+    // define function for parsing url parameters like ?variant=chr1-1234567-T-G
+    $.urlParam = (name) => {
+        const results = new RegExp('[\?&#]?' + name + '=([^&#]*)').exec(window.location.hash);
+        return (results !== null) ? decodeURIComponent(results[1]) || 0 : false;
+    }
+
+    $(document).ready(() => {
+        // init UI elements
+        $('.ui.checkbox').checkbox()
+        $('.question').popup()
+        $("#search-box").focus()
+        $("#response-box").hide()
+
+        // init event handlers
+        $("#submit-button").click(handleSubmit)
+
+        $("#search-box, #max-distance-input").keydown((event) => {
+            if ((event.keyCode || event.which) == 13) {
+                $("#submit-button").click()
+            }
+        })
+
+        $("#show-igv-button").click(async () => {
+            $("#show-igv-button").text("Update")
+            $("#igv-div").show()
+            await updateIgvBrowser(lastSpliceaiResponseJson, lastPangolinResponseJson, lastGenomeVersion)
+        })
+        
+        updateVisualizationCheckboxes(true)
+
+        applyUrlSettingsToFormElements()
+    })
+
+</script>
 </body>
 </html>
