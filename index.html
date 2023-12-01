@@ -245,17 +245,22 @@
                         <a href="https://tgg-viewer.broadinstitute.org" target="_blank">TGG Viewer</a>: igv.js-based web viewer for public reference tracks and, optionally, private data in Google Storage buckets<br/>
                     </div>
                     <br/>
-                    <b>October 5, 2023</b><br/>
-                    - fixed Pangolin bug identified by <a href="https://github.com/invitae/pangolin/pull/5">@kazmiekr</a> where variants that overlap more than one gene showed incorrect masked scores<br />
-                    - <a href="https://github.com/pj-sullivan">@pj-sullivan</a> added controls to show/hide transcripts<br/>
-                    - added MANE Select transcript labels<br/>
-                    - updated to gencode v44 "basic" annotations (instead of comprehensive). These have fewer transcripts per gene.<br/>
-                    - added igv.js visualizations<br/>
+                    <b>November 30, 2023</b><br/>
+                    - changed default search settings to not masked<br />
+                    - when looking at GRCh37 variants, the visualization checkboxes now make it clear which
+                    tracks are or aren't available for GRCh37.<br/>
                     <br/>
 
                     <a id="more-details3-button" href="#"
                        onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
                     <div id="more-details3" style="display:none">
+                        <b>October 5, 2023</b><br/>
+                        - fixed Pangolin bug identified by <a href="https://github.com/invitae/pangolin/pull/5">@kazmiekr</a> where variants that overlap more than one gene showed incorrect masked scores<br />
+                        - <a href="https://github.com/pj-sullivan">@pj-sullivan</a> added controls to show/hide transcripts<br/>
+                        - added MANE Select transcript labels<br/>
+                        - updated to gencode v44 "basic" annotations (instead of comprehensive). These have fewer transcripts per gene.<br/>
+                        - added igv.js visualizations<br/>
+                        <br/>
                         <b>May 22, 2023</b><br/>
                         - changed defaults to 'masked' and max distance to 500bp<br/>
                         - retired <b>Illumina precomputed scores</b> since they were created using Gencode v24
@@ -391,19 +396,19 @@
                         <tr>
                             <th class="table-header">SpliceAI &amp; Pangolin results
                                 <i class="question circle outline icon" data-position="right center"
-                                   data-content="These tracks display the computed SpliceAI and Pangolin scores for the variant entered by the user"></i>
+                                   data-content="These tracks display the computed SpliceAI and Pangolin scores for the variant entered by the user. They are only available for GRCh38."></i>
                             </th>
                             <th class="table-header">GTEx RNA: average per sample
                                 <i class="question circle outline icon" data-position="right center"
-                                   data-content="These tracks summarize all splice junctions and per-base read depths in GTEx v8 RNA-seq samples for a specific tissue. Both the read depths and splice junction read counts are divided by the number of samples, and so represent the per-sample average."></i>
+                                   data-content="These tracks summarize all splice junctions and per-base read depths in GTEx v8 RNA-seq samples for a specific tissue. Both the read depths and splice junction read counts are divided by the number of samples, and so represent the per-sample average. These tracks are only available for GRCh38."></i>
                             </th>
                             <th class="table-header">GTEx RNA: all splice junctions
                                 <i class="question circle outline icon" data-position="right center"
-                                   data-content="These tracks show the splice junctions and per-base read depths in GTEx v8 RNA-seq samples from a specific tissue. The read depths and splice junction read counts are summed across all samples from that tissue."></i>
+                                   data-content="These tracks show the splice junctions and per-base read depths in GTEx v8 RNA-seq samples from a specific tissue. The read depths and splice junction read counts are summed across all samples from that tissue. These tracks are only available for GRCh38."></i>
                             </th>
                             <th class="table-header">SpliceAI: all precomputed scores
                                 <i class="question circle outline icon" data-position="right center"
-                                   data-content="These tracks summarize the original precomputed SpliceAI score tables made available by Illumina."></i>
+                                   data-content="These tracks summarize the original precomputed SpliceAI score tables made available by Illumina. They are only available for GRCh38."></i>
                             </th>
                             <th class="table-header">Reference
                                 <i class="question circle outline icon" data-position="right center"
@@ -770,7 +775,7 @@
         }
     }
 
-    const updateVisualizationCheckboxes = (readFromLocalStorage) => {
+    const updateVisualizationCheckboxes = (readFromLocalStorage, genomeVersion) => {
         /** 
          * Retrieve and save the current state of checkboxes in the Visualization section, or set the state of these 
          * checkboxes based on cookies / local storage.
@@ -801,18 +806,37 @@
             }
             
         } else {
+
             // retrieve state from checkboxes
             tracksToShow = {}
-            for (const name of ["igv-variant", "igv-spliceai-ref-alt", "igv-spliceai-delta-scores", "igv-pangolin-delta-scores", "igv-100-mer-mappability", "igv-segdups"]) {
+            for (const name of ["igv-variant", "igv-spliceai-ref-alt", "igv-spliceai-delta-scores", "igv-pangolin-delta-scores"]) {
+                tracksToShow[name] = $(`input[name='${name}']`).prop("checked")
+            }
+            for (const name of ["igv-100-mer-mappability", "igv-segdups"]) {
+                // these tracks are not available for hg38
+                $(`input[name='${name}']`).prop("checked", $(`input[name='${name}']`).prop("checked") && genomeVersion != "37")
+                $(`input[name='${name}']`).prop("disabled", genomeVersion == "37")
+
                 tracksToShow[name] = $(`input[name='${name}']`).prop("checked")
             }
             for (const minScore of [0.5, 0.2]) {   //0.2,  hide the >= 0.2 tracks for now
                 for (const splicePredictionType of ["loss", "gain"]) {
                     const name = `igv-spliceai-precomputed-${splicePredictionType}-${minScore}`
+
+                    // these tracks are not available for GRCh37
+                    $(`input[name='${name}']`).prop("checked", $(`input[name='${name}']`).prop("checked") && genomeVersion != "37")
+                    $(`input[name='${name}']`).prop("disabled", genomeVersion == "37")
+
                     tracksToShow[name] = $(`input[name='${name}']`).prop("checked")
                 }
             }
             for (const tissue of ["blood", "fibroblasts", "muscle", "lymphocytes", "brain-cortex"]) {
+                // these tracks are not available for GRCh37
+                $(`input[name='igv-gtex-${tissue}']`).prop("checked", $(`input[name='igv-gtex-${tissue}']`).prop("checked") && genomeVersion != "37")
+                $(`input[name='igv-gtex-${tissue}']`).prop("disabled", genomeVersion == "37")
+                $(`input[name='igv-gtex-${tissue}-all']`).prop("checked", $(`input[name='igv-gtex-${tissue}-all']`).prop("checked") && genomeVersion != "37")
+                $(`input[name='igv-gtex-${tissue}-all']`).prop("disabled", genomeVersion == "37")
+
                 tracksToShow[`igv-gtex-${tissue}`] = $(`input[name='igv-gtex-${tissue}']`).prop("checked")
                 tracksToShow[`igv-gtex-${tissue}-all`] = $(`input[name='igv-gtex-${tissue}-all']`).prop("checked")
             }
@@ -843,7 +867,7 @@
         const variantRef = apiResponseJson.ref
         const variantAlt = apiResponseJson.alt
 
-        const tracksToShow = updateVisualizationCheckboxes(false)
+        const tracksToShow = updateVisualizationCheckboxes(false, genomeVersion)
         
         let minPos = 1e9
         let maxPos = 0
@@ -978,85 +1002,87 @@
         })
 
 
-        for (const minScore of [0.5, 0.2]) {   //0.2,  hide the >= 0.2 tracks for now
-            for (const splicePredictionType of ["loss", "gain"]) {
-                if (tracksToShow[`igv-spliceai-precomputed-${splicePredictionType}-${minScore}`]) {
-                    tracks.push(
-                        {
-                            name: `SpliceAI: A or D ${splicePredictionType} ≥ ${minScore} (?)`,
-                            description: `This track visualizes Illumina's precomputed SpliceAI score tables for SNVs and small INDELs.<br/>
-                                 Each genomic location of an SNV or INDEL variant with a SpliceAI &#916; score ≥ ${minScore} is shown as the origin of an arrow.<br />
-                                 The arrow points to the location where that variant would likely cause acceptor or donor ${splicePredictionType}.
-                                 Clicking on the arrow displays additional details.`,
-                            type: "spliceJunctions",
-                            height: 100,
-                            url: `gs://tgg-viewer/ref/GRCh38/spliceai/spliceai_scores.raw.snps_and_indels.hg38.filtered.sorted.score_${minScore}.splice_${splicePredictionType}.bed.gz`,
-                            indexURL: `gs://tgg-viewer/ref/GRCh38/spliceai/spliceai_scores.raw.snps_and_indels.hg38.filtered.sorted.score_${minScore}.splice_${splicePredictionType}.bed.gz.tbi`,
-                        }
-                    )
+        if (genomeVersion == "38") {
+            for (const minScore of [0.5, 0.2]) {   //0.2,  hide the >= 0.2 tracks for now
+                for (const splicePredictionType of ["loss", "gain"]) {
+                    if (tracksToShow[`igv-spliceai-precomputed-${splicePredictionType}-${minScore}`]) {
+                        tracks.push(
+                            {
+                                name: `SpliceAI: A or D ${splicePredictionType} ≥ ${minScore} (?)`,
+                                description: `This track visualizes Illumina's precomputed SpliceAI score tables for SNVs and small INDELs.<br/>
+                                     Each genomic location of an SNV or INDEL variant with a SpliceAI &#916; score ≥ ${minScore} is shown as the origin of an arrow.<br />
+                                     The arrow points to the location where that variant would likely cause acceptor or donor ${splicePredictionType}.
+                                     Clicking on the arrow displays additional details.`,
+                                type: "spliceJunctions",
+                                height: 100,
+                                url: `gs://tgg-viewer/ref/GRCh38/spliceai/spliceai_scores.raw.snps_and_indels.hg38.filtered.sorted.score_${minScore}.splice_${splicePredictionType}.bed.gz`,
+                                indexURL: `gs://tgg-viewer/ref/GRCh38/spliceai/spliceai_scores.raw.snps_and_indels.hg38.filtered.sorted.score_${minScore}.splice_${splicePredictionType}.bed.gz.tbi`,
+                            }
+                        )
+                    }
                 }
             }
-        }
 
 
-        for (const [filenamePrefix, tissue, sampleCount] of [
-            ["GTEX_blood.755_samples", "blood", 755],
-            ["GTEX_fibs.504_samples", "fibroblasts", 504],
-            ["GTEX_muscle.803_samples", "muscle", 803],
-            ["GTEX_lymphocytes.174_samples", "lymphocytes", 174],
-            ["GTEX_brain_cortex.255_samples", "brain-cortex", 255],
-            //["GTEX_frontal_cortex.209_samples", "frontal cortex", 803],
-        ]) {
-            for (const normalized of [true, false]) {
-                if (!tracksToShow[`igv-gtex-${tissue}${normalized ? '' : '-all'}`]) {
-                    continue
+            for (const [filenamePrefix, tissue, sampleCount] of [
+                ["GTEX_blood.755_samples", "blood", 755],
+                ["GTEX_fibs.504_samples", "fibroblasts", 504],
+                ["GTEX_muscle.803_samples", "muscle", 803],
+                ["GTEX_lymphocytes.174_samples", "lymphocytes", 174],
+                ["GTEX_brain_cortex.255_samples", "brain-cortex", 255],
+                //["GTEX_frontal_cortex.209_samples", "frontal cortex", 803],
+            ]) {
+                for (const normalized of [true, false]) {
+                    if (!tracksToShow[`igv-gtex-${tissue}${normalized ? '' : '-all'}`]) {
+                        continue
+                    }
+
+                    const filenameSuffix = normalized ? ".normalized" : ""
+                    tracks.push({
+                        name: `GTEx ${tissue}: ${normalized ? 'per-sample average:' : `summed over all ${sampleCount} samples`} (?)`,
+                        description: `This track shows the combined splice junctions from all ${sampleCount} ${tissue} samples available in GTEx v8.
+                                      Splice junctions are labeled with the total number of RNA-seq reads that supported the junction, summed across the ${sampleCount} samples${normalized ? ' and divided by ' + sampleCount : ''}.
+                                      The coverage track shows the total number of RNA-seq reads that overlap each position, summed across all samples${normalized ? ' and divided by ' + sampleCount : ''}.`,
+                        type: "merged",
+                        height: 100,
+                        tracks: [{
+                            type: "wig",
+                            format: "bigwig",
+                            url: `gs://tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.bigWig`,
+                        }, {
+                            type: 'spliceJunctions',
+                            format: 'bed',
+                            minJunctionEndsVisible: 1,
+                            colorBy: 'strand',
+                            minTotalReads: 3,
+                            url: `gs://tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.junctions.bed.gz`,
+                            indexURL: `gs://tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.junctions.bed.gz.tbi`,
+                        }],
+                    })
                 }
+            }
 
-                const filenameSuffix = normalized ? ".normalized" : ""
+            if (tracksToShow["igv-100-mer-mappability"]) {
                 tracks.push({
-                    name: `GTEx ${tissue}: ${normalized ? 'per-sample average:': `summed over all ${sampleCount} samples`} (?)`,
-                    description: `This track shows the combined splice junctions from all ${sampleCount} ${tissue} samples available in GTEx v8.
-                                  Splice junctions are labeled with the total number of RNA-seq reads that supported the junction, summed across the ${sampleCount} samples${normalized ? ' and divided by ' + sampleCount: ''}.
-                                  The coverage track shows the total number of RNA-seq reads that overlap each position, summed across all samples${normalized ? ' and divided by ' + sampleCount: ''}.`,
-                    type: "merged",
+                    name: "100-mer mappability (?)",
+                    description: "100bp k-mer mappability track from UCSC. Lower values indicate regions that are not unique",
+                    type: "wig",
+                    format: "bigwig",
+                    url: "gs://tgg-viewer/ref/GRCh38/mappability/GRCh38_no_alt_analysis_set_GCA_000001405.15-k100_m2.bw",
                     height: 100,
-                    tracks: [{
-                        type: "wig",
-                        format: "bigwig",
-                        url: `gs://tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.bigWig`,
-                    }, {
-                        type: 'spliceJunctions',
-                        format: 'bed',
-                        minJunctionEndsVisible: 1,
-                        colorBy: 'strand',
-                        minTotalReads: 3,
-                        url: `gs://tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.junctions.bed.gz`,
-                        indexURL: `gs://tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.junctions.bed.gz.tbi`,
-                    }],
                 })
             }
-        }
 
-        if (tracksToShow["igv-100-mer-mappability"]) {
-            tracks.push({
-                name: "100-mer mappability (?)",
-                description: "100bp k-mer mappability track from UCSC. Lower values indicate regions that are not unique",
-                type: "wig",
-                format: "bigwig",
-                url: "gs://tgg-viewer/ref/GRCh38/mappability/GRCh38_no_alt_analysis_set_GCA_000001405.15-k100_m2.bw",
-                height: 100,
-            })
-        }
-
-        if (tracksToShow["igv-segdups"]) {
-            tracks.push({
-                name: "SegDups (?)",
-                description: "Segmental duplications track from UCSC",
-                format: "gtf",
-                url: "gs://tgg-viewer/ref/GRCh38/segdups/segdups.gtf.gz",
-                indexURL: "gs://tgg-viewer/ref/GRCh38/segdups/segdups.gtf.gz.tbi",
-                height: 100,
-            })
+            if (tracksToShow["igv-segdups"]) {
+                tracks.push({
+                    name: "SegDups (?)",
+                    description: "Segmental duplications track from UCSC",
+                    format: "gtf",
+                    url: "gs://tgg-viewer/ref/GRCh38/segdups/segdups.gtf.gz",
+                    indexURL: "gs://tgg-viewer/ref/GRCh38/segdups/segdups.gtf.gz.tbi",
+                    height: 100,
+                })
+            }
         }
 
         let locusMargin = maxPos - minPos < 200 ? 15 : 50
@@ -1113,6 +1139,8 @@
         const maxDistance = $("#max-distance-input").val().trim()
         const mask = $(`input[name='mask']`).prop("checked") ? "1" : "0";
         const showRefAltColumns = $(`input[name='show-ref-alt']`).prop("checked") ? "1" : "0";
+
+        updateVisualizationCheckboxes(false, genomeVersion)
 
         //start processing submit
         $("#submit-button").addClass(["loading", "disabled"])
@@ -1191,8 +1219,6 @@
         const maskFromUrl = $.urlParam('mask')
         if (maskFromUrl) {
             $(`input[name='mask']`).prop("checked", maskFromUrl == "1")
-        } else {
-            $(`input[name='mask']`).prop("checked", true)  //default to mask
         }
 
         const showRefAltColumnsFromUrl = $.urlParam('ra')
@@ -1252,7 +1278,7 @@
             await updateIgvBrowser(lastSpliceaiResponseJson, lastPangolinResponseJson, lastGenomeVersion)
         })
         
-        updateVisualizationCheckboxes(true)
+        updateVisualizationCheckboxes(true, "38")
 
         applyUrlSettingsToFormElements()
     })
