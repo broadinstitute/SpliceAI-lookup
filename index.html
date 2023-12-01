@@ -247,8 +247,8 @@
                     <br/>
                     <b>November 30, 2023</b><br/>
                     - changed default search settings to not masked<br />
-                    - when looking at GRCh37 variants, the visualization checkboxes now make it clear which
-                    tracks are or aren't available for GRCh37.<br/>
+                    - when looking at hg19 variants, the visualization checkboxes now make it clear which
+                    tracks are or aren't available for hg19.<br/>
                     <br/>
 
                     <a id="more-details3-button" href="#"
@@ -396,23 +396,23 @@
                         <tr>
                             <th class="table-header">SpliceAI &amp; Pangolin results
                                 <i class="question circle outline icon" data-position="right center"
-                                   data-content="These tracks display the computed SpliceAI and Pangolin scores for the variant entered by the user. They are only available for GRCh38."></i>
+                                   data-content="These tracks display the computed SpliceAI and Pangolin scores for the variant entered by the user. They are only available for hg38."></i>
                             </th>
                             <th class="table-header">GTEx RNA: average per sample
                                 <i class="question circle outline icon" data-position="right center"
-                                   data-content="These tracks summarize all splice junctions and per-base read depths in GTEx v8 RNA-seq samples for a specific tissue. Both the read depths and splice junction read counts are divided by the number of samples, and so represent the per-sample average. These tracks are only available for GRCh38."></i>
+                                   data-content="These tracks summarize all splice junctions and per-base read depths in GTEx v8 RNA-seq samples for a specific tissue. Both the read depths and splice junction read counts are divided by the number of samples, and so represent the per-sample average. These tracks are only available for hg38."></i>
                             </th>
                             <th class="table-header">GTEx RNA: all splice junctions
                                 <i class="question circle outline icon" data-position="right center"
-                                   data-content="These tracks show the splice junctions and per-base read depths in GTEx v8 RNA-seq samples from a specific tissue. The read depths and splice junction read counts are summed across all samples from that tissue. These tracks are only available for GRCh38."></i>
+                                   data-content="These tracks show the splice junctions and per-base read depths in GTEx v8 RNA-seq samples from a specific tissue. The read depths and splice junction read counts are summed across all samples from that tissue. These tracks are only available for hg38."></i>
                             </th>
                             <th class="table-header">SpliceAI: all precomputed scores
                                 <i class="question circle outline icon" data-position="right center"
-                                   data-content="These tracks summarize the original precomputed SpliceAI score tables made available by Illumina. They are only available for GRCh38."></i>
+                                   data-content="These tracks summarize the original precomputed SpliceAI score tables made available by Illumina. They are only available for hg38."></i>
                             </th>
                             <th class="table-header">Reference
                                 <i class="question circle outline icon" data-position="right center"
-                                   data-content="Miscellaneous reference tracks"></i>
+                                   data-content="Miscellaneous reference tracks. These are currently only available for hg38."></i>
                             </th>
                         </tr>
                         </thead>
@@ -823,7 +823,7 @@
                 for (const splicePredictionType of ["loss", "gain"]) {
                     const name = `igv-spliceai-precomputed-${splicePredictionType}-${minScore}`
 
-                    // these tracks are not available for GRCh37
+                    // these tracks are not available for hg19
                     $(`input[name='${name}']`).prop("checked", $(`input[name='${name}']`).prop("checked") && genomeVersion != "37")
                     $(`input[name='${name}']`).prop("disabled", genomeVersion == "37")
 
@@ -831,7 +831,7 @@
                 }
             }
             for (const tissue of ["blood", "fibroblasts", "muscle", "lymphocytes", "brain-cortex"]) {
-                // these tracks are not available for GRCh37
+                // these tracks are not available for hg19
                 $(`input[name='igv-gtex-${tissue}']`).prop("checked", $(`input[name='igv-gtex-${tissue}']`).prop("checked") && genomeVersion != "37")
                 $(`input[name='igv-gtex-${tissue}']`).prop("disabled", genomeVersion == "37")
                 $(`input[name='igv-gtex-${tissue}-all']`).prop("checked", $(`input[name='igv-gtex-${tissue}-all']`).prop("checked") && genomeVersion != "37")
