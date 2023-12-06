@@ -149,11 +149,19 @@
                                     and this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.
                                     For more information about Pangolin, see [<a href="https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4" target="_blank">Zeng & Li 2022</a>].<br />
                                     <br />
-
+                                    The server runs modified versions of SpliceAI and Pangolin which support multi-nucleotide variants (MNVs), provide access to
+                                    raw scores in addition to delta scores, and have other customizations:<br />
+                                    <a href="https://github.com/bw2/SpliceAI">https://github.com/bw2/SpliceAI</a><br />
+                                    <a href="https://github.com/bw2/Pangolin">https://github.com/bw2/Pangolin</a><br />
+                                    <br />
+                                    The IGV.js visualizations for SpliceAI and Pangolin results are implemented as custom tracks at: <br />
+                                    <a href="https://github.com/bw2/igv.js/pull/1">https://github.com/bw2/igv.js</a><br />
+                                    <br />
                                     NOTE: This server supports no more than several queries per-minute per-user. If you need to batch-process many variants, please use the
                                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
                                     to set up your own local instance of the API server or just run the SpliceAI and Pangolin models directly.<br />
                                     <br />
+
                                 </div>
                             </div>
                             <br/>
@@ -293,6 +301,9 @@
                         <i>retained_intron</i>, and
                         <i>nonsense_mediated_decay</i> were filtered out if they overlapped <i>protein_coding</i> transcripts).
                         See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/6#issuecomment-816942824">issue #6</a> for details.<br/>
+                        <br />
+                        <a id="hide-details3-button" href="#" onclick="$('#more-details3').hide();$('#more-details3-button').show();">[hide older updates]</a>
+
                     </div>
                 </div>
             </div>
