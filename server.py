@@ -7,9 +7,9 @@ import pandas as pd
 import re
 import socket
 import subprocess
+import traceback
 import tempfile
 import time
-import traceback
 
 # pangolin imports
 from pkg_resources import resource_filename
@@ -72,6 +72,7 @@ DISABLE_LOGGING_FOR_IPS = {f"63.143.42.{i}" for i in range(0, 256)}  # ignore up
 
 HG19_FASTA_PATH = os.path.expanduser("~/hg19.fa")
 HG38_FASTA_PATH = os.path.expanduser("~/hg38.fa")
+T2T_FASTA_PATH = os.path.expanduser("~/chm13v2.0.fa")
 
 GENCODE_VERSION = "v44"
 SPLICEAI_GRCH37_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}lift37.basic.annotation.txt.gz"
@@ -80,6 +81,9 @@ PANGOLIN_GRCH37_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}lift37.ba
 PANGOLIN_GRCH38_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}.basic.annotation.db"
 TRANSCRIPT_GRCH37_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}lift37.basic.annotation.transcript_annotations.json"
 TRANSCRIPT_GRCH38_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}.basic.annotation.transcript_annotations.json"
+
+UCSC_LIFTOVER_TOOL = "UCSC liftover tool"
+BCFTOOLS_LIFTOVER_TOOL = "bcftools liftover plugin"
 
 PANGOLIN_MODELS = []
 for i in 0, 2, 4, 6:
@@ -328,12 +332,12 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
             }
 
             """
-            NOTE: The reason SpliceAI currently works only for variants "
-                         f"within annotated exons or introns is that, although the SpliceAI neural net takes any "
-                         f"arbitrary nucleotide sequence as input, SpliceAI needs 1) the transcript strand "
-                         f"to determine whether to reverse-complement the reference genome sequence before passing it "
-                         f"to the neural net, and 2) transcript start and end positions to determine where to truncate "
-                         f"the reference genome sequence.
+            NOTE: The reason SpliceAI currently works only for variants 
+            within annotated exons or introns is that, although the SpliceAI neural net takes any 
+            arbitrary nucleotide sequence as input, SpliceAI needs 1) the transcript strand 
+            to determine whether to reverse-complement the reference genome sequence before passing it 
+            to the neural net, and 2) transcript start and end positions to determine where to truncate 
+            the reference genome sequence.
             """
 
     source = None
@@ -633,9 +637,79 @@ LIFTOVER_EXAMPLE = f"/liftover/?hg=hg19-to-hg38&format=interval&chrom=chr8&start
 CHAIN_FILE_PATHS = {
     "hg19-to-hg38": "hg19ToHg38.over.chain.gz",
     "hg38-to-hg19": "hg38ToHg19.over.chain.gz",
-    "hg38-to-t2t": "hg38-chm13v2.over.chain.gz",
-    "t2t-to-hg38": "chm13v2-hg38.over.chain.gz",
+    "hg38-to-t2t": "hg38ToHs1.over.chain.gz", # replaced hg38-chm13v2.over.chain.gz based on advice from Giulio Genovese
+    "t2t-to-hg38": "hs1ToHg38.over.chain.gz", # replaced chm13v2-hg38.over.chain.gz based on advice from Giulio Genovese
 }
+
+LIFTOVER_REFERENCE_PATHS = {
+    "hg19-to-hg38": (HG19_FASTA_PATH, HG38_FASTA_PATH),
+    "hg38-to-hg19": (HG38_FASTA_PATH, HG19_FASTA_PATH),
+    "hg38-to-t2t": (HG38_FASTA_PATH, T2T_FASTA_PATH),
+    "t2t-to-hg38": (T2T_FASTA_PATH, HG38_FASTA_PATH),
+}
+
+def run_variant_liftover_tool(hg, chrom, pos, ref, alt, verbose=False):
+    if hg not in CHAIN_FILE_PATHS or hg not in LIFTOVER_REFERENCE_PATHS:
+        raise ValueError(f"Unexpected hg arg value: {hg}")
+    chain_file_path = CHAIN_FILE_PATHS[hg]
+    source_fasta_path, destination_fasta_path = LIFTOVER_REFERENCE_PATHS[hg]
+
+    with tempfile.NamedTemporaryFile(suffix=".vcf", mode="wt", encoding="UTF-8") as input_file, \
+            tempfile.NamedTemporaryFile(suffix=".vcf", mode="rt", encoding="UTF-8") as output_file:
+
+        #  command syntax: liftOver oldFile map.chain newFile unMapped
+        chrom = "chr" + chrom.replace("chr", "")
+        input_file.write(f"""##fileformat=VCFv4.2
+##contig=<ID={chrom},length=100000000>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+{chrom}	{pos}	.	{ref}	{alt}	60	.""")
+        input_file.flush()
+        command = (
+            f"cat {input_file.name} | "
+            f"bcftools plugin liftover -- --src-fasta-ref {source_fasta_path} --fasta-ref {destination_fasta_path} --chain {chain_file_path} | "
+            f"grep -v ^#  > {output_file.name}"
+        )
+
+        try:
+            subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT, encoding="UTF-8")
+            results = output_file.read()
+
+            if verbose:
+                print(f"{BCFTOOLS_LIFTOVER_TOOL} {hg} liftover on {chrom}:{pos} {ref}>{alt} returned: {results}", flush=True)
+
+            # example: chr8	140300616	.	T	G	60	.	.
+
+            result_fields = results.strip().split("\t")
+            if len(result_fields) > 5:
+                result_fields[1] = int(result_fields[1])
+
+                return {
+                    "hg": hg,
+                    "chrom": chrom,
+                    "start": int(pos) - 1,
+                    "end": pos,
+                    "output_chrom": result_fields[0],
+                    "output_pos": result_fields[1],
+                    "output_ref": result_fields[3],
+                    "output_alt": result_fields[4],
+                    "liftover_tool": BCFTOOLS_LIFTOVER_TOOL,
+                    #"output_strand": "-" if "SWAP=-1" in results else "+",
+                }
+
+        except Exception as e:
+            variant = f"{hg}  {chrom}:{pos} {ref}>{alt}"
+            print(f"ERROR during liftover for {variant}: {e}")
+            traceback.print_exc()
+            raise ValueError(f"liftOver command failed for {variant}: {e}")
+
+        # if bcftools liftover failed, fall back on running UCSC liftover
+        result = run_UCSC_liftover_tool(hg, chrom, int(pos)-1, pos, verbose=False)
+        result["output_ref"] = ref
+        result["output_alt"] = alt
+        #if result["output_strand"] == "-":
+        #    result["output_ref"] = reverse_complement(result["output_ref"])
+        #    result["output_alt"] = reverse_complement(result["output_alt"])
+        return result
 
 
 def run_UCSC_liftover_tool(hg, chrom, start, end, verbose=False):
@@ -657,9 +731,8 @@ def run_UCSC_liftover_tool(hg, chrom, start, end, verbose=False):
         try:
             subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT, encoding="UTF-8")
             results = output_file.read()
-
             if verbose:
-                print(f"{hg} liftover on {chrom}:{start}-{end} returned: {results}", flush=True)
+                print(f"{UCSC_LIFTOVER_TOOL} {hg} liftover on {chrom}:{start}-{end} returned: {results}", flush=True)
 
             result_fields = results.strip().split("\t")
             if len(result_fields) > 5:
@@ -667,18 +740,26 @@ def run_UCSC_liftover_tool(hg, chrom, start, end, verbose=False):
                 result_fields[2] = int(result_fields[2])
 
                 return {
+                    "hg": hg,
                     "chrom": chrom,
+                    "pos": int(start) + 1,
                     "start": start,
                     "end": end,
                     "output_chrom": result_fields[0],
+                    "output_pos":   int(result_fields[1]) + 1,
                     "output_start": result_fields[1],
-                    "output_end": result_fields[2],
+                    "output_end":    result_fields[2],
                     "output_strand": result_fields[5],
+                    "liftover_tool": UCSC_LIFTOVER_TOOL,
                 }
             else:
                 reason_liftover_failed = unmapped_output_file.readline().replace("#", "").strip()
+
         except Exception as e:
-            raise ValueError(f"{hg} liftOver command failed for {chrom}:{start}-{end}: {e}")
+            variant = f"{hg}  {chrom}:{start}-{end}"
+            print(f"ERROR during liftover for {variant}: {e}")
+            traceback.print_exc()
+            raise ValueError(f"liftOver command failed for {variant}: {e}")
 
     if reason_liftover_failed:
         raise ValueError(f"{hg} liftover failed for {chrom}:{start}-{end} {reason_liftover_failed}")
@@ -686,15 +767,10 @@ def run_UCSC_liftover_tool(hg, chrom, start, end, verbose=False):
         raise ValueError(f"{hg} liftover failed for {chrom}:{start}-{end} for unknown reasons")
 
 
-def get_liftover_redis_key(genome_version, chrom, start, end):
-    return f"liftover_hg{genome_version}__{chrom}_{start}_{end}"
-
-
-def get_liftover_from_redis(hg, chrom, start, end):
+def get_liftover_from_redis(key):
     if REDIS is None:
         return None
 
-    key = get_liftover_redis_key(hg, chrom, start, end)
     results = None
     try:
         results_string = REDIS.get(key)
@@ -706,11 +782,10 @@ def get_liftover_from_redis(hg, chrom, start, end):
     return results
 
 
-def add_liftover_to_redis(hg, chrom, start, end, result):
+def add_liftover_to_redis(key, result):
     if REDIS is None:
         return
 
-    key = get_liftover_redis_key(hg, chrom, start, end)
     try:
         results_string = json.dumps(result)
         REDIS.set(key, results_string)
@@ -750,25 +825,33 @@ def run_liftover():
         return error_response(f'"chrom" param not specified')
 
     if format == "interval":
+        for key in "start", "end":
+            if not params.get(key):
+                return error_response(f'"{key}" param not specified')
         start = params.get("start")
         end = params.get("end")
-        if not start:
-            return error_response(f'"start" param not specified')
-        if not end:
-            return error_response(f'"end" param not specified')
+        redis_key = f"{hg}:{chrom}:{start}:{end}"
         variant_log_string = f"{start}-{end}"
 
-    elif format == "position" or format == "variant":
-        pos = params.get("pos")
-        if not pos:
-            return error_response(f'"pos" param not specified')
+    elif format == "position":
+        try:
+            pos = int(params["pos"])
+        except Exception as e:
+            return error_response(f'"pos" param error: {e}')
 
-        pos = int(pos)
         start = pos - 1
         end = pos
+        redis_key = f"{hg}:{chrom}:{pos}"
         variant_log_string = f"{pos} "
-        if params.get('ref') and params.get('alt'):
-            variant_log_string += f"{params.get('ref')}>{params.get('alt')}"
+    elif format == "variant":
+        for key in "pos", "ref", "alt":
+            if not params.get(key):
+                return error_response(f'"{key}" param not specified')
+        pos = params.get("pos")
+        ref = params.get("ref")
+        alt = params.get("alt")
+        redis_key = f"{hg}:{chrom}:{pos}:{ref}:{alt}"
+        variant_log_string = f"{pos} {ref}>{alt}"
 
     verbose = request.remote_addr not in DISABLE_LOGGING_FOR_IPS
     if verbose:
@@ -776,29 +859,22 @@ def run_liftover():
         print(f"{logging_prefix}: {request.remote_addr}: {hg} liftover {format}: {chrom}:{variant_log_string}", flush=True)
 
     # check REDIS cache before processing the variant
-    result = get_liftover_from_redis(hg, chrom, start, end)
+    result = get_liftover_from_redis(redis_key)
     if result and verbose:
-        print(f"{hg} liftover on {chrom}:{start}-{end} got results from cache: {result}", flush=True)
+        print(f"{hg} liftover on {variant_log_string} got results from cache: {result}", flush=True)
 
     if not result:
         try:
-            result = run_UCSC_liftover_tool(hg, chrom, start, end, verbose=verbose)
+            if format == "variant":
+                result = run_variant_liftover_tool(hg, chrom, pos, ref, alt, verbose=verbose)
+            else:
+                result = run_UCSC_liftover_tool(hg, chrom, start, end, verbose=verbose)
         except Exception as e:
             return error_response(str(e))
     
-        add_liftover_to_redis(hg, chrom, start, end, result)
+        add_liftover_to_redis(redis_key, result)
 
     result.update(params)
-    if format == "position" or format == "variant":
-        result["pos"] = pos
-        result["output_pos"] = result["output_end"]
-
-    if format == "variant":
-        result["output_ref"] = result["ref"]
-        result["output_alt"] = result["alt"]
-        if result["output_strand"] == "-":
-            result["output_ref"] = reverse_complement(result["output_ref"])
-            result["output_alt"] = reverse_complement(result["output_alt"])
 
     return Response(json.dumps(result), mimetype='application/json')
 
