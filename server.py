@@ -43,9 +43,9 @@ if not DEBUG:
 
 RATE_LIMIT_WINDOW_SIZE_IN_MINUTES = 1
 RATE_LIMIT_REQUESTS_PER_USER_PER_MINUTE = {
-    "spliceai:model": 4,
+    "spliceai:model": 6,
     "spliceai:total": 15,
-    "pangolin:model": 4,
+    "pangolin:model": 6,
     "pangolin:total": 15,
     "liftover:total": 12,
 }
