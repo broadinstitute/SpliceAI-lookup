@@ -658,7 +658,11 @@ def run_variant_liftover_tool(hg, chrom, pos, ref, alt, verbose=False):
             tempfile.NamedTemporaryFile(suffix=".vcf", mode="rt", encoding="UTF-8") as output_file:
 
         #  command syntax: liftOver oldFile map.chain newFile unMapped
-        chrom = "chr" + chrom.replace("chr", "")
+        if hg == "hg19-to-hg38":
+            chrom = chrom.replace("chr", "")
+        else:
+            chrom = "chr" + chrom.replace("chr", "")
+
         input_file.write(f"""##fileformat=VCFv4.2
 ##contig=<ID={chrom},length=100000000>
 #CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
@@ -698,11 +702,13 @@ def run_variant_liftover_tool(hg, chrom, pos, ref, alt, verbose=False):
 
         except Exception as e:
             variant = f"{hg}  {chrom}:{pos} {ref}>{alt}"
-            print(f"ERROR during liftover for {variant}: {e}")
-            traceback.print_exc()
-            raise ValueError(f"liftOver command failed for {variant}: {e}")
+            print(f"ERROR in {BCFTOOLS_LIFTOVER_TOOL} for {variant}: {e}")
+            print("Falling back on UCSC liftover tool..")
+            #traceback.print_exc()
+            #raise ValueError(f"liftOver command failed for {variant}: {e}")
 
         # if bcftools liftover failed, fall back on running UCSC liftover
+        chrom = "chr" + chrom.replace("chr", "")
         result = run_UCSC_liftover_tool(hg, chrom, int(pos)-1, pos, verbose=False)
         result["output_ref"] = ref
         result["output_alt"] = alt
