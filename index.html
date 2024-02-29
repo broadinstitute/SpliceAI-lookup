@@ -6,7 +6,10 @@
             baseApiUrl = location.origin
         }
 
-        console.log("Using SpliceAI-lookup API url:", baseApiUrl)
+        let pangolinBaseApiUrl = "https://pangolin-xwkwwwxdwq-uc.a.run.app"
+
+        console.log("Using SpliceAI API url:", baseApiUrl)
+        console.log("Using Pangolin API url:", pangolinBaseApiUrl)
     </script>
     <meta content="width=device-width, initial-scale=1" charset="utf-8" name="viewport"/>
     <title>SpliceAI Lookup</title>
@@ -633,7 +636,7 @@
         const ref = variantTokens[2]
         const alt = variantTokens[3]
 
-        const baseUrl = tool.toLowerCase() == "pangolin" ? "https://pangolin-xwkwwwxdwq-uc.a.run.app" : baseApiUrl
+        const baseUrl = tool.toLowerCase() == "pangolin" ? pangolinBaseApiUrl : baseApiUrl
         const urlArgs = `hg=${genomeVersion}&distance=${maxDistance}&mask=${mask}&variant=${chrom}-${pos}-${ref}-${alt}&raw=${variant}`
 
         let apiResponse
@@ -878,7 +881,9 @@
         const variantAlt = apiResponseJson.alt
 
         const tracksToShow = updateVisualizationCheckboxes(false, genomeVersion)
-        
+
+        fetch(`${pangolinBaseApiUrl}/log/show_igv?details=${encodeURIComponent(JSON.stringify(tracksToShow))}`)
+
         let minPos = 1e9
         let maxPos = 0
         for (const apiResponse of [spliceaiResponseJson, pangolinResponseJson]) {
