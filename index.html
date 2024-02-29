@@ -633,11 +633,12 @@
         const ref = variantTokens[2]
         const alt = variantTokens[3]
 
+        const baseUrl = tool.toLowerCase() == "pangolin" ? "https://pangolin-xwkwwwxdwq-uc.a.run.app" : baseApiUrl
         const urlArgs = `hg=${genomeVersion}&distance=${maxDistance}&mask=${mask}&variant=${chrom}-${pos}-${ref}-${alt}&raw=${variant}`
 
         let apiResponse
         try {
-            apiResponse = await fetch(`${baseApiUrl}/${tool.toLowerCase()}/?${urlArgs}`)
+            apiResponse = await fetch(`${baseUrl}/${tool.toLowerCase()}/?${urlArgs}`)
         } catch(e) {
             throw Error(`${tool} API call failed: Unable to reach server`)
         }
