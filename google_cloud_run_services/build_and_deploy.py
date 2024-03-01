@@ -74,7 +74,7 @@ def main():
 --project {GCLOUD_PROJECT} beta run deploy {service} \
 --image {tag} \
 --max-instances 8 \
---concurrency {2 if tool == 'spliceai' else 1} \
+--concurrency 2 \
 --execution-environment gen2 \
 --region us-central1 \
 --set-env-vars "DB_PASSWORD={params['SPLICEAI_LOOKUP_DB_PASSWORD']}" \
