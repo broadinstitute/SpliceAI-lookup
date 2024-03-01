@@ -1,15 +1,19 @@
 <html>
 <head>
     <script>
-        let baseApiUrl = "https://spliceailookup-api.broadinstitute.org"
-        if (location.origin && location.origin.startsWith("http") && !location.origin.includes("broadinstitute.org")) {
-            baseApiUrl = location.origin
+        //let baseApiUrl = "https://spliceailookup-api.broadinstitute.org"
+        //if (location.origin && location.origin.startsWith("http") && !location.origin.includes("broadinstitute.org")) {
+        //    baseApiUrl = location.origin
+        //}
+
+        const baseApiUrl = {
+            "pangolin-37": "https://pangolin-37-xwkwwwxdwq-uc.a.run.app",
+            "pangolin-38": "https://pangolin-38-xwkwwwxdwq-uc.a.run.app",
+            "spliceai-37": "https://spliceai-37-xwkwwwxdwq-uc.a.run.app",
+            "spliceai-38": "https://spliceai-38-xwkwwwxdwq-uc.a.run.app",
         }
 
-        let pangolinBaseApiUrl = "https://pangolin-xwkwwwxdwq-uc.a.run.app"
-
-        console.log("Using SpliceAI API url:", baseApiUrl)
-        console.log("Using Pangolin API url:", pangolinBaseApiUrl)
+        //console.log("Using SpliceAI API url:", baseApiUrl)
     </script>
     <meta content="width=device-width, initial-scale=1" charset="utf-8" name="viewport"/>
     <title>SpliceAI Lookup</title>
@@ -636,7 +640,9 @@
         const ref = variantTokens[2]
         const alt = variantTokens[3]
 
-        const baseUrl = tool.toLowerCase() == "pangolin" ? pangolinBaseApiUrl : baseApiUrl
+        const baseUrl = baseApiUrl[`${tool.toLowerCase()}-${genomeVersion}`]
+        console.log(baseApiUrl)
+        console.log(`genomeVersion: ${genomeVersion}, baseUrl: ${baseUrl}`)
         const urlArgs = `hg=${genomeVersion}&distance=${maxDistance}&mask=${mask}&variant=${chrom}-${pos}-${ref}-${alt}&raw=${variant}`
 
         let apiResponse
@@ -882,7 +888,8 @@
 
         const tracksToShow = updateVisualizationCheckboxes(false, genomeVersion)
 
-        fetch(`${pangolinBaseApiUrl}/log/show_igv?details=${encodeURIComponent(JSON.stringify(tracksToShow))}`)
+        // log event
+        fetch(`${baseApiUrl['pangolin-37']}/log/show_igv?details=${encodeURIComponent(JSON.stringify(tracksToShow))}`)
 
         let minPos = 1e9
         let maxPos = 0

@@ -94,6 +94,7 @@ for i in 0, 2, 4, 6:
             weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)))
         else:
             weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)), map_location=torch.device('cpu'))
+
         model.load_state_dict(weights)
         model.eval()
         PANGOLIN_MODELS.append(model)
