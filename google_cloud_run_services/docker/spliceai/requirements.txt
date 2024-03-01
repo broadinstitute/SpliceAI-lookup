@@ -1,0 +1,9 @@
+flask
+flask_cors
+flask_talisman
+gunicorn
+pandas
+BioPython
+
+# sql
+psycopg2

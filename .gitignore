@@ -1,10 +1,9 @@
-google_cloud_run_services/params.json
+params.json
 annotations/
 service.backup_copy.yaml
 
 .idea
 *.iml
-*.txt
 *.db
 *.txt.gz
 
