@@ -6,7 +6,6 @@ import os
 logging.basicConfig(level=logging.INFO, format="%(asctime)s: %(message)s")
 
 GCLOUD_PROJECT = "spliceai-lookup-412920"
-CONCURRENCY = 2  # max requests per instance
 
 def get_service_name(tool, genome_version):
 	return f"{tool}-{genome_version}"
@@ -39,7 +38,8 @@ def main():
 		tag = get_tag(args.tool, args.genome_version)
 
 		if args.command == "run":
-			print(f"docker run -it {tag} /bin/bash")
+			print("Run this command: ")
+			print(f"docker run -it {tag} # /bin/bash")
 		elif args.command == "test":
 			run(f"docker run -p 8080:8080 {tag}")
 
@@ -64,7 +64,7 @@ def main():
 			service = get_service_name(tool, genome_version)
 
 			if not args.command or args.command == "build":
-				run(f"docker build -f docker/{tool}/Dockerfile --build-arg=\"GENOME_VERSION=GRCh{genome_version}\" -t {tag} .")
+				run(f"docker build -f docker/{tool}/Dockerfile --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag} .")
 				run(f"docker push {tag}")
 				run(f"docker pull {tag} 2>&1 | grep Digest | cut -c 9- > docker/{tool}/sha256.txt")
 
@@ -74,13 +74,13 @@ def main():
 --project {GCLOUD_PROJECT} beta run deploy {service} \
 --image {tag} \
 --max-instances 8 \
---concurrency {CONCURRENCY} \
+--concurrency {2 if tool == 'spliceai' else 1} \
 --execution-environment gen2 \
 --region us-central1 \
 --set-env-vars "DB_PASSWORD={params['SPLICEAI_LOOKUP_DB_PASSWORD']}" \
 --add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
 --allow-unauthenticated \
---memory 8Gi \
+--memory 16Gi \
 --cpu 4
 """)
 

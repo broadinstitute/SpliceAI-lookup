@@ -27,11 +27,12 @@ RUN git clone https://github.com/bw2/SpliceAI.git  \
 
 ARG GENOME_VERSION="unknown"
 
-COPY docker/ref/${GENOME_VERSION} /
-COPY docker/spliceai/annotations/${GENOME_VERSION} /
+COPY docker/ref/GRCh${GENOME_VERSION} /
+COPY docker/spliceai/annotations/GRCh${GENOME_VERSION} /
 COPY server.py /
 
 ENV PORT=8080
 ENV TOOL=spliceai
+ENV GENOME_VERSION=${GENOME_VERSION}
 
-CMD exec gunicorn --preload --bind :$PORT --workers 1 --threads 2 --timeout 0 server:app
+CMD exec gunicorn --preload --bind :$PORT --workers 2 --threads 1 --timeout 0 server:app

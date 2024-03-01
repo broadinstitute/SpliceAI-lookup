@@ -61,6 +61,10 @@ TRANSCRIPT_PRIORITY_ORDER = {
 }
 
 TOOL = os.environ.get("TOOL")
+GENOME_VERSION = os.environ.get("GENOME_VERSION")
+if GENOME_VERSION not in ("37", "38"):
+    raise ValueError(f'Environment variable "GENOME_VERSION" should be set to either "37" or "38" instead of: "{os.environ.get("GENOME_VERSION")}"')
+
 if TOOL == "spliceai":
     from spliceai.utils import Annotator, get_delta_scores
 
@@ -93,6 +97,7 @@ elif TOOL == "pangolin":
         "37": f"/gencode.{GENCODE_VERSION}lift37.basic.annotation.without_chr_prefix.db",
         "38": f"/gencode.{GENCODE_VERSION}.basic.annotation.db",
     }
+    PANGOLIN_ANNOTATIONS[GENOME_VERSION] = gffutils.FeatureDB(PANGOLIN_ANNOTATION_PATHS[GENOME_VERSION])
 
 else:
     raise ValueError(f'Environment variable "TOOL" should be set to either "spliceai" or "pangolin" instead of: "{os.environ.get("TOOL")}"')
@@ -105,8 +110,6 @@ def init_spliceai(genome_version):
 
 
 def init_pangolin(genome_version):
-    if genome_version not in PANGOLIN_ANNOTATIONS:
-        PANGOLIN_ANNOTATIONS[genome_version] = gffutils.FeatureDB(PANGOLIN_ANNOTATION_PATHS[genome_version])
 
     if not PANGOLIN_MODELS:
         torch.set_num_threads(os.cpu_count()*2)

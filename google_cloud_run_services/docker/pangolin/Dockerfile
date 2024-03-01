@@ -27,11 +27,12 @@ RUN git clone https://github.com/bw2/Pangolin.git \
 
 ARG GENOME_VERSION="unknown"
 
-COPY docker/ref/${GENOME_VERSION} /
-COPY docker/pangolin/annotations/${GENOME_VERSION} /
+COPY docker/ref/GRCh${GENOME_VERSION} /
+COPY docker/pangolin/annotations/GRCh${GENOME_VERSION} /
 COPY server.py /
 
 ENV PORT=8080
 ENV TOOL=pangolin
+ENV GENOME_VERSION=${GENOME_VERSION}
 
-CMD exec gunicorn --preload --bind :$PORT --workers 1 --threads 2 --timeout 0 server:app
+CMD exec gunicorn --preload --bind :$PORT --workers 1 --threads 1 --timeout 0 server:app

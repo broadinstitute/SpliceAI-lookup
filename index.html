@@ -641,8 +641,6 @@
         const alt = variantTokens[3]
 
         const baseUrl = baseApiUrl[`${tool.toLowerCase()}-${genomeVersion}`]
-        console.log(baseApiUrl)
-        console.log(`genomeVersion: ${genomeVersion}, baseUrl: ${baseUrl}`)
         const urlArgs = `hg=${genomeVersion}&distance=${maxDistance}&mask=${mask}&variant=${chrom}-${pos}-${ref}-${alt}&raw=${variant}`
 
         let apiResponse
