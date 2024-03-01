@@ -92,13 +92,10 @@ elif TOOL == "pangolin":
 
     PANGOLIN_MODELS = []
 
-    PANGOLIN_ANNOTATIONS = {}
     PANGOLIN_ANNOTATION_PATHS = {
         "37": f"/gencode.{GENCODE_VERSION}lift37.basic.annotation.without_chr_prefix.db",
         "38": f"/gencode.{GENCODE_VERSION}.basic.annotation.db",
     }
-    PANGOLIN_ANNOTATIONS[GENOME_VERSION] = gffutils.FeatureDB(PANGOLIN_ANNOTATION_PATHS[GENOME_VERSION])
-
 else:
     raise ValueError(f'Environment variable "TOOL" should be set to either "spliceai" or "pangolin" instead of: "{os.environ.get("TOOL")}"')
 
@@ -354,8 +351,9 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param):
         score_cutoff = None
         score_exons = "False"
 
+    features_db = gffutils.FeatureDB(PANGOLIN_ANNOTATION_PATHS[GENOME_VERSION])
     scores = process_variant_using_pangolin(
-        0, chrom, int(pos), ref, alt, PANGOLIN_ANNOTATIONS[genome_version], PANGOLIN_MODELS, PangolinArgs)
+        0, chrom, int(pos), ref, alt, features_db, PANGOLIN_MODELS, PangolinArgs)
 
     if not scores:
         return {
@@ -436,7 +434,7 @@ def run_splice_prediction_tool(tool_name):
         return error_response(f"ERROR: This server is configured to run {TOOL} rather than {tool_name}.\n", source=tool_name)
 
     start_time = datetime.now()
-    logging_prefix = start_time.strftime("%m/%d/%Y %H:%M:%S")
+    logging_prefix = start_time.strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
     example_url = SPLICEAI_EXAMPLE_URL if tool_name == "spliceai" else PANGOLIN_EXAMPLE_URL
 
     # check params
