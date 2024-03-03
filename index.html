@@ -702,10 +702,14 @@
                 resultRowClasses.push("non-coding-transcript")
             }
 
+            const normalizedVariantDiv = variant.match(VARIANT_RE) ? "" :
+                `<br class="only-large-screen"/><div style="margin-left:5px;margin-right:10px; display: inline-block; color:#333333"><i>chr${chrom}:${pos} ${ref}&gt;${alt}</i></div><br class="only-large-screen"/>`
+
             $(`#${tool.toLowerCase()}-header`).nextAll().remove()
             let row = `<tr class="${resultRowClasses.join(' ')}">
                 <td rowspan="${subRowCount}" style="vertical-align: top">
                     <div style="margin-right:10px; display: inline-block">${variant}</div><br class="only-large-screen"/>
+                    ${normalizedVariantDiv}
                     <br class="only-large-screen"/>
                     <a href="${getUCSCBrowserUrl(genomeVersion, chrom, pos)}" class="small-link" target="_blank">UCSC</a>,
                     <a href="https://gnomad.broadinstitute.org/variant/${variant}?dataset=${gnomadVersion}" class="small-link" target="_blank">gnomAD</a>
