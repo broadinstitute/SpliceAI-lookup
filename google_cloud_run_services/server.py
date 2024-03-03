@@ -557,12 +557,33 @@ def log_event(name):
         print(message, flush=True)
         return message
 
-    details = request.values.get("details")
+    # check params
+    params = {}
+    if request.values:
+        params.update(request.values)
+    if not params:
+        params.update(request.get_json(force=True, silent=True) or {})
+
+    variant = params.get("variant")
+    genome_version = params.get("hg")
+    distance_param = params.get("distance")
+    mask_param = params.get("mask")
+    details = params.get("details")
     if details:
         details = str(details)
         details = details[:2000]
 
-    log(name, ip=get_user_ip(request), details=details)
+    print(f"{logging_prefix}: ======================", flush=True)
+    print(f"{logging_prefix}: {variant} processing with hg={genome_version}, "
+          f"distance={distance_param}, mask={mask_param}", flush=True)
+
+    log(name,
+        ip=get_user_ip(request),
+        variant=variant,
+        genome=genome_version,
+        distance=distance_param,
+        mask=mask_param,
+        details=details)
 
     return "Done"
 

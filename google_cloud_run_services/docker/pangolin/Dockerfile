@@ -35,4 +35,4 @@ ENV PORT=8080
 ENV TOOL=pangolin
 ENV GENOME_VERSION=${GENOME_VERSION}
 
-CMD exec gunicorn --preload --bind :$PORT --workers 2 --threads 1 --timeout 0 server:app
+CMD exec gunicorn --preload --bind :$PORT --workers 3 --threads 1 --timeout 0 server:app
