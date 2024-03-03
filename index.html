@@ -7,10 +7,10 @@
         //}
 
         const baseApiUrl = {
-            "pangolin-37": "https://pangolin-37-xwkwwwxdwq-uc.a.run.app",
-            "pangolin-38": "https://pangolin-38-xwkwwwxdwq-uc.a.run.app",
             //"pangolin-37": "https://pangolin-xwkwwwxdwq-uc.a.run.app",
             //"pangolin-38": "https://pangolin-xwkwwwxdwq-uc.a.run.app",
+            "pangolin-37": "https://pangolin-37-xwkwwwxdwq-uc.a.run.app",
+            "pangolin-38": "https://pangolin-38-xwkwwwxdwq-uc.a.run.app",
             "spliceai-37": "https://spliceai-37-xwkwwwxdwq-uc.a.run.app",
             "spliceai-38": "https://spliceai-38-xwkwwwxdwq-uc.a.run.app",
         }
@@ -144,11 +144,11 @@
                     <div class="twelve wide column">
                         <div style="padding:25px 0px">
                             <div>
-                                <div style="display:inline-block; min-width: 700px; ">Enter a variant below to see its
+                                <div style="display:inline-block; ">Enter a variant below to see its
                                     <a href="https://pubmed.ncbi.nlm.nih.gov/30661751" target="_blank">SpliceAI</a>
                                     and <a href="https://github.com/tkzeng/Pangolin" target="_blank">Pangolin</a> scores
                                 </div>
-                                <a id="more-details1-button" href="#" onclick="$('#more-details1').show();$('#more-details1-button').hide();">[more details]</a>
+                                <a id="more-details1-button" href="#" style="float:right; padding-right:7px" onclick="$('#more-details1').show();$('#more-details1-button').hide();">[more details]</a>
                                 <div id="more-details1" style="display:none">
                                     <br />
                                     This website is developed and maintained by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.<br />
@@ -176,14 +176,14 @@
                             <br/>
                             <div style="padding-left: 0px; color: gray">
                                 <table>
-                                    <thead style="text-align: left"><tr><th style="padding-bottom: 20px; min-width:430px">Examples &nbsp; (on hg38):</th><th></th></tr></thead>
+                                    <thead style="text-align: left"><tr><th style="padding-bottom: 20px;">Examples &nbsp; (on hg38):</th><th></th></tr></thead>
                                     <tbody>
                                     <tr><td>chr8-140300616-T-G</td><td></td></tr>
                                     <tr><td>chr8 &nbsp; 140300616 &nbsp; T &nbsp; G</td><td></td></tr>
                                     <tr>
                                         <td style="padding-right: 0px">NM_001089.3(ABCA3):c.875A>T (p.Glu292Val)</td>
-                                        <td style="padding-left: 0px">
-                                            <a id="more-details2-button" href="#"
+                                        <td style="padding-left: 0px; padding-right:7px;">
+                                            <a id="more-details2-button" href="#" style="float:right;"
                                                onclick="$('.more-details2').show();$('#more-details2-button').hide();">[show more examples]</a>
                                         </td>
                                     </tr>
@@ -261,6 +261,9 @@
                         <a href="https://tgg-viewer.broadinstitute.org" target="_blank">TGG Viewer</a>: igv.js-based web viewer for public reference tracks and, optionally, private data in Google Storage buckets<br/>
                     </div>
                     <br/>
+                    <b>March 3, 2023</b><br/>
+		    - server moved to Google Cloud Run to better support higher usage<br />
+		    <br />
                     <b>November 30, 2023</b><br/>
                     - changed default search settings to "not masked" due to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/59#issuecomment-1815667021">confusion</a> and <a href="https://github.com/Illumina/SpliceAI/issues/27#issuecomment-547089167">issues</a> with how masked scores are computed.<br />
                     - when looking at hg19 variants, the visualization checkboxes now make it clear which IGV.js tracks are or aren't available on hg19.<br/>
@@ -560,8 +563,8 @@
             // was able to parse the user input using a simple reg-exp
             const chrom = matchedRegExp[2].toUpperCase()
             const pos = parseInt(matchedRegExp[3].replace(/,/g, ""))
-            const ref = matchedRegExp[4]
-            const alt = matchedRegExp[5]
+            const ref = matchedRegExp[4].toUpperCase()
+            const alt = matchedRegExp[5].toUpperCase()
 
             return `${chrom}-${pos}-${ref}-${alt}`
         }
@@ -889,7 +892,7 @@
         const tracksToShow = updateVisualizationCheckboxes(false, genomeVersion)
 
         // log event
-        fetch(`${baseApiUrl['pangolin-37']}/log/show_igv?details=${encodeURIComponent(JSON.stringify(tracksToShow))}`)
+        fetch(`${baseApiUrl['pangolin-37']}/log/show_igv?details=${encodeURIComponent(JSON.stringify(tracksToShow))}&hg=${genomeVersion}&distance=${apiResponseJson.distance}&mask=${apiResponseJson.mask}&variant=${apiResponseJson.variant}`)
 
         let minPos = 1e9
         let maxPos = 0
