@@ -150,6 +150,9 @@ def parse_variant(variant_str):
 DATABASE_CONNECTION = None
 def init_database_connection():
     global DATABASE_CONNECTION
+    if DATABASE_CONNECTION is not None:
+        return  # already initialized
+
     try:
         DATABASE_CONNECTION = psycopg2.connect(
             host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
@@ -547,6 +550,8 @@ def get_user_ip(request):
 
 @app.route('/log/<string:name>/', strict_slashes=False)
 def log_event(name):
+    init_database_connection()
+
     if DATABASE_CONNECTION is None:
         message = f"Log error: Database not available"
         print(message, flush=True)
@@ -573,8 +578,9 @@ def log_event(name):
         details = str(details)
         details = details[:2000]
 
+    logging_prefix = datetime.now().strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
     print(f"{logging_prefix}: ======================", flush=True)
-    print(f"{logging_prefix}: {variant} processing with hg={genome_version}, "
+    print(f"{logging_prefix}: {variant} show igv with hg={genome_version}, "
           f"distance={distance_param}, mask={mask_param}", flush=True)
 
     log(name,
