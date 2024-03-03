@@ -9,6 +9,7 @@
         const baseApiUrl = {
             //"pangolin-37": "https://pangolin-xwkwwwxdwq-uc.a.run.app",
             //"pangolin-38": "https://pangolin-xwkwwwxdwq-uc.a.run.app",
+            "normalize": "https://liftover-xwkwwwxdwq-uc.a.run.app",
             "pangolin-37": "https://pangolin-37-xwkwwwxdwq-uc.a.run.app",
             "pangolin-38": "https://pangolin-38-xwkwwwxdwq-uc.a.run.app",
             "spliceai-37": "https://spliceai-37-xwkwwwxdwq-uc.a.run.app",
@@ -558,50 +559,93 @@
          *  string: the input variant reformatted as a "{chrom}-{pos}-{ref}-{alt}" string
          */
 
-        const matchedRegExp = variant.match(VARIANT_RE)
+        let chrom, pos, ref, alt
+        let matchedRegExp = variant.match(VARIANT_RE)
         if (matchedRegExp) {
             // was able to parse the user input using a simple reg-exp
-            const chrom = matchedRegExp[2].toUpperCase()
-            const pos = parseInt(matchedRegExp[3].replace(/,/g, ""))
-            const ref = matchedRegExp[4].toUpperCase()
-            const alt = matchedRegExp[5].toUpperCase()
+            chrom = matchedRegExp[2].toUpperCase()
+            pos = parseInt(matchedRegExp[3].replace(/,/g, ""))
+            ref = matchedRegExp[4].toUpperCase()
+            alt = matchedRegExp[5].toUpperCase()
+        } else {
 
+            // otherwise try calling the Ensembl API on the user input
+            const ensemblApiUrl = `https://${genomeVersion == '37' ? 'grch37.' : ''}rest.ensembl.org/vep/human/hgvs/${variant.trim()}?content-type=application/json&vcf_string=1`
+
+            let ensemblApiResponse
+            try {
+                ensemblApiResponse = await fetch(ensemblApiUrl)
+            } catch (e) {
+                console.error(e)
+                throw Error(`Ensembl API call failed: Unable to reach server`)
+            }
+
+            const ensemblApiResponseJson = await ensemblApiResponse.json()
+            console.log(`Ensembl API response:`, ensemblApiResponseJson)
+
+            if (!ensemblApiResponse.ok || ensemblApiResponseJson.error) {
+                let errorText = `${ensemblApiResponseJson.error}`
+                const unableToParseHGVSErrorMatch = errorText.match("Unable to parse HGVS notation")
+                if (unableToParseHGVSErrorMatch) {
+                    errorText = `Ensembl API is unable to parse the variant ${variant}`
+                }
+                const refAlleleErrorMatch = errorText.match(
+                    new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
+                if (refAlleleErrorMatch) {
+                    errorText = `${variant} has an unexpected reference allele. The hg${genomeVersion} reference allele should be ${refAlleleErrorMatch[1]}`
+                }
+
+                throw new Error(errorText);
+            }
+
+            if (!ensemblApiResponseJson[0] || !ensemblApiResponseJson[0].vcf_string) {
+                throw new Error(`Unexpected response: ${ensemblApiResponseJson}`);
+            }
+
+            variant = ensemblApiResponseJson[0].vcf_string
+
+            matchedRegExp = variant.match(VARIANT_RE)
+            if (!matchedRegExp) {
+                throw new Error(`Unexpected response: ${ensemblApiResponseJson}`)
+            }
+
+            chrom = matchedRegExp[2].toUpperCase()
+            pos = parseInt(matchedRegExp[3])
+            ref = matchedRegExp[4].toUpperCase()
+            alt = matchedRegExp[5].toUpperCase()
+        }
+
+        if (ref.length == alt.length) {
             return `${chrom}-${pos}-${ref}-${alt}`
         }
 
-        // otherwise try calling the Ensembl API on the user input
-        const ensemblApiUrl = `https://${genomeVersion == '37' ? 'grch37.' : ''}rest.ensembl.org/vep/human/hgvs/${variant.trim()}?content-type=application/json&vcf_string=1`
+	return `${chrom}-${pos}-${ref}-${alt}`
 
-        let ensemblApiResponse
+	
+        // left-align the indel
+        let leftAlignApiResponse
         try {
-            ensemblApiResponse = await fetch(ensemblApiUrl)
+            leftAlignApiResponse = await fetch(`${baseApiUrl['normalize']}/normalize/?g=hg${genomeVersion}&chrom=${chrom}&pos=${pos}&ref=${ref}&alt=${alt}`)
+            const leftAlignApiResponseJson = await leftAlignApiResponse.json()
+            console.log(`Left-align API response:`, leftAlignApiResponseJson)
+            if (!leftAlignApiResponse.ok || leftAlignApiResponseJson.error) {
+                console.log(`${leftAlignApiResponseJson.error}`)
+            } else {
+                if (leftAlignApiResponseJson.normalized_ref && leftAlignApiResponseJson.normalized_alt && leftAlignApiResponseJson.normalized_ref.length != leftAlignApiResponseJson.normalized_alt.length && (
+                    parseInt(leftAlignApiResponseJson.normalized_pos) != pos || leftAlignApiResponseJson.normalized_ref != ref || leftAlignApiResponseJson.normalized_alt != alt)
+                ) {
+                    chrom = leftAlignApiResponseJson.normalized_chrom
+                    pos = leftAlignApiResponseJson.normalized_pos
+                    ref = leftAlignApiResponseJson.normalized_ref
+                    alt = leftAlignApiResponseJson.normalized_alt
+                }
+            }
+
         } catch(e) {
             console.error(e)
-            throw Error(`Ensembl API call failed: Unable to reach server`)
         }
 
-        const ensemblApiResponseJson = await ensemblApiResponse.json()
-        console.log(`Ensembl API response:`, ensemblApiResponseJson)
-
-        if (!ensemblApiResponse.ok || ensemblApiResponseJson.error) {
-            let errorText =`${ensemblApiResponseJson.error}`
-            const unableToParseHGVSErrorMatch = errorText.match("Unable to parse HGVS notation")
-            if (unableToParseHGVSErrorMatch) {
-                errorText = `Ensembl API is unable to parse the variant ${variant}`
-            }
-            const refAlleleErrorMatch = errorText.match(
-                new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
-            if (refAlleleErrorMatch) {
-                errorText = `${variant} has an unexpected reference allele. The hg${genomeVersion} reference allele should be ${refAlleleErrorMatch[1]}`
-            }
-
-            throw new Error(errorText);
-        }
-
-        if (!ensemblApiResponseJson[0] || !ensemblApiResponseJson[0].vcf_string) {
-            throw new Error(`Unexpected response: ${ensemblApiResponseJson}`);
-        }
-        return ensemblApiResponseJson[0].vcf_string
+        return `${chrom}-${pos}-${ref}-${alt}`
     }
 
 
@@ -702,8 +746,8 @@
                 resultRowClasses.push("non-coding-transcript")
             }
 
-            const normalizedVariantDiv = variant.match(VARIANT_RE) ? "" :
-                `<br class="only-large-screen"/><div style="margin-left:5px;margin-right:10px; display: inline-block; color:#333333"><i>chr${chrom}:${pos} ${ref}&gt;${alt}</i></div><br class="only-large-screen"/>`
+            const normalizedVariantDiv = variant.match(VARIANT_RE) && variant.toUpperCase().indexOf(normalizedVariant.toUpperCase()) >= 0 ? "" :
+                `<br class="only-large-screen"/><div style="margin-left:5px;margin-right:10px; display: inline-block; color:#333333"><i>⇒ ${chrom}:${pos} ${ref}&gt;${alt}</i></div><br class="only-large-screen"/>`
 
             $(`#${tool.toLowerCase()}-header`).nextAll().remove()
             let row = `<tr class="${resultRowClasses.join(' ')}">
