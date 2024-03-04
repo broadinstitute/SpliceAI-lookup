@@ -25,6 +25,7 @@ RUN git clone https://github.com/bw2/Pangolin.git \
     && cd Pangolin \
 	&& python3 -m pip install .
 
+ARG CONCURRENCY="2"
 ARG GENOME_VERSION="unknown"
 
 COPY docker/ref/GRCh${GENOME_VERSION} /
@@ -34,5 +35,6 @@ COPY server.py /
 ENV PORT=8080
 ENV TOOL=pangolin
 ENV GENOME_VERSION=${GENOME_VERSION}
+ENV CONCURRENCY=${CONCURRENCY}
 
-CMD exec gunicorn --preload --bind :$PORT --workers 2 --threads 1 --timeout 0 server:app
+CMD exec gunicorn --preload --bind :$PORT --workers ${CONCURRENCY} --threads 1 --timeout 0 server:app

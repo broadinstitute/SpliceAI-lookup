@@ -62,9 +62,10 @@ def main():
 		for tool in tools:
 			tag = get_tag(tool, genome_version)
 			service = get_service_name(tool, genome_version)
-
+			concurrency = 4 if genome_version == '37' else 2
+			min_instances = 1 if genome_version == '37' else 2
 			if not args.command or args.command == "build":
-				run(f"docker build -f docker/{tool}/Dockerfile --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag} .")
+				run(f"docker build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag} .")
 				run(f"docker push {tag}")
 				run(f"docker pull {tag} 2>&1 | grep Digest | cut -c 9- > docker/{tool}/sha256.txt")
 
@@ -73,9 +74,9 @@ def main():
 				run(f"""gcloud \
 --project {GCLOUD_PROJECT} beta run deploy {service} \
 --image {tag} \
---min-instances {2 if tool == 'pangolin' else 2} \
+--min-instances {min_instances} \
 --max-instances 8 \
---concurrency 2 \
+--concurrency {concurrency} \
 --execution-environment gen2 \
 --region us-central1 \
 --set-env-vars "DB_PASSWORD={params['SPLICEAI_LOOKUP_DB_PASSWORD']}" \
