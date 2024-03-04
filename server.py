@@ -142,7 +142,7 @@ for genome_version in "37", "38":
     if len(transcript_ids_without_annotations) > 0:
         raise ValueError(f"Missing {len(transcript_ids_without_annotations)} transcripts in {genome_version} annotations: {transcript_ids_without_annotations}")
 
-SPLICEAI_MAX_DISTANCE_LIMIT = 10000
+SPLICEAI_MAX_DISTANCE_LIMIT = 5000
 SPLICEAI_DEFAULT_DISTANCE = 500  # maximum distance between the variant and gained/lost splice site, defaults to 500
 SPLICEAI_DEFAULT_MASK = 0        # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
 
@@ -375,7 +375,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
         return {
             "variant": variant,
             "source": "spliceai",
-            "error": f"ERROR: The SpliceAI model did not return any scores for {variant}. This is typically due to the "
+            "error": f"ERROR: The SpliceAI model did not return any scores for {variant}. This may be due to the "
                      f"variant falling outside of all Gencode exons and introns.",
         }
 

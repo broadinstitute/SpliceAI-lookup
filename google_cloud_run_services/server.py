@@ -3,6 +3,7 @@ from datetime import datetime
 import json
 import os
 import pandas as pd
+import pyfastx
 import psycopg2
 import re
 import traceback
@@ -23,7 +24,7 @@ if not DEBUG:
 
 
 DEFAULT_DISTANCE = 500  # maximum distance between the variant and gained/lost splice site, defaults to 500
-MAX_DISTANCE_LIMIT = 10000
+MAX_DISTANCE_LIMIT = 5000
 DEFAULT_MASK = 0        # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
 
 SPLICEAI_EXAMPLE_URL = f"/spliceai/?hg=38&distance=500&mask=0&variant=chr8-140300615-C-G"
@@ -44,6 +45,9 @@ FASTA_PATH = {
     "37": "/hg19.fa.gz",
     "38": "/hg38.fa.gz",
 }
+
+PYFASTX_REF = {}
+
 
 GENCODE_VERSION = "v44"
 
@@ -100,11 +104,15 @@ else:
     raise ValueError(f'Environment variable "TOOL" should be set to either "spliceai" or "pangolin" instead of: "{os.environ.get("TOOL")}"')
 
 
+def init_reference(genome_version):
+    if genome_version not in PYFASTX_REF:
+        PYFASTX_REF[genome_version] = pyfastx.Fasta(FASTA_PATH[genome_version])
+
 
 def init_spliceai(genome_version):
+    
     if genome_version not in SPLICEAI_ANNOTATOR:
         SPLICEAI_ANNOTATOR[genome_version] = Annotator(FASTA_PATH[genome_version], SPLICEAI_ANNOTATION_PATHS[genome_version])
-
 
 def init_pangolin(genome_version):
 
@@ -230,6 +238,28 @@ def add_splicing_scores_to_cache(tool_name, variant, genome_version, distance, m
         print(f"Cache error: {e}", flush=True)
 
 
+def check_reference_allele(genome_version, chrom, pos, ref, alt):
+    # check that variant matches the reference allele
+    if genome_version not in PYFASTX_REF:
+        raise ValueError(f"Invalid genome_version: {genome_version}")
+
+    chrom = chrom.replace("chr", "")
+    if genome_version != "37":
+        chrom = "chr" + chrom
+
+    try:
+        ref_sequence = PYFASTX_REF[genome_version][chrom][pos-1:pos+len(ref)-1].seq
+        if ref_sequence.upper() != ref.upper():
+            return {
+                "variant": f"{chrom}-{pos}-{ref}-{alt}",
+                "source": "spliceai",
+                "error": f"Unexpected reference allele in {chrom}-{pos}-{ref}-{alt}. The reference allele should be: {ref_sequence}",
+            }
+    except Exception as e:
+        print(f"ERROR while checking the reference allele for {variant}: {e}")
+
+    return None
+
 def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
     try:
         chrom, pos, ref, alt = parse_variant(variant)
@@ -239,6 +269,10 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
             "source": "spliceai",
             "error": f"ERROR: {e}",
         }
+
+    error_resonse = check_reference_allele(genome_version, chrom, pos, ref, alt)
+    if error_resonse:
+        return error_resonse
 
     # generate error message if variant falls outside annotated exons or introns
     OTHER_GENOME_VERSION = {"37": "38", "38": "37"}
@@ -269,8 +303,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
         return {
             "variant": variant,
             "source": "spliceai",
-            "error": f"ERROR: The SpliceAI model did not return any scores for {variant}. This is typically due to the "
-                     f"variant falling outside of all Gencode exons and introns.",
+            "error": f"ERROR: The SpliceAI model did not return any scores for {variant}",
         }
 
     #scores = [s[s.index("|")+1:] for s in scores]  # drop allele field
@@ -339,6 +372,10 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param):
             "source": "pangolin",
             "error": f"ERROR: {e}",
         }
+
+    error_resonse = check_reference_allele(genome_version, chrom, pos, ref, alt)
+    if error_resonse:
+        return error_resonse
 
     if len(ref) > 1 and len(alt) > 1:
         return {
@@ -480,6 +517,7 @@ def run_splice_prediction_tool(tool_name):
     print(f"{logging_prefix}: {variant} processing with hg={genome_version}, "
           f"distance={distance_param}, mask={mask_param}", flush=True)
 
+    
     if tool_name == "spliceai":
         init_spliceai(genome_version)
         example_url = SPLICEAI_EXAMPLE_URL
@@ -489,6 +527,7 @@ def run_splice_prediction_tool(tool_name):
     else:
         raise ValueError(f"Invalid tool_name: {tool_name}")
 
+    init_reference(genome_version)
     init_transcript_annotations(genome_version)
     init_database_connection()
 
@@ -578,13 +617,14 @@ def log_event(name):
         details = str(details)
         details = details[:2000]
 
-    logging_prefix = datetime.now().strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
+    user_ip = get_user_ip(request)
+    logging_prefix = datetime.now().strftime("%m/%d/%Y %H:%M:%S") + f" {user_ip} t{os.getpid()}"
     print(f"{logging_prefix}: ======================", flush=True)
     print(f"{logging_prefix}: {variant} show igv with hg={genome_version}, "
           f"distance={distance_param}, mask={mask_param}", flush=True)
 
     log(name,
-        ip=get_user_ip(request),
+        ip=user_ip,
         variant=variant,
         genome=genome_version,
         distance=distance_param,

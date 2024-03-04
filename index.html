@@ -152,22 +152,25 @@
                                 <a id="more-details1-button" href="#" style="float:right; padding-right:7px" onclick="$('#more-details1').show();$('#more-details1-button').hide();">[more details]</a>
                                 <div id="more-details1" style="display:none">
                                     <br />
-                                    This website is developed and maintained by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.<br />
-                                    When the user enters a variant, the website runs SpliceAI and Pangolin models on this variant and then displays the scores.<br />
+                                    This web service is maintained by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.
+                                    It runs the SpliceAI and Pangolin splicing prediction models on the user-specified variant and then shows the scores in a table and in a web-based IGV visualization.<br />
                                     <br />
                                     For more information about SpliceAI, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a>
-                                    and this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.
-                                    For more information about Pangolin, see [<a href="https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4" target="_blank">Zeng & Li 2022</a>].<br />
+                                    and this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.<br />
+                                    For more information about Pangolin, see <a href="https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4" target="_blank">Zeng & Li 2022</a>.<br />
                                     <br />
-                                    The server runs modified versions of SpliceAI and Pangolin which support multi-nucleotide variants (MNVs), provide access to
+
+                                    Under the hood, this service runs modified versions of SpliceAI and Pangolin which have added support for multi-nucleotide variants (MNVs), provide access to
                                     raw scores in addition to delta scores, and have other customizations:<br />
                                     <a href="https://github.com/bw2/SpliceAI">https://github.com/bw2/SpliceAI</a><br />
                                     <a href="https://github.com/bw2/Pangolin">https://github.com/bw2/Pangolin</a><br />
                                     <br />
-                                    The <a href="https://github.com/igvteam/igv.js">IGV.js</a> visualizations for SpliceAI and Pangolin results are implemented as custom tracks at: <br />
+                                    It does not use precomputed score tables. <br />
+                                    <br />
+                                    The visualizations of SpliceAI and Pangolin results are implemented as custom <a href="https://github.com/igvteam/igv.js">IGV.js</a> tracks at: <br />
                                     <a href="https://github.com/bw2/igv.js/pull/1">https://github.com/bw2/igv.js</a><br />
                                     <br />
-                                    NOTE: This server supports no more than a handful of queries per-user per-minute. If you need to batch-process many variants, please use the
+                                    <b>NOTE:</b> This service supports no more than a handful of queries per-user per-minute. If you need to batch-process many variants, please use the
                                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
                                     to set up your own local instance of the API server or just run the SpliceAI and Pangolin models directly.<br />
                                     <br />
@@ -229,7 +232,7 @@
                                                 <input id="max-distance-input" type="text" value="500" style="padding:7px 10px">
                                             </div>
                                             <i class="question circle outline icon" data-position="right center"
-                                               data-content="For each variant, SpliceAI looks within a window (+/- 500bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distance specified here controls the size of this window. The maximum allowed value is 10,000bp."></i>
+                                               data-content="For each variant, SpliceAI looks within a window (+/- 500bp by default) to see how the variant affects the probabilities of different positions being splice acceptors or donors. The distance specified here controls the size of this window. The maximum allowed value is 5,000bp."></i>
 
                                             <div class="ui checkbox form-checkbox"><input type="checkbox" name="mask"><label>masked scores</label></div>
                                             <i style="margin-left:10px" class="question circle outline icon" data-position="right center"

@@ -13,3 +13,4 @@ pangolin @ git+https://github.com/bw2/Pangolin     # if the latest version isn't
 
 # sql
 psycopg2
+

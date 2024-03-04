@@ -7,3 +7,4 @@ BioPython
 
 # sql
 psycopg2
+pyfastx

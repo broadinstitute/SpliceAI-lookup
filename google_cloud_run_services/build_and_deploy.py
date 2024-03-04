@@ -73,8 +73,9 @@ def main():
 				run(f"""gcloud \
 --project {GCLOUD_PROJECT} beta run deploy {service} \
 --image {tag} \
+--min-instances {2 if tool == 'pangolin' else 2} \
 --max-instances 8 \
---concurrency 3 \
+--concurrency 2 \
 --execution-environment gen2 \
 --region us-central1 \
 --set-env-vars "DB_PASSWORD={params['SPLICEAI_LOOKUP_DB_PASSWORD']}" \
