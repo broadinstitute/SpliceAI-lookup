@@ -24,7 +24,7 @@ if not DEBUG:
 
 
 DEFAULT_DISTANCE = 500  # maximum distance between the variant and gained/lost splice site, defaults to 500
-MAX_DISTANCE_LIMIT = 5000
+MAX_DISTANCE_LIMIT = 10000
 DEFAULT_MASK = 0        # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
 
 SPLICEAI_EXAMPLE_URL = f"/spliceai/?hg=38&distance=500&mask=0&variant=chr8-140300615-C-G"
