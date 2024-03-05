@@ -62,7 +62,7 @@ def main():
 		for tool in tools:
 			tag = get_tag(tool, genome_version)
 			service = get_service_name(tool, genome_version)
-			concurrency = 4 if genome_version == '37' else 2
+			concurrency = 2 # if genome_version == '37' else 2
 			min_instances = 2 # if genome_version == '37' else 2
 			if not args.command or args.command == "build":
 				run(f"docker build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag} .")
@@ -82,7 +82,7 @@ def main():
 --set-env-vars "DB_PASSWORD={params['SPLICEAI_LOOKUP_DB_PASSWORD']}" \
 --add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
 --allow-unauthenticated \
---memory 16Gi \
+--memory 8Gi \
 --cpu 4
 """)
 
