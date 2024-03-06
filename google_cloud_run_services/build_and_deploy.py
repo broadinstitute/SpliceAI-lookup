@@ -11,7 +11,7 @@ def get_service_name(tool, genome_version):
 	return f"{tool}-{genome_version}"
 
 def get_tag(tool, genome_version):
-	return f"us-central1-docker.pkg.dev/spliceai-lookup-412920/docker/{get_service_name(tool, genome_version)}:latest"
+	return f"us-central1-docker.pkg.dev/spliceai-lookup-412920/docker/{get_service_name(tool, genome_version)}"
 
 def run(c):
 	logging.info(c)
@@ -39,9 +39,9 @@ def main():
 
 		if args.command == "run":
 			print("Run this command: ")
-			print(f"docker run -it {tag} # /bin/bash")
+			print(f"docker run -it {tag}:latest # /bin/bash")
 		elif args.command == "test":
-			run(f"docker run -p 8080:8080 {tag}")
+			run(f"docker run -p 8080:8080 {tag}:latest")
 
 		return
 
@@ -62,21 +62,25 @@ def main():
 		for tool in tools:
 			tag = get_tag(tool, genome_version)
 			service = get_service_name(tool, genome_version)
-			concurrency = 2 # if genome_version == '37' else 2
-			min_instances = 2 # if genome_version == '37' else 2
+			concurrency = 2    # if genome_version == '37' else 2
+			min_instances = 1  # if tool == 'pangolin' else 2
+			max_instances = 4
 			if not args.command or args.command == "build":
-				run(f"docker build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag} .")
-				run(f"docker push {tag}")
-				run(f"docker pull {tag} 2>&1 | grep Digest | cut -c 9- > docker/{tool}/sha256.txt")
+				run(f"docker build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest .")
+				run(f"docker push {tag}:latest")
+				run(f"docker pull {tag}:latest 2>&1 | grep Digest | cut -c 9- > docker/{tool}/sha256.txt")
 
 			if not args.command or args.command == "deploy":
-				#f"gcloud --project $(GCLOUD_PROJECT) beta run deploy {service} --image {tag} --concurrency 5 --execution-environment gen2 --region us-central1 --set-env-vars \"DB_PASSWORD=${SPLICEAI_LOOKUP_DB_PASSWORD}\" --add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true --add-volume-mount=volume=ref,mount-path=/ref --allow-unauthenticated --memory 8Gi --cpu 4"
+				with open(f"docker/{tool}/sha256.txt") as f:
+					sha256 = f.read().strip()
+
 				run(f"""gcloud \
 --project {GCLOUD_PROJECT} beta run deploy {service} \
---image {tag} \
+--image {tag}@{sha256} \
 --min-instances {min_instances} \
---max-instances 8 \
+--max-instances {max_instances} \
 --concurrency {concurrency} \
+--service-account 1042618492363-compute@developer.gserviceaccount.com \
 --execution-environment gen2 \
 --region us-central1 \
 --set-env-vars "DB_PASSWORD={params['SPLICEAI_LOOKUP_DB_PASSWORD']}" \
