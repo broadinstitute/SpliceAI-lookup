@@ -174,7 +174,7 @@ def init_database_connection():
         return
 
     def does_table_exist(table_name):
-        results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename = '{table_name}');")
+        results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename=%s)", (table_name,))
         does_table_already_exist = results[0][0]
         return does_table_already_exist
 
@@ -213,7 +213,7 @@ def get_splicing_scores_from_cache(tool_name, variant, genome_version, distance,
     key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask)
     results = None
     try:
-        rows = run_sql(f"SELECT value FROM cache WHERE key = '{key}'")
+        rows = run_sql(f"SELECT value FROM cache WHERE key=%s", (key,))
         if rows:
             results = json.loads(rows[0][0])
             results["source"] += ":cache"
