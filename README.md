@@ -1,6 +1,6 @@
 This repo contains: 
-- client-side code entirely contained within [index.html](index.html) (hosted via GitHub Pages)
-- server-side code in the [google_cloud_run_services/](google_cloud_run_services/) subdirectory (hosted on Google Cloud Run)
+- client-side code for [spliceai-lookup.broadinstitute.org](https://spliceailookup.broadinstitute.org/) in the [index.html](index.html) file (hosted via GitHub Pages)
+- server-side code for SpliceAI and Pangolin REST APIs in the [google_cloud_run_services/](google_cloud_run_services/) subdirectory (hosted on Google Cloud Run)
 
 ---
 #### API Examples:
