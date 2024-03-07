@@ -1,13 +1,6 @@
-
-#### SpliceAI Lookup API
-
-This API serves as the backend for [spliceailookup.broadinstitute.org](http://spliceailookup.broadinstitute.org).
-
-The source code for the server and web UI is available @ [github.com/broadinstitute/SpliceAI-lookup](https://github.com/broadinstitute/SpliceAI-lookup) and is maintained by the [TGG](https://the-tgg.org/).   
-
-For more details on **SpliceAI**, see [Jaganathan et al, Cell 2019 in press.](https://doi.org/10.1016/j.cell.2018.12.015) and [github.com/Illumina/SpliceAI](https://github.com/Illumina/SpliceAI).
-
-As of February, 2023, this server also computes [Pangolin](https://github.com/tkzeng/Pangolin) scores.
+This repo contains: 
+- client-side code entirely contained within [index.html](index.html) (hosted via GitHub Pages)
+- server-side code in the [google_cloud_run_services/](google_cloud_run_services/) subdirectory (hosted on Google Cloud Run)
 
 ---
 #### API Examples:
