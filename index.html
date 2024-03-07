@@ -479,7 +479,10 @@
                             </td>
                         </tr>
                     </table>
-                    <div id="igv-div" style="width:100%; padding-top:25px; display: none"></div>
+                    <div id="igv-div" style="width:100%; padding-top:5px; display: none">
+                        <div style="padding:20px 0px; font-size:110%">To see <b>more details</b> and <b>legends</b> for each track, click on the rectangle that contains the track name.</div>
+                        <div id="igv-viewport" style="width:100%; height:500px"></div>
+                    </div>
                 </div>
                 <div id="error-box" style="color:darkred; padding:10px 0px; font-size:medium"></div>
             </div>
@@ -682,6 +685,25 @@
     }
     */
 
+    const generateWarningAboutInsertions = (label, score, position, ref, alt) => {
+        //warn about insertion variants that are predicted to cause a donor or acceptor gain somewhere within the inserted sequence.
+        if (score >= 0.2 && position == 0 && ref.length < alt.length && alt.length > 2 && label.toLowerCase().indexOf("gain") >= 0) {
+            let warning = (
+                `<b>WARNING:</b> This delta score suggests that the insertion variant may cause ${label.toLowerCase()} ` +
+                `directly within the inserted sequence. However, the exact location and biological consequence of the predicted splicing ` +
+                `change may be challenging to interpret. The reason ` +
+                `is that the model assigns delta scores to genomic reference coordinates, and so has to discard information about ` +
+                `which of the inserted base(s) within the ALT haplotype are responsible for the high delta score. For an example of ` +
+                `how this can lead to problems with interpretation, see ` +
+                `<a href='https://github.com/broadinstitute/SpliceAI-lookup/issues/69'>issue #69</a>. The criteria for showing this warning are ` +
+                `that 1) the variant is an insertion of at least 3bp and 2) its delta score is ≥ 0.2 and has a relative position of 0bp. `
+            )
+
+            return `<i style="margin-left:10px; color:red" class="exclamation triangle icon" data-position="right center" data-content="${warning}"></i>`
+        } else {
+            return ""
+        }
+    }
 
     const generateResultsTable = async (normalizedVariant, tool, variant, genomeVersion, maxDistance, mask, showRefAltScoreColumns) => {
         /* Generate the results table to show either the SpliceAI or Pangolin scores */
@@ -798,7 +820,10 @@
                     row += `</tr><tr class="${resultRowClasses.join(' ')}">`
                 }
                 row += `<td>${label}</td>
-                        <td ${getScoreStyle(scores[DS])}>${formatScore(scores[DS])}</td>
+                        <td ${getScoreStyle(scores[DS])}>
+                            ${formatScore(scores[DS])}
+                            ${generateWarningAboutInsertions(label, scores[DS], scores[DP], ref, alt)}
+                         </td>
                         <td>${
                             (
                                 parseFloat(scores[DS]) == 0 &&
@@ -976,7 +1001,7 @@
 
         if (tracksToShow["igv-variant"]) {
             tracks.push({
-                name: "Variant (?) ",
+                name: "Variant",
                 type: "vcf",
                 description: `This track shows the location of the <b>${chrom}:${variantPos} ${variantRef}>${variantAlt}</b> variant`,
                 height: 30,
@@ -1000,7 +1025,7 @@
         if (spliceaiResponseJson) {
             if (tracksToShow["igv-spliceai-ref-alt"]) {
                 tracks.push({
-                    name: `SpliceAI (?)`,
+                    name: `SpliceAI REF/ALT`,
                     description: `This track shows SpliceAI scores for the
                                     <span style="color:#0000B4"><b>reference sequence</b></span> (without the variant) and the
                                     <span style="color:#05d0d2"><b>alternate sequence</b></span> (with the variant). <br />
@@ -1019,7 +1044,7 @@
             }
             if (tracksToShow["igv-spliceai-delta-scores"]) {
                 tracks.push({
-                    name: `SpliceAI (?)`,
+                    name: `SpliceAI Δ`,
                     description: `This track shows <b>A</b> (acceptor) and <b>D</b> (donor) symbols at positions where SpliceAI predicts a delta score ≥ 0.01. <br/>
                                   Vertical lines are <b style="color:#FF0000">red</b> for delta scores ≥ 0.8,
                                   <b style="color:#FFCB1F">yellow</b> for delta scores ≥ 0.5, and
@@ -1041,7 +1066,7 @@
             if (tracksToShow["igv-pangolin-delta-scores"]) {
 
                 tracks.push({
-                    name: `Pangolin (?)`,
+                    name: `Pangolin Δ`,
                     description: `This track shows a <b>P</b> at positions where Pangolin predicts a delta score ≥ 0.01. <br/>
                                   Vertical lines are <b style="color:#FF0000">red</b> for delta scores ≥ 0.8,
                                   <b style="color:#FFCB1F">yellow</b> for delta scores ≥ 0.5, and
@@ -1084,7 +1109,7 @@
                     if (tracksToShow[`igv-spliceai-precomputed-${splicePredictionType}-${minScore}`]) {
                         tracks.push(
                             {
-                                name: `SpliceAI: A or D ${splicePredictionType} ≥ ${minScore} (?)`,
+                                name: `SpliceAI: A or D ${splicePredictionType} ≥ ${minScore}`,
                                 description: `This track visualizes Illumina's precomputed SpliceAI score tables for SNVs and small INDELs.<br/>
                                      Each genomic location of an SNV or INDEL variant with a SpliceAI &#916; score ≥ ${minScore} is shown as the origin of an arrow.<br />
                                      The arrow points to the location where that variant would likely cause acceptor or donor ${splicePredictionType}.
@@ -1115,7 +1140,7 @@
 
                     const filenameSuffix = normalized ? ".normalized" : ""
                     tracks.push({
-                        name: `GTEx ${tissue}: ${normalized ? 'per-sample average:' : `summed over all ${sampleCount} samples`} (?)`,
+                        name: `GTEx ${tissue}: ${normalized ? 'per-sample average' : `summed over all ${sampleCount} samples`}`,
                         description: `This track shows the combined splice junctions from all ${sampleCount} ${tissue} samples available in GTEx v8.
                                       Splice junctions are labeled with the total number of RNA-seq reads that supported the junction, summed across the ${sampleCount} samples${normalized ? ' and divided by ' + sampleCount : ''}.
                                       The coverage track shows the total number of RNA-seq reads that overlap each position, summed across all samples${normalized ? ' and divided by ' + sampleCount : ''}.`,
@@ -1140,7 +1165,7 @@
 
             if (tracksToShow["igv-100-mer-mappability"]) {
                 tracks.push({
-                    name: "100-mer mappability (?)",
+                    name: "100-mer mappability",
                     description: "100bp k-mer mappability track from UCSC. Lower values indicate regions that are not unique",
                     type: "wig",
                     format: "bigwig",
@@ -1151,7 +1176,7 @@
 
             if (tracksToShow["igv-segdups"]) {
                 tracks.push({
-                    name: "SegDups (?)",
+                    name: "SegDups",
                     description: "Segmental duplications track from UCSC",
                     format: "gtf",
                     url: "gs://tgg-viewer/ref/GRCh38/segdups/segdups.gtf.gz",
@@ -1198,7 +1223,7 @@
             const igvConfig = generateIgvConfig(spliceaiResponseJson, pangolinResponseJson, genomeVersion)
             if (!window.igvBrowser) {
                 // create igv.js browser object if it hasn't been created yet
-                window.igvBrowser = await igv.createBrowser(document.getElementById("igv-div"), igvConfig)
+                window.igvBrowser = await igv.createBrowser(document.getElementById("igv-viewport"), igvConfig)
             } else {
                 console.log("Updating igv config to", igvConfig)
                 await window.igvBrowser.loadSessionObject(igvConfig)
@@ -1236,6 +1261,8 @@
                 generateResultsTable(normalizedVariant, "Pangolin", variant, genomeVersion, maxDistance, mask, showRefAltColumns),
                 //generateVariantAnnotationTable(normalizedVariant, genomeVersion),
             ].map(p => p.catch(e => ({'error': e.message}))))  // if an error is thrown, return {'error': e} instead of the JSON response
+
+            $(".exclamation").popup({hoverable: true, html: $(".exclamation").attr("data-content")})
 
             if (spliceaiResponseJson.error) {
                 showError(`SpliceAI API error: ${spliceaiResponseJson.error}`)
@@ -1334,8 +1361,8 @@
 
     $(document).ready(() => {
         // init UI elements
-        $('.ui.checkbox').checkbox()
-        $('.question').popup()
+        $(".ui.checkbox").checkbox()
+        $(".question").popup()
         $("#search-box").focus()
         $("#response-box").hide()
 
@@ -1353,7 +1380,7 @@
             $("#igv-div").show()
             await updateIgvBrowser(lastSpliceaiResponseJson, lastPangolinResponseJson, lastGenomeVersion)
         })
-        
+
         updateVisualizationCheckboxes(true, "38")
 
         applyUrlSettingsToFormElements()
