@@ -62,7 +62,7 @@ def main():
 		for tool in tools:
 			tag = get_tag(tool, genome_version)
 			service = get_service_name(tool, genome_version)
-			concurrency = 2    # if genome_version == '37' else 2
+			concurrency = 3    # if genome_version == '37' else 2
 			min_instances = 1  # if tool == 'pangolin' else 2
 			max_instances = 4
 			if not args.command or args.command == "build":
