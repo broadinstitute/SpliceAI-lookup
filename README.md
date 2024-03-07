@@ -38,7 +38,7 @@ to the [issue tracker](https://github.com/broadinstitute/SpliceAI-lookup/issues)
 1. Install the modified versions of SpliceAI and Pangolin from [https://github.com/bw2/SpliceAI](https://github.com/bw2/SpliceAI) and [https://github.com/bw2/Pangolin](https://github.com/bw2/Pangolin)
 1. Install and start a [redis](https://redis.io/) server. It's used to cache previously computed API server responses so that they don't have to be computed again.
 1. Download reference fasta files: [hg19.fa](https://storage.cloud.google.com/gcp-public-data--broad-references/hg19/v0/Homo_sapiens_assembly19.fasta) and [hg38.fa](https://storage.cloud.google.com/gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta)
-1. Download [annotation files](https://spliceailookup-api.broadinstitute.org/annotations) into your local ./annotations directory, or generate them yourself using the steps in the [annotations README](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/annotations/README.md).
+1. Generate annotation files using the steps in the [annotations README](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/annotations/README.md).
 1. Start a SpliceAI API server on localhost port 8080. To modify server options, edit the `start_local_server.sh` script:
 
 ```
