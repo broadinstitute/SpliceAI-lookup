@@ -4,5 +4,5 @@ To generate or update the transcript annotation files needed for running SpliceA
 2. Update the Gencode version string at the top of these bash scripts, and then run them:
     - [update_json_annotation_files.sh](update_json_annotation_files.sh)
     - [update_SpliceAI_annotation_txt_files.sh](update_SpliceAI_annotation_txt_files.sh)
-    - [update_Pangolin_db_files.sh](update_Pangolin_db_files.sh)
+    - [update_pangolin_db_files.sh](update_pangolin_db_files.sh)
 3. Update the GENCODE_VERSION string in [../server.py](../server.py)
