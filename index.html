@@ -265,17 +265,17 @@
                         <a href="https://tgg-viewer.broadinstitute.org" target="_blank">TGG Viewer</a>: igv.js-based web viewer for public reference tracks and, optionally, private data in Google Storage buckets<br/>
                     </div>
                     <br/>
-                    <b>March 3, 2023</b><br/>
+                    <b>March 7, 2023</b><br/>
+		    - added warning for insertion variants with delta scores ≥ 0.2 and position = 0bp saying that they may be difficult to interpret due to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/69">issue #67</a>. Thanks to @SophieCandille for the issue report and example variant: <a href="https://spliceailookup.broadinstitute.org/#variant=NM_000179.3%3Ac.261-3_261-2insAGTTG&hg=38&distance=500&mask=0&ra=1">2:47790924 C>CAGTTG</a><br />
 		    - moved server to Google Cloud Run to better support higher usage<br />
 		    <br />
-                    <b>November 30, 2023</b><br/>
-                    - changed default search settings to "not masked" due to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/59#issuecomment-1815667021">confusion</a> and <a href="https://github.com/Illumina/SpliceAI/issues/27#issuecomment-547089167">issues</a> with how masked scores are computed.<br />
-                    - when looking at hg19 variants, the visualization checkboxes now make it clear which IGV.js tracks are or aren't available on hg19.<br/>
-                    <br/>
-
                     <a id="more-details3-button" href="#"
                        onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
                     <div id="more-details3" style="display:none">
+                        <b>November 30, 2023</b><br/>
+                        - changed default search settings to "not masked" due to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/59#issuecomment-1815667021">confusion</a> and <a href="https://github.com/Illumina/SpliceAI/issues/27#issuecomment-547089167">issues</a> with how masked scores are computed. <br />
+                        - when looking at hg19 variants, the visualization checkboxes now make it clear which IGV.js tracks are or aren't available on hg19.<br/>
+                        <br/>
                         <b>October 5, 2023</b><br/>
                         - fixed Pangolin bug identified by <a href="https://github.com/invitae/pangolin/pull/5">@kazmiekr</a> where variants that overlap more than one gene showed incorrect masked scores<br />
                         - <a href="https://github.com/pj-sullivan">@pj-sullivan</a> added controls to show/hide transcripts<br/>
@@ -480,7 +480,7 @@
                         </tr>
                     </table>
                     <div id="igv-div" style="width:100%; padding-top:5px; display: none">
-                        <div style="padding:20px 0px; font-size:110%">To see <b>more details</b> and <b>legends</b> for each track, click on the rectangle that contains the track name.</div>
+                        <div style="padding:20px 0px; font-size:110%">To see <b>documentation</b> or <b>legends</b> for each track, click on the rectangle that contains the track name.</div>
                         <div id="igv-viewport" style="width:100%; height:500px"></div>
                     </div>
                 </div>
