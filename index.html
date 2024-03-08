@@ -687,7 +687,7 @@
 
     const generateWarningAboutInsertions = (label, score, position, ref, alt) => {
         //warn about insertion variants that are predicted to cause a donor or acceptor gain somewhere within the inserted sequence.
-        if (score >= 0.2 && position == 0 && ref.length < alt.length && alt.length > 2 && label.toLowerCase().indexOf("gain") >= 0) {
+        if (score >= 0.2 && position == 0 && (alt.length - ref.length) >= 2 && label.toLowerCase().indexOf("gain") >= 0) {
             let warning = (
                 `<b>WARNING:</b> This delta score suggests that the insertion variant may cause ${label.toLowerCase()} ` +
                 `directly within the inserted sequence. However, the exact location and biological consequence of the predicted splicing ` +
@@ -696,7 +696,7 @@
                 `which of the inserted base(s) within the ALT haplotype are responsible for the high delta score. For an example of ` +
                 `how this can lead to problems with interpretation, see ` +
                 `<a href='https://github.com/broadinstitute/SpliceAI-lookup/issues/69'>issue #69</a>. The criteria for showing this warning are ` +
-                `that 1) the variant is an insertion of at least 3bp and 2) its delta score is ≥ 0.2 and has a relative position of 0bp. `
+                `that 1) the variant is an insertion of at least 2bp and 2) its delta score is ≥ 0.2 and has a relative position of 0bp. `
             )
 
             return `<i style="margin-left:10px; color:red" class="exclamation triangle icon" data-position="right center" data-content="${warning}"></i>`
