@@ -86,7 +86,7 @@ def main():
 --set-env-vars "DB_PASSWORD={params['SPLICEAI_LOOKUP_DB_PASSWORD']}" \
 --add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
 --allow-unauthenticated \
---memory 8Gi \
+--memory 5Gi \
 --cpu 4
 """)
 
