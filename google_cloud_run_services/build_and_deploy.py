@@ -78,6 +78,7 @@ def main():
 --project {GCLOUD_PROJECT} beta run deploy {service} \
 --image {tag}@{sha256} \
 --min-instances {min_instances} \
+--service-min-instances {min_instances} \
 --max-instances {max_instances} \
 --concurrency {concurrency} \
 --service-account 1042618492363-compute@developer.gserviceaccount.com \
