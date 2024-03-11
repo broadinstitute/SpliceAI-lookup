@@ -5,6 +5,19 @@ This repo contains:
 ---
 #### API Examples:
 
+The SpliceAI and Pangolin APIs are available at the following endpoints:
+
+https://pangolin-37-xwkwwwxdwq-uc.a.run.app - Pangolin on GRCh37<br />
+https://pangolin-38-xwkwwwxdwq-uc.a.run.app - Pangolin on GRCh38 <br />
+https://spliceai-37-xwkwwwxdwq-uc.a.run.app - SpliceAI on GRCh37<br />
+https://spliceai-38-xwkwwwxdwq-uc.a.run.app - SpliceAI on GRCh38<br />
+<br />
+To query the API, select the appropriate base url above, and then use the following end points and arguments.<br>
+
+<b>WARNING:</b> the APIs are intended for interactive use only, and do not support more than several requests per user per minute.
+To process many variants in batch, please install and run the underlying models directly on your local infrastructure.
+Their source code is available @ [https://github.com/bw2/SpliceAI](https://github.com/bw2/SpliceAI) and [https://github.com/bw2/Pangolin](https://github.com/bw2/Pangolin).
+
 *[/spliceai/?hg=38&distance=50&variant=chr8-140300616-T-G](http://spliceailookup-api.broadinstitute.org/spliceai/?hg=38&variant=chr8-140300616-T-G)*
   
 Get SpliceAI scores for the given variant.   
