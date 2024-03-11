@@ -3,22 +3,21 @@ This repo contains:
 - server-side code for SpliceAI and Pangolin REST APIs - contained within the [google_cloud_run_services/](google_cloud_run_services/) subdirectory and hosted on Google Cloud Run. 
 
 ---
-#### API Examples:
 
 The SpliceAI and Pangolin APIs are available at the following endpoints:
 
-https://pangolin-37-xwkwwwxdwq-uc.a.run.app - Pangolin on GRCh37<br />
-https://pangolin-38-xwkwwwxdwq-uc.a.run.app - Pangolin on GRCh38 <br />
-https://spliceai-37-xwkwwwxdwq-uc.a.run.app - SpliceAI on GRCh37<br />
-https://spliceai-38-xwkwwwxdwq-uc.a.run.app - SpliceAI on GRCh38<br />
+https://spliceai-37-xwkwwwxdwq-uc.a.run.app - SpliceAI for variants on GRCh37<br />
+https://spliceai-38-xwkwwwxdwq-uc.a.run.app - SpliceAI for variants on GRCh38<br />
+https://pangolin-37-xwkwwwxdwq-uc.a.run.app - Pangolin for variants on GRCh37<br />
+https://pangolin-38-xwkwwwxdwq-uc.a.run.app - Pangolin for variants on GRCh38 <br />
 <br />
-To query the API, select the appropriate base url above, and then use the following end points and arguments.<br>
-
 <b>WARNING:</b> the APIs are intended for interactive use only, and do not support more than several requests per user per minute.
 To process many variants in batch, please install and run the underlying models directly on your local infrastructure.
-Their source code is available @ [https://github.com/bw2/SpliceAI](https://github.com/bw2/SpliceAI) and [https://github.com/bw2/Pangolin](https://github.com/bw2/Pangolin).
+Their source code is available @ [https://github.com/bw2/SpliceAI](https://github.com/bw2/SpliceAI) and [https://github.com/bw2/Pangolin](https://github.com/bw2/Pangolin). <br />
+<br />
+To query the API, select the appropriate base url above, and then use the following endpoints and arguments:<br>
 
-*[/spliceai/?hg=38&distance=50&variant=chr8-140300616-T-G](http://spliceailookup-api.broadinstitute.org/spliceai/?hg=38&variant=chr8-140300616-T-G)*
+*[/spliceai/?hg=38&distance=50&variant=chr8-140300616-T-G](https://spliceai-38-xwkwwwxdwq-uc.a.run.app/spliceai/?hg=38&variant=chr8-140300616-T-G)*
   
 Get SpliceAI scores for the given variant.   
 
@@ -29,7 +28,7 @@ Get SpliceAI scores for the given variant.
 Splicing changes corresponding to strengthening annotated splice sites and weakening unannotated splice sites are typically much less pathogenic than weakening annotated splice sites and
 strengthening unannotated splice sites. When this parameter is = 1 (masked), the delta scores of such splicing changes are set to 0. SpliceAI developers recommend using raw (0) for alternative splicing analysis and masked (1) for variant interpretation.  
 
-*[/pangolin/?hg=38&distance=50&variant=chr8-140300616-T-G](http://spliceailookup-api.broadinstitute.org/pangolin/?hg=38&variant=chr8-140300616-T-G)*
+*[/pangolin/?hg=38&distance=50&variant=chr8-140300616-T-G](https://pangolin-38-xwkwwwxdwq-uc.a.run.app/pangolin/?hg=38&variant=chr8-140300616-T-G)*
 
 Get Pangolin scores for the given variant.
 
