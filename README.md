@@ -3,7 +3,6 @@ This repo contains:
 - server-side code for SpliceAI and Pangolin REST APIs - contained within the [google_cloud_run_services/](google_cloud_run_services/) subdirectory and hosted on Google Cloud Run. 
 
 ---
-#### API
 
 The SpliceAI and Pangolin APIs are available at the following endpoints:
 
