@@ -4,7 +4,7 @@ This repo contains:
 
 ---
 
-The SpliceAI and Pangolin APIs are available at the following endpoints:
+The SpliceAI and Pangolin APIs are available at the following urls:
 
 https://spliceai-37-xwkwwwxdwq-uc.a.run.app - SpliceAI for variants on GRCh37<br />
 https://spliceai-38-xwkwwwxdwq-uc.a.run.app - SpliceAI for variants on GRCh38<br />
