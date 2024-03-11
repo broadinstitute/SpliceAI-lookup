@@ -80,7 +80,7 @@ def main():
 --service-account 1042618492363-compute@developer.gserviceaccount.com \
 --execution-environment gen2 \
 --region us-central1 \
---update-secrets=DB_PASSWORD=spliceai-lookup-db-password:1 \
+--update-secrets=DB_PASSWORD=spliceai-lookup-db-password:2 \
 --add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
 --allow-unauthenticated \
 --memory 5Gi \

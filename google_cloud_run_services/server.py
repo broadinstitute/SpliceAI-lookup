@@ -3,6 +3,7 @@ from datetime import datetime
 import json
 import os
 import pandas as pd
+from pprint import pprint
 import pyfastx
 import psycopg2
 import re
@@ -161,6 +162,8 @@ def init_database_connection():
     if DATABASE_CONNECTION is not None:
         return  # already initialized
 
+    print("Environment:")
+    pprint(dict(os.environ))
     try:
         DATABASE_CONNECTION = psycopg2.connect(
             host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
