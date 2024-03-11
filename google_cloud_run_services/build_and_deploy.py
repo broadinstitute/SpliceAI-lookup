@@ -1,5 +1,4 @@
 import argparse
-import json
 import logging
 import os
 
@@ -55,9 +54,6 @@ def main():
 	else:
 		tools = ["spliceai", "pangolin"]
 
-	with open("params.json") as f:
-		params = json.load(f)
-
 	for genome_version in genome_versions:
 		for tool in tools:
 			tag = get_tag(tool, genome_version)
@@ -84,7 +80,7 @@ def main():
 --service-account 1042618492363-compute@developer.gserviceaccount.com \
 --execution-environment gen2 \
 --region us-central1 \
---set-env-vars "DB_PASSWORD={params['SPLICEAI_LOOKUP_DB_PASSWORD']}" \
+--update-secrets=DB_PASSWORD=spliceai-lookup-db-password:1 \
 --add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
 --allow-unauthenticated \
 --memory 5Gi \
