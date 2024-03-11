@@ -17,7 +17,7 @@ Their source code is available @ [https://github.com/bw2/SpliceAI](https://githu
 <br />
 To query the API, select the appropriate base url above, and then use the following endpoints and arguments:<br>
 
-*[/spliceai/?hg=38&distance=50&variant=chr8-140300616-T-G](http://spliceailookup-api.broadinstitute.org/spliceai/?hg=38&variant=chr8-140300616-T-G)*
+*[/spliceai/?hg=38&distance=50&variant=chr8-140300616-T-G](https://spliceai-38-xwkwwwxdwq-uc.a.run.app/spliceai/?hg=38&variant=chr8-140300616-T-G)*
   
 Get SpliceAI scores for the given variant.   
 
@@ -28,7 +28,7 @@ Get SpliceAI scores for the given variant.
 Splicing changes corresponding to strengthening annotated splice sites and weakening unannotated splice sites are typically much less pathogenic than weakening annotated splice sites and
 strengthening unannotated splice sites. When this parameter is = 1 (masked), the delta scores of such splicing changes are set to 0. SpliceAI developers recommend using raw (0) for alternative splicing analysis and masked (1) for variant interpretation.  
 
-*[/pangolin/?hg=38&distance=50&variant=chr8-140300616-T-G](http://spliceailookup-api.broadinstitute.org/pangolin/?hg=38&variant=chr8-140300616-T-G)*
+*[/pangolin/?hg=38&distance=50&variant=chr8-140300616-T-G](https://pangolin-38-xwkwwwxdwq-uc.a.run.app/pangolin/?hg=38&variant=chr8-140300616-T-G)*
 
 Get Pangolin scores for the given variant.
 
