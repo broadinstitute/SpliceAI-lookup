@@ -160,7 +160,11 @@ DATABASE_CONNECTION = None
 def init_database_connection():
     global DATABASE_CONNECTION
     if DATABASE_CONNECTION is not None:
-        return  # already initialized
+        try:
+            DATABASE_CONNECTION.isolation_level
+            return  # connection is already initialized
+        except psycopg2.OperationalError as oe:
+            print("WARNING: Connection has closed. Reopenning...")
 
     print("Environment:")
     pprint(dict(os.environ))
@@ -205,13 +209,37 @@ def run_sql(sql_query, *args):
     return results
 
 
+def exceeds_rate_limit(user_ip):
+    """Place holder for implementing rate limits based on user ip address"""
+    if DATABASE_CONNECTION is None:
+        return False
+
+    """
+    SELECT * FROM log WHERE event_name like '%computed' AND duration > 2 AND ip='61.68.128.103' AND logtime >= NOW() - INTERVAL '5 minutes' ;
+    SELECT ip, count(*) FROM log WHERE event_name like '%computed' AND duration > 2 AND logtime >= NOW() - INTERVAL '20 minutes' GROUP BY ip ORDER BY count DESC;
+    """
+    return False
+
+    #rows = run_sql("SELECT COUNT(*) FROM log WHERE event_name like '%computed' AND duration > 2 AND ip=%s AND logtime >= NOW() - INTERVAL '5 minutes'", user_ip)
+    #request_count = int(rows[0][0])
+    #if request_count > 50: return True
+
+    # check rate limit
+    #try:
+    #    rows = run_sql(f"SELECT count(*) FROM log WHERE ip=%s AND logtime > now() - interval '1 second' AND event_name=%s", (ip, request_type))
+    #    if rows and rows[0][0] > 4:
+    #        return f"Rate limit exceeded for {request_type} requests"
+    #except Exception as e:
+    #    print(f"Rate limit error: {e}", flush=True)
+
+
 def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask):
     return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}"
 
 
 def get_splicing_scores_from_cache(tool_name, variant, genome_version, distance, mask):
     if DATABASE_CONNECTION is None:
-        return
+        return None
 
     key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask)
     results = None
@@ -283,24 +311,22 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
     source = None
     scores = []
 
-    # run the SpliceAI model to compute the scores
-    if not scores:
-        record = VariantRecord(chrom, pos, ref, alt)
-        try:
-            scores = get_delta_scores(
-                record,
-                SPLICEAI_ANNOTATOR[genome_version],
-                distance_param,
-                mask_param)
-            source = "spliceai:model"
-        except Exception as e:
-            print(f"ERROR while computing SpliceAI scores for {variant}: {e}")
-            traceback.print_exc()
-            return {
-                "variant": variant,
-                "source": "spliceai",
-                "error": f"ERROR: {type(e)}: {e}",
-            }
+    record = VariantRecord(chrom, pos, ref, alt)
+    try:
+        scores = get_delta_scores(
+            record,
+            SPLICEAI_ANNOTATOR[genome_version],
+            distance_param,
+            mask_param)
+        source = "spliceai:model"
+    except Exception as e:
+        print(f"ERROR while computing SpliceAI scores for {variant}: {e}")
+        traceback.print_exc()
+        return {
+            "variant": variant,
+            "source": "spliceai",
+            "error": f"ERROR: {type(e)}: {e}",
+        }
 
     if not scores:
         return {
@@ -534,12 +560,19 @@ def run_splice_prediction_tool(tool_name):
     init_transcript_annotations(genome_version)
     init_database_connection()
 
+    user_ip = get_user_ip(request)
+
     # check cache before processing the variant
     results = get_splicing_scores_from_cache(tool_name, variant, genome_version, distance_param, mask_param)
     duration = (datetime.now() - start_time).total_seconds()
     if results:
-        log(f"{tool_name}:from-cache", ip=get_user_ip(request), variant=variant, genome=genome_version, distance=distance_param, mask=mask_param)
+        log(f"{tool_name}:from-cache", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param)
     else:
+        error_message = exceeds_rate_limit(user_ip)
+        if error_message:
+            print(f"{logging_prefix}: {user_ip}: response: {error_message}", flush=True)
+            return error_response(error_message, source=tool_name)
+
         try:
             if tool_name == "spliceai":
                 results = get_spliceai_scores(variant, genome_version, distance_param, int(mask_param))
@@ -553,13 +586,13 @@ def run_splice_prediction_tool(tool_name):
             return error_response(f"ERROR: {e}", source=tool_name)
 
         duration = (datetime.now() - start_time).total_seconds()
-        log(f"{tool_name}:computed", ip=get_user_ip(request), duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param)
+        log(f"{tool_name}:computed", ip=user_ip, duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param)
 
         if "error" not in results:
             add_splicing_scores_to_cache(tool_name, variant, genome_version, distance_param, mask_param, results)
 
     if "error" in results:
-        log(f"{tool_name}:error", ip=get_user_ip(request), variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"])
+        log(f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"])
 
     response_json = {}
     response_json.update(params)  # copy input params to output
