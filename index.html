@@ -582,13 +582,13 @@
 
             let ensemblApiResponse
             try {
-                ensemblApiResponse = await fetch(ensemblApiUrl)
+                ensemblApiResponse = await makeRequest(ensemblApiUrl)
             } catch (e) {
                 console.error(e)
                 throw Error(`Ensembl API call failed: Unable to reach server`)
             }
 
-            const ensemblApiResponseJson = await ensemblApiResponse.json()
+            const ensemblApiResponseJson = await ensemblApiResponse
             console.log(`Ensembl API response:`, ensemblApiResponseJson)
 
             if (!ensemblApiResponse.ok || ensemblApiResponseJson.error) {
@@ -627,14 +627,14 @@
             return `${chrom}-${pos}-${ref}-${alt}`
         }
 
-	return `${chrom}-${pos}-${ref}-${alt}`
+        return `${chrom}-${pos}-${ref}-${alt}`
 
 	
         // left-align the indel
         let leftAlignApiResponse
         try {
-            leftAlignApiResponse = await fetch(`${baseApiUrl['normalize']}/normalize/?g=hg${genomeVersion}&chrom=${chrom}&pos=${pos}&ref=${ref}&alt=${alt}`)
-            const leftAlignApiResponseJson = await leftAlignApiResponse.json()
+            leftAlignApiResponse = await makeRequest(`${baseApiUrl['normalize']}/normalize/?g=hg${genomeVersion}&chrom=${chrom}&pos=${pos}&ref=${ref}&alt=${alt}`)
+            const leftAlignApiResponseJson = await leftAlignApiResponse
             console.log(`Left-align API response:`, leftAlignApiResponseJson)
             if (!leftAlignApiResponse.ok || leftAlignApiResponseJson.error) {
                 console.log(`${leftAlignApiResponseJson.error}`)
@@ -674,7 +674,7 @@
 
         let myVariantApiResponse
         try {
-            myVariantApiResponse = await fetch(myVariantApiUrl)
+            myVariantApiResponse = await makeRequest(myVariantApiUrl)
         } catch(e) {
             console.error(e)
             throw Error(`MyVariant API call failed: ${e}`)
@@ -686,6 +686,30 @@
         return myVariantApiResponseJson
     }
     */
+
+    const makeRequest = (url) => {
+        const method = "GET"
+        return new Promise(async (resolve, reject) => {
+            const xhr = new XMLHttpRequest()
+            xhr.open(method, url)
+            xhr.addEventListener("load", () => {
+                console.log("GET", url, xhr.status, xhr.statusText)
+                console.log("Response:" , JSON.parse(xhr.response))
+                const response = JSON.parse(xhr.response)
+                response.ok = xhr.status >= 200 && xhr.status < 300
+                resolve(response)
+            })
+            xhr.addEventListener("error", () => {
+                if (xhr.status == 0) {
+                    reject("Unable to reach server")
+                } else {
+                    reject(`${xhr.status}  ${xhr.statusText}`)
+                }
+            })
+            //console.log('Sending request', method, url)
+            xhr.send()
+        })
+    }
 
     const generateWarningAboutInsertions = (label, score, position, ref, alt) => {
         //warn about insertion variants that are predicted to cause a donor or acceptor gain somewhere within the inserted sequence.
@@ -721,12 +745,12 @@
 
         let apiResponse
         try {
-            apiResponse = await fetch(`${baseUrl}/${tool.toLowerCase()}/?${urlArgs}`)
+            apiResponse = await makeRequest(`${baseUrl}/${tool.toLowerCase()}/?${urlArgs}`)
         } catch(e) {
-            throw Error(`${tool} API call failed: Unable to reach server`)
+            throw Error(`${tool} API call failed: ${e}`)
         }
 
-        const apiResponseJson = await apiResponse.json()
+        const apiResponseJson = await apiResponse
         console.log(`${tool} API response:`, apiResponseJson)
 
         if (!apiResponse.ok || apiResponseJson.error) {
@@ -970,7 +994,7 @@
         const tracksToShow = updateVisualizationCheckboxes(false, genomeVersion)
 
         // log event
-        fetch(`${baseApiUrl['pangolin-37']}/log/show_igv?details=${encodeURIComponent(JSON.stringify(tracksToShow))}&hg=${genomeVersion}&distance=${apiResponseJson.distance}&mask=${apiResponseJson.mask}&variant=${apiResponseJson.variant}`)
+        makeRequest(`${baseApiUrl['pangolin-37']}/log/show_igv?details=${encodeURIComponent(JSON.stringify(tracksToShow))}&hg=${genomeVersion}&distance=${apiResponseJson.distance}&mask=${apiResponseJson.mask}&variant=${apiResponseJson.variant}`)
 
         let minPos = 1e9
         let maxPos = 0
