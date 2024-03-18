@@ -694,8 +694,16 @@
             xhr.open(method, url)
             xhr.addEventListener("load", () => {
                 console.log("GET", url, xhr.status, xhr.statusText)
-                console.log("Response:" , JSON.parse(xhr.response))
-                const response = JSON.parse(xhr.response)
+                let response = {}
+                try {
+                    response = JSON.parse(xhr.response)
+                    console.log("Response:", response)
+                } catch(e) {
+                    console.error("Unable to parse response", xhr.response)
+                    reject(`Unexpected error: ${url}`)
+                    return
+                }
+
                 response.ok = xhr.status >= 200 && xhr.status < 300
                 resolve(response)
             })
