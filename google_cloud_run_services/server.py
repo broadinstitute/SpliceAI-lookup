@@ -19,7 +19,8 @@ app = Flask(__name__)
 
 CORS(app)
 
-DEBUG = False # if socket.gethostname() == "spliceai-lookup" else True
+
+DEBUG = True # if socket.gethostname() == "spliceai-lookup" else True
 if not DEBUG:
     Talisman(app)
 
@@ -600,7 +601,9 @@ def run_splice_prediction_tool(tool_name):
 
     print(f"{logging_prefix}: {variant} took {str(datetime.now() - start_time)}", flush=True)
 
-    return Response(json.dumps(response_json), status=200, mimetype='application/json')
+    return Response(json.dumps(response_json), status=200, mimetype='application/json', headers=[
+        ('Access-Control-Allow-Origin', '*'),
+    ])
 
 
 def log(event_name, ip=None, duration=None, variant=None, genome=None, distance=None, mask=None, details=None):
