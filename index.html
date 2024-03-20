@@ -723,13 +723,12 @@
         //warn about insertion variants that are predicted to cause a donor or acceptor gain somewhere within the inserted sequence.
         if (score >= 0.2 && position == 0 && (alt.length - ref.length) >= 2 && label.toLowerCase().indexOf("gain") >= 0) {
             let warning = (
-                `<b>WARNING:</b> This delta score suggests that the insertion variant may cause ${label.toLowerCase()} ` +
-                `directly within the inserted sequence. However, the exact location and biological consequence of the predicted splicing ` +
-                `change may be challenging to interpret. The reason ` +
-                `is that the model assigns delta scores to genomic reference coordinates, and so has to discard information about ` +
-                `which of the inserted base(s) within the ALT haplotype are responsible for the high delta score. For an example of ` +
-                `how this can lead to problems with interpretation, see ` +
-                `<a href='https://github.com/broadinstitute/SpliceAI-lookup/issues/69'>issue #69</a>. The criteria for showing this warning are ` +
+                `<b>WARNING:</b> Although this delta score suggests a possible ${label.toLowerCase()} ` +
+                `directly within the inserted sequence, the exact location and biological consequence of the predicted splicing ` +
+                `change may be challenging to interpret. This is because the model assigns delta scores to genomic reference coordinates, ` +
+                `and so has to discard information about where exactly the high score is located within the inserted bases on the ALT haplotype. ` +
+                `For an example of how this can lead to problems with interpretation, see ` +
+                `<a href='https://github.com/broadinstitute/SpliceAI-lookup/issues/69'>issue #69</a>. The criteria for showing this warning were ` +
                 `that 1) the variant is an insertion of at least 2bp and 2) its delta score is ≥ 0.2 and has a relative position of 0bp. `
             )
 
