@@ -58,9 +58,9 @@ def main():
 		for tool in tools:
 			tag = get_tag(tool, genome_version)
 			service = get_service_name(tool, genome_version)
-			concurrency = 4    # if genome_version == '37' else 2
+			concurrency = 3    # if genome_version == '37' else 2
 			min_instances = 1  # if tool == 'pangolin' else 2
-			max_instances = 3
+			max_instances = 5
 			if not args.command or args.command == "build":
 				run(f"docker build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest .")
 				run(f"docker push {tag}:latest")
@@ -81,13 +81,13 @@ def main():
 --execution-environment gen2 \
 --region us-central1 \
 --update-secrets=DB_PASSWORD=spliceai-lookup-db-password:2 \
---add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
 --allow-unauthenticated \
---memory 4Gi \
---cpu 4
+--memory 3Gi \
+--cpu 2
 """)
 
-				# 					--add-volume-mount=volume=ref,mount-path=/ref \
+                                # --add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
+				# --add-volume-mount=volume=ref,mount-path=/ref \
 
 if __name__ == "__main__":
 	main()
