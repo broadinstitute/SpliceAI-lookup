@@ -640,12 +640,12 @@ def log_event(name):
     if DATABASE_CONNECTION is None:
         message = f"Log error: Database not available"
         print(message, flush=True)
-        return message
+        return error_response(f"ERROR: {message}")
 
     if name != "show_igv":
         message = f"Log error: invalid event name: {name}"
         print(message, flush=True)
-        return message
+        return error_response(f"ERROR: {message}")
 
     # check params
     params = {}
@@ -677,11 +677,13 @@ def log_event(name):
         mask=mask_param,
         details=details)
 
-    return "Done"
+    return Response(json.dumps({"status": "Done"}), status=200, mimetype='application/json', headers=[
+        ('Access-Control-Allow-Origin', '*'),
+    ])
 
 @app.route('/', strict_slashes=False, defaults={'path': ''})
 @app.route('/<path:path>/')
 def catch_all(path):
-    return f"SpliceAI-lookup APIs: invalid endpoint: {path}"
+    return f"SpliceAI-lookup APIs: invalid endpoint {path}"
 
 app.run(debug=DEBUG, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
