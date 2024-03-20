@@ -276,14 +276,21 @@ def check_reference_allele(genome_version, chrom, pos, ref, alt):
         raise ValueError(f"Invalid genome_version: {genome_version}")
 
     chrom = chrom.replace("chr", "")
-    if genome_version != "37":
+    if genome_version == "37":
+        if chrom.upper() in ("M", "MT"):
+            chrom = "MT"
+    else:
+        if chrom.upper() in ("M", "MT"):
+            chrom = "M"
         chrom = "chr" + chrom
 
+
+    variant = f"{chrom}-{pos}-{ref}-{alt}"
     try:
         ref_sequence = PYFASTX_REF[genome_version][chrom][pos-1:pos+len(ref)-1].seq
         if ref_sequence.upper() != ref.upper():
             return {
-                "variant": f"{chrom}-{pos}-{ref}-{alt}",
+                "variant": variant,
                 "source": "spliceai",
                 "error": f"Unexpected reference allele in {chrom}-{pos}-{ref}-{alt}. The reference allele should be: {ref_sequence}",
             }
