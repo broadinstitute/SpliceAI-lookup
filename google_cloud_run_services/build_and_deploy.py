@@ -59,7 +59,7 @@ def main():
 			tag = get_tag(tool, genome_version)
 			service = get_service_name(tool, genome_version)
 			concurrency = 6    # if genome_version == '37' else 2
-			min_instances = 1  # if tool == 'pangolin' else 2
+			min_instances = 0  # if tool == 'pangolin' else 2
 			max_instances = 3
 			if not args.command or args.command == "build":
 				run(f"docker build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest .")
