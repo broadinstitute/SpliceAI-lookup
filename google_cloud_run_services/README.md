@@ -1,4 +1,4 @@
-This folder contains the [Google Cloud Run](https://cloud.google.com/run) implementation of the Pangolin API used by [spliceai-lookup.broadinstitute.org](https://spliceai-lookup.broadinstitute.org)  (NOTE: Cloud Run is different from Google's Cloud Functions service).
+This folder contains the [Google Cloud Run](https://cloud.google.com/run) implementation of SpliceAI and Pangolin web service APIs used by [spliceai-lookup.broadinstitute.org](https://spliceai-lookup.broadinstitute.org)  (NOTE: Cloud Run is different from Google's Cloud Functions service).
 
 `make` sub-commands:
   
