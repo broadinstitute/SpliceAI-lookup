@@ -17,11 +17,11 @@ from bw2_annotation_utils.gtf_utils import parse_gtf
 
 # to get the latest database name, run:
 #    mysql -h useastdb.ensembl.org -u anonymous -e "show databases;" | grep homo_sapiens_core
-DEFAULT_ENSEMBL_DATABASE = "homo_sapiens_core_110_38"
+DEFAULT_ENSEMBL_DATABASE = "homo_sapiens_core_112_38"
 
 # this is used to get the list of MANE select and MANE plus clinical ENST transcript ids.
-DEFAULT_MANE_URL_BASE = "https://ftp.ncbi.nlm.nih.gov/refseq/MANE/MANE_human/release_1.2"
-DEFAULT_MANE_SUMMARY_TABLE_FILENAME = "MANE.GRCh38.v1.2.summary.txt.gz"
+DEFAULT_MANE_URL_BASE = "https://ftp.ncbi.nlm.nih.gov/refseq/MANE/MANE_human/release_1.3"
+DEFAULT_MANE_SUMMARY_TABLE_FILENAME = "MANE.GRCh38.v1.3.summary.txt.gz"
 
 
 def main():
@@ -54,11 +54,16 @@ def main():
     MANE_ensembl_ENST_to_RefSeq_id = {k: [v] for k, v in MANE_ensembl_ENST_to_RefSeq_id.items()}
     esnembl_ENST_to_RefSeq_ids.update(MANE_ensembl_ENST_to_RefSeq_id)
 
+    gene_coordinates_lookup = {}  # used for checking coordinate consistency between gene and transcript records (eg. GPR143)
+    max_transcript_coordinates_lookup = {}
+    for record in parse_gtf(os.path.expanduser(args.gtf_gz_path), feature_type="gene"):
+        gene_id_without_version = record["gene_id"].split(".")[0]
+        gene_coordinates_lookup[(record["gene_name"], gene_id_without_version)] = (record["chrom"], record["start"], record["end"])
+
     print(f"Parsing {args.gtf_gz_path}")
     output_json = {}
     for record in parse_gtf(os.path.expanduser(args.gtf_gz_path), feature_type="transcript"):
         transcript_id_without_version = record["transcript_id"].split(".")[0]
-
         transcript_priority = compute_transcript_priority(transcript_id=transcript_id_without_version)
         refseq_transcript_ids = esnembl_ENST_to_RefSeq_ids.get(transcript_id_without_version)
         output_json[transcript_id_without_version] = {
@@ -70,6 +75,39 @@ def main():
             "t_priority": transcript_priority,
             "t_refseq_ids": refseq_transcript_ids,
         }
+
+        gene_id_without_version = record["gene_id"].split(".")[0]
+        if gene_id_without_version in max_transcript_coordinates_lookup:
+            transcript_chrom, transcript_start, transcript_end = max_transcript_coordinates_lookup[gene_id_without_version]
+            max_transcript_coordinates_lookup[(record["gene_name"], gene_id_without_version)] = (
+                transcript_chrom, min(transcript_start, record["start"]), max(transcript_end, record["end"]))
+        else:
+            max_transcript_coordinates_lookup[(record["gene_name"], gene_id_without_version)] = (
+                record["chrom"], record["start"], record["end"])
+
+    # check consistency of gene vs. transcript start/end coordinates
+    warning1_counter = 0
+    warning2_counter = 0
+    for gene_name, gene_id_without_version in gene_coordinates_lookup:
+        key = gene_name, gene_id_without_version
+        gene_chrom, gene_start, gene_end = gene_coordinates_lookup[key]
+        transcript_chrom, transcript_start, transcript_end = max_transcript_coordinates_lookup.get(key, (None, None, None))
+        if transcript_chrom is None:
+            warning1_counter += 1
+            print(f"WARNING: Gene {gene_name} ({gene_id_without_version}) has no transcript records")
+        elif transcript_start > gene_start or transcript_end < gene_end:
+            warning2_counter += 1
+            #start_diff = f". Start diff is {transcript_start - gene_start:,d}bp" if transcript_start - gene_start else ""
+            #end_diff = f". End diff is {gene_end - transcript_end:,d}bp" if gene_end - transcript_end else ""
+            #print(f"WARNING: Gene {gene_name} ({gene_id_without_version}) has inconsistent coordinates: "
+            #      f"gene={gene_chrom}:{gene_start}-{gene_end}, "
+            #      f"transcript={transcript_chrom}:{transcript_start}-{transcript_end}"
+            #      f"{start_diff}{end_diff}")
+    if warning1_counter > 0:
+        print(f"WARNING: {warning1_counter:,d} genes don't have any transcript records")
+    if warning2_counter > 0:
+        print(f"WARNING: {warning2_counter:,d} out of {len(gene_coordinates_lookup):,d} genes have a genomic interval "
+              f"that is wider than the interval of any of their transcripts.")
 
     output_path = re.sub(".gtf.gz$", "", os.path.basename(args.gtf_gz_path)) + ".transcript_annotations.json"
     with open(output_path, "w") as f:
