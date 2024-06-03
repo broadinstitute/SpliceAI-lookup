@@ -567,20 +567,22 @@
          *  string: the input variant reformatted as a "{chrom}-{pos}-{ref}-{alt}" string
          */
 
-        let chrom, pos, ref, alt
+        let chrom, pos, ref, alt, variantConsequence
         let matchedRegExp = variant.match(VARIANT_RE)
+        let ensemblApiUrl
         if (matchedRegExp) {
             // was able to parse the user input using a simple reg-exp
             chrom = matchedRegExp[2].toUpperCase()
             pos = parseInt(matchedRegExp[3].replace(/,/g, ""))
             ref = matchedRegExp[4].toUpperCase()
             alt = matchedRegExp[5].toUpperCase()
-        } else {
-
-            // otherwise try calling the Ensembl API on the user input
-            const ensemblApiUrl = `https://${genomeVersion == '37' ? 'grch37.' : ''}rest.ensembl.org/vep/human/hgvs/${variant.trim()}?content-type=application/json&vcf_string=1`
-
-            let ensemblApiResponse
+            ensemblApiUrl = `https://${genomeVersion == '37' ? 'grch37.' : ''}rest.ensembl.org/vep/human/hgvs/${chrom}:g.${pos}${ref}>${alt}?content-type=application/json&vcf_string=1`
+        }
+        else {
+            ensemblApiUrl = `https://${genomeVersion == '37' ? 'grch37.' : ''}rest.ensembl.org/vep/human/hgvs/${variant.trim()}?content-type=application/json&vcf_string=1`
+        }
+        // try calling the Ensembl API on the user input
+        try {
             try {
                 ensemblApiResponse = await makeRequest(ensemblApiUrl)
             } catch (e) {
@@ -621,15 +623,23 @@
             pos = parseInt(matchedRegExp[3])
             ref = matchedRegExp[4].toUpperCase()
             alt = matchedRegExp[5].toUpperCase()
+
+            variantConsequence = ensemblApiResponseJson[0].most_severe_consequence
+        } catch (e) {
+            console.error(e)
+
+            if (!chrom) {
+                throw Error(`Unable to parse variant: ${variant}`)
+            }
         }
 
-        if (ref.length == alt.length) {
-            return `${chrom}-${pos}-${ref}-${alt}`
+        return {
+            'variant': `${chrom}-${pos}-${ref}-${alt}`,
+            'consequence': variantConsequence,
         }
 
-        return `${chrom}-${pos}-${ref}-${alt}`
 
-	
+        /*
         // left-align the indel
         let leftAlignApiResponse
         try {
@@ -654,6 +664,8 @@
         }
 
         return `${chrom}-${pos}-${ref}-${alt}`
+
+        */
     }
 
 
@@ -697,7 +709,6 @@
                 let response = {}
                 try {
                     response = JSON.parse(xhr.response)
-                    console.log("Response:", response)
                 } catch(e) {
                     console.error("Unable to parse response", xhr.response)
                     reject(`Unexpected error: ${url}`)
@@ -738,7 +749,7 @@
         }
     }
 
-    const generateResultsTable = async (normalizedVariant, tool, variant, genomeVersion, maxDistance, mask, showRefAltScoreColumns) => {
+    const generateResultsTable = async (normalizedVariant, variantConsequence, tool, variant, genomeVersion, maxDistance, mask, showRefAltScoreColumns) => {
         /* Generate the results table to show either the SpliceAI or Pangolin scores */
 
         const variantTokens = (normalizedVariant || "---").split("-")
@@ -805,7 +816,11 @@
             }
 
             const normalizedVariantDiv = variant.match(VARIANT_RE) && variant.toUpperCase().indexOf(normalizedVariant.toUpperCase()) >= 0 ? "" :
-                `<br class="only-large-screen"/><div style="margin-left:5px;margin-right:10px; display: inline-block; color:#333333"><i>⇒ ${chrom}:${pos} ${ref}&gt;${alt}</i></div><br class="only-large-screen"/>`
+                `<br class="only-large-screen"/>
+                 <div style="margin-left:5px;margin-right:10px; display: inline-block; color:#333333">
+                    <i>⇒ ${chrom}:${pos} ${ref}&gt;${alt}</i>
+                 </div>
+                 <br class="only-large-screen"/>`
 
             $(`#${tool.toLowerCase()}-header`).nextAll().remove()
             let row = `<tr class="${resultRowClasses.join(' ')}">
@@ -813,8 +828,16 @@
                     <div style="margin-right:10px; display: inline-block">${variant}</div><br class="only-large-screen"/>
                     ${normalizedVariantDiv}
                     <br class="only-large-screen"/>
+                    <div display: inline-block>
+                        <a href="https://www.ensembl.org/info/genome/variation/prediction/predicted_data.html" class="small-link" target="_blank">
+                        ${variantConsequence.replace(/_/g, ' ')}
+                        </a>
+                     </div>
+                     <br class="only-large-screen"/>
                     <a href="${getUCSCBrowserUrl(genomeVersion, chrom, pos)}" class="small-link" target="_blank">UCSC</a>,
                     <a href="https://gnomad.broadinstitute.org/variant/${variant}?dataset=${gnomadVersion}" class="small-link" target="_blank">gnomAD</a>
+                    <br class="only-large-screen"/>
+
                 </td>
                 <td rowspan="${subRowCount}" style="vertical-align: top">
                     <div style="margin-right:10px; display: inline-block">
@@ -1286,12 +1309,16 @@
 
         // make API calls
         try {
-            const normalizedVariant = await normalizeVariant(variant, genomeVersion)
+            const normalizedVariantAndConsequence = await normalizeVariant(variant, genomeVersion)
+            const normalizedVariant = normalizedVariantAndConsequence.variant
+            const variantConsequence = normalizedVariantAndConsequence.consequence
+
+            console.log("variantConsequence", variantConsequence)
 
             //let [spliceaiResponseJson, pangolinResponseJson, variantAnnotationsJson] = await Promise.all([
             let [spliceaiResponseJson, pangolinResponseJson] = await Promise.all([
-                generateResultsTable(normalizedVariant, "SpliceAI", variant, genomeVersion, maxDistance, mask, showRefAltColumns),
-                generateResultsTable(normalizedVariant, "Pangolin", variant, genomeVersion, maxDistance, mask, showRefAltColumns),
+                generateResultsTable(normalizedVariant, variantConsequence, "SpliceAI", variant, genomeVersion, maxDistance, mask, showRefAltColumns),
+                generateResultsTable(normalizedVariant, variantConsequence, "Pangolin", variant, genomeVersion, maxDistance, mask, showRefAltColumns),
                 //generateVariantAnnotationTable(normalizedVariant, genomeVersion),
             ].map(p => p.catch(e => ({'error': e.message}))))  // if an error is thrown, return {'error': e} instead of the JSON response
 
