@@ -305,7 +305,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
         return {
             "variant": variant,
             "source": "spliceai",
-            "error": f"ERROR: {e}",
+            "error": str(e),
         }
 
     error_resonse = check_reference_allele(genome_version, chrom, pos, ref, alt)
@@ -332,14 +332,15 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
         return {
             "variant": variant,
             "source": "spliceai",
-            "error": f"ERROR: {type(e)}: {e}",
+            "error": f"{type(e)}: {e}",
         }
 
     if not scores:
         return {
             "variant": variant,
             "source": "spliceai",
-            "error": f"ERROR: The SpliceAI model did not return any scores for {variant}",
+            "error": f"The SpliceAI model did not return any scores for {variant}. This may be because the variant does "
+                     f"not overlap any exons or introns defined by the GENCODE 'basic' annotation.",
         }
 
     #scores = [s[s.index("|")+1:] for s in scores]  # drop allele field
@@ -406,7 +407,7 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param):
         return {
             "variant": variant,
             "source": "pangolin",
-            "error": f"ERROR: {e}",
+            "error": str(e),
         }
 
     error_resonse = check_reference_allele(genome_version, chrom, pos, ref, alt)
@@ -417,7 +418,7 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param):
         return {
             "variant": variant,
             "source": "pangolin",
-            "error": f"ERROR: Pangolin does not currently support complex InDels like {chrom}-{pos}-{ref}-{alt}",
+            "error": f"Pangolin does not currently support complex InDels like {chrom}-{pos}-{ref}-{alt}",
         }
 
     class PangolinArgs:
@@ -435,7 +436,7 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param):
         return {
             "variant": variant,
             "source": "pangolin",
-            "error": f"ERROR: Pangolin was unable to compute scores for this variant",
+            "error": f"Pangolin was unable to compute scores for this variant",
         }
 
     # to reduce the response size, return all non-zero scores only for the canonial transcript (or the 1st transcript)
