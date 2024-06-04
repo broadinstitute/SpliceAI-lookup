@@ -262,10 +262,10 @@
                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website<br />
                     <br/>
                     <b>June 3, 2024</b><br />
-                    - show the input variant's <a href="https://useast.ensembl.org/info/docs/tools/vep/index.html" target="blank">VEP</a> predicted consequence<br />
+                    - show the input variant's <a href="https://useast.ensembl.org/info/docs/tools/vep/index.html" target="blank">VEP</a> consequence in the results table<br />
                     - updated SpliceAI visualizations to clarify positions of predicted splicing changes. See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/70" target="_blank">issue #70</a> for details. <br />
-                    - made the Gencode gene track optional when showing visualizations<br />
-                    - updated transcript coordinates used by SpliceAI and Pangolin to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v46</a><br/>
+                    - gencode gene track is now optional in the visualizations<br />
+                    - updated everything to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v46</a><br/>
                     <br />
                     <a id="more-details3-button" href="#"
                        onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
@@ -482,7 +482,7 @@
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-precomputed-loss-0.2"><label>loss ≥ 0.2</label></div>
                             </td>
                             <td>
-                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gencode-genes"><label>Gencode <span id="gencode-version"></span> genes</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gencode-genes"><label>gencode <span id="gencode-version"></span> genes</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-100-mer-mappability"><label>100-mer mappability</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-segdups"><label>segmental duplications</label></div>
                             </td>
