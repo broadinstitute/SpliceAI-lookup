@@ -772,6 +772,8 @@
         const ref = variantTokens[2]
         const alt = variantTokens[3]
 
+        variantConsequence = variantConsequence || ""
+
         const baseUrl = baseApiUrl[`${tool.toLowerCase()}-${genomeVersion}`]
         const urlArgs = `hg=${genomeVersion}&distance=${maxDistance}&mask=${mask}&variant=${chrom}-${pos}-${ref}-${alt}&raw=${variant}&variant_consequence=${variantConsequence}`
 
