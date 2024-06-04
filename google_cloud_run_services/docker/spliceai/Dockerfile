@@ -11,7 +11,7 @@ RUN apt update && apt-get install --no-install-recommends -y \
     liblzma-dev \
     zlib1g-dev
 
-RUN python3 -m pip install tensorflow
+RUN python3 -m pip install tensorflow==2.16.1
 
 RUN apt update && apt-get install --no-install-recommends -y build-essential libpq-dev
 

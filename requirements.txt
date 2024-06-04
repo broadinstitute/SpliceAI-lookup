@@ -1,4 +1,4 @@
-tensorflow==1.14.0   # for python3.6 on centos7
+tensorflow==2.16.1
 keras==2.1.5
 spliceai @ git+https://github.com/bw2/SpliceAI   # if the latest version isn't being installed, clone the repo and install from the local directory by running python3 setup.py install
 flask
