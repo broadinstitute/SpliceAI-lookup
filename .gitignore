@@ -2,6 +2,7 @@ db_password.txt
 annotations/
 service.backup_copy.yaml
 
+.pgpass
 .idea
 *.iml
 *.db
