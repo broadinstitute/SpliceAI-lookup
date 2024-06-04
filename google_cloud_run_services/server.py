@@ -192,7 +192,7 @@ def init_database_connection():
 
     if not does_table_exist("log"):
         print("Creating event_log table")
-        run_sql("""CREATE TABLE log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), distance INT, mask INT4, details TEXT)""")
+        run_sql("""CREATE TABLE log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), distance INT, mask INT4, details TEXT, variant_consequence TEXT)""")
         run_sql("""CREATE INDEX log_index1 ON log (event_name)""")
         run_sql("""CREATE INDEX log_index2 ON log (ip)""")
 
@@ -550,6 +550,8 @@ def run_splice_prediction_tool(tool_name):
     if mask_param not in ("0", "1"):
         return error_response(f'Invalid "mask" value: "{mask_param}". The value must be either "0" or "1". For example: {example_url}\n', source=tool_name)
 
+    variant_consequence = params.get("variant_consequence")
+
     print(f"{logging_prefix}: ======================", flush=True)
     print(f"{logging_prefix}: {variant} processing with hg={genome_version}, "
           f"distance={distance_param}, mask={mask_param}", flush=True)
@@ -574,7 +576,7 @@ def run_splice_prediction_tool(tool_name):
     results = get_splicing_scores_from_cache(tool_name, variant, genome_version, distance_param, mask_param)
     duration = (datetime.now() - start_time).total_seconds()
     if results:
-        log(f"{tool_name}:from-cache", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param)
+        log(f"{tool_name}:from-cache", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, variant_consequence=variant_consequence)
     else:
         error_message = exceeds_rate_limit(user_ip)
         if error_message:
@@ -594,13 +596,13 @@ def run_splice_prediction_tool(tool_name):
             return error_response(f"ERROR: {e}", source=tool_name)
 
         duration = (datetime.now() - start_time).total_seconds()
-        log(f"{tool_name}:computed", ip=user_ip, duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param)
+        log(f"{tool_name}:computed", ip=user_ip, duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, variant_consequence=variant_consequence)
 
         if "error" not in results:
             add_splicing_scores_to_cache(tool_name, variant, genome_version, distance_param, mask_param, results)
 
     if "error" in results:
-        log(f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"])
+        log(f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], variant_consequence=variant_consequence)
 
     response_json = {}
     response_json.update(params)  # copy input params to output
@@ -613,7 +615,7 @@ def run_splice_prediction_tool(tool_name):
     ])
 
 
-def log(event_name, ip=None, duration=None, variant=None, genome=None, distance=None, mask=None, details=None):
+def log(event_name, ip=None, duration=None, variant=None, genome=None, distance=None, mask=None, details=None, variant_consequence=None):
     """Utility method for logging an event"""
 
     try:
@@ -625,8 +627,8 @@ def log(event_name, ip=None, duration=None, variant=None, genome=None, distance=
         return
 
     try:
-        run_sql(r"INSERT INTO log (event_name, ip, duration, variant, genome, distance, mask, details) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (event_name, ip, duration, variant, genome, distance, mask, details))
+        run_sql(r"INSERT INTO log (event_name, ip, duration, variant, genome, distance, mask, details, variant_consequence) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (event_name, ip, duration, variant, genome, distance, mask, details, variant_consequence))
     except Exception as e:
         print(f"Log error: {e}", flush=True)
 
@@ -659,6 +661,7 @@ def log_event(name):
     distance_param = params.get("distance")
     mask_param = params.get("mask")
     details = params.get("details")
+    variant_consequence = params.get("variant_consequence")
     if details:
         details = str(details)
         details = details[:2000]
@@ -675,7 +678,8 @@ def log_event(name):
         genome=genome_version,
         distance=distance_param,
         mask=mask_param,
-        details=details)
+        details=details,
+        variant_consequence=variant_consequence)
 
     return Response(json.dumps({"status": "Done"}), status=200, mimetype='application/json', headers=[
         ('Access-Control-Allow-Origin', '*'),

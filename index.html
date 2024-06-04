@@ -27,7 +27,8 @@
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/semantic-ui@2.4.2/dist/semantic.min.js"></script>
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/underscore@1.12.0/underscore-min.js"></script>
 
-    <script type="text/javascript" src="https://storage.googleapis.com/tgg-viewer/igv.js-bw2/dist/igv.min.js"></script>
+    <!-- script type="text/javascript" src="https://storage.googleapis.com/tgg-viewer/igv.js-bw2/dist/igv.min.js"></script -->
+    <script type="text/javascript" src="igv.min.js"></script>
 
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-483HVKZCL1"></script>
     <script>
@@ -260,20 +261,19 @@
                 <div>
                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website<br />
                     <br/>
-                    <div>
-                        <b>Related web tools:</b><br/>
-                        <a href="https://liftover.broadinstitute.org" target="_blank">liftover</a>: for variants/positions/intervals (hg19 <=> hg38 <=> T2T)<br/>
-                        <a href="https://cma-search.broadinstitute.org" target="_blank">CMA search</a>: search OMIM by interval, gene or phenotype<br/>
-                        <a href="https://tgg-viewer.broadinstitute.org" target="_blank">TGG Viewer</a>: igv.js-based web viewer for public reference tracks and, optionally, private data in Google Storage buckets<br/>
-                    </div>
-                    <br/>
-                    <b>March 7, 2024</b><br/>
-		    - added warning for insertion variants with delta scores ≥ 0.2 and position = 0bp saying that they may be difficult to interpret due to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/69">issue #67</a>. Thanks to @SophieCandille for the issue report and example variant: <a href="https://spliceailookup.broadinstitute.org/#variant=NM_000179.3%3Ac.261-3_261-2insAGTTG&hg=38&distance=500&mask=0&ra=1" target="_blank">2:47790924 C>CAGTTG</a><br />
-		    - moved server to Google Cloud Run to better support higher usage<br />
-		    <br />
+                    <b>June 3, 2024</b><br />
+                    - show the input variant's <a href="https://useast.ensembl.org/info/docs/tools/vep/index.html" target="blank">VEP</a> predicted consequence<br />
+                    - updated SpliceAI visualizations to clarify positions of predicted splicing changes. See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/70" target="_blank">issue #70</a> for details. <br />
+                    - made the Gencode gene track optional when showing visualizations<br />
+                    - updated transcript coordinates used by SpliceAI and Pangolin to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v46</a><br/>
+                    <br />
                     <a id="more-details3-button" href="#"
                        onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
                     <div id="more-details3" style="display:none">
+                        <b>March 7, 2024</b><br/>
+                        - added warning for insertion variants with delta scores ≥ 0.2 and position = 0bp saying that they may be difficult to interpret due to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/69">issue #67</a>. Thanks to @SophieCandille for the issue report and example variant: <a href="https://spliceailookup.broadinstitute.org/#variant=NM_000179.3%3Ac.261-3_261-2insAGTTG&hg=38&distance=500&mask=0&ra=1" target="_blank">2:47790924 C>CAGTTG</a><br />
+                        - moved server to Google Cloud Run to better support higher usage<br />
+                        <br />
                         <b>November 30, 2023</b><br/>
                         - changed default search settings to "not masked" due to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/59#issuecomment-1815667021">confusion</a> and <a href="https://github.com/Illumina/SpliceAI/issues/27#issuecomment-547089167">issues</a> with how masked scores are computed. <br />
                         - when looking at hg19 variants, the visualization checkboxes now make it clear which IGV.js tracks are or aren't available on hg19.<br/>
@@ -320,7 +320,13 @@
                         See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/6#issuecomment-816942824">issue #6</a> for details.<br/>
                         <br />
                         <a id="hide-details3-button" href="#" onclick="$('#more-details3').hide();$('#more-details3-button').show();">[hide older updates]</a>
-
+                    </div>
+                    <br />
+                    <br/>
+                    <div>
+                        <b>Related web tools:</b><br/>
+                        <a href="https://liftover.broadinstitute.org" target="_blank">liftover</a>: for variants/positions/intervals (hg19 <=> hg38 <=> T2T)<br/>
+                        <a href="https://tgg-viewer.broadinstitute.org" target="_blank">TGG Viewer</a>: igv.js-based web viewer for public reference tracks and, optionally, private data in Google Storage buckets<br/>
                     </div>
                 </div>
             </div>
@@ -421,25 +427,30 @@
                             <th style="background-color:white" colspan="5"><b>Visualizations:</b></th>
                         </tr>
                         <tr>
-                            <th class="table-header">SpliceAI &amp; Pangolin results
+                            <th class="table-header"><span style="white-space: nowrap">SpliceAI &amp; Pangolin results
                                 <i class="question circle outline icon" data-position="right center"
                                    data-content="These tracks display the computed SpliceAI and Pangolin scores for the variant entered by the user. They are only available for hg38."></i>
+                                </span>
                             </th>
-                            <th class="table-header">GTEx RNA: average per sample
+                            <th class="table-header"><span style="white-space: nowrap">GTEx RNA: average per sample
                                 <i class="question circle outline icon" data-position="right center"
                                    data-content="These tracks summarize all splice junctions and per-base read depths in GTEx v8 RNA-seq samples for a specific tissue. Both the read depths and splice junction read counts are divided by the number of samples, and so represent the per-sample average. These tracks are only available for hg38."></i>
+                                </span>
                             </th>
-                            <th class="table-header">GTEx RNA: all splice junctions
+                            <th class="table-header"><span style="white-space: nowrap">GTEx RNA: all splice junctions
                                 <i class="question circle outline icon" data-position="right center"
                                    data-content="These tracks show the splice junctions and per-base read depths in GTEx v8 RNA-seq samples from a specific tissue. The read depths and splice junction read counts are summed across all samples from that tissue. These tracks are only available for hg38."></i>
+                                </span>
                             </th>
-                            <th class="table-header">SpliceAI: all precomputed scores
+                            <th class="table-header"><span style="white-space: nowrap">SpliceAI: precomputed scores
                                 <i class="question circle outline icon" data-position="right center"
                                    data-content="These tracks summarize the original precomputed SpliceAI score tables made available by Illumina. They are only available for hg38."></i>
+                                </span>
                             </th>
-                            <th class="table-header">Reference
+                            <th class="table-header"><span style="white-space: nowrap">Reference
                                 <i class="question circle outline icon" data-position="right center"
                                    data-content="Miscellaneous reference tracks. These are currently only available for hg38."></i>
+                                </span>
                             </th>
                         </tr>
                         </thead>
@@ -471,6 +482,7 @@
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-precomputed-loss-0.2"><label>loss ≥ 0.2</label></div>
                             </td>
                             <td>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gencode-genes"><label>Gencode <span id="gencode-version"></span> genes</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-100-mer-mappability"><label>100-mer mappability</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-segdups"><label>segmental duplications</label></div>
                             </td>
@@ -483,7 +495,7 @@
                     </table>
                     <div id="igv-div" style="width:100%; padding-top:5px; display: none">
                         <div style="padding:20px 0px; font-size:110%">To see <b>documentation</b> or <b>legends</b> for each track, click on the rectangle that contains the track name.</div>
-                        <div id="igv-viewport" style="width:100%; height:500px"></div>
+                        <div id="igv-viewport" style="width:100%; min-height:500px"></div>
                     </div>
                 </div>
                 <div id="error-box" style="color:darkred; padding:10px 0px; font-size:medium"></div>
@@ -494,6 +506,8 @@
 </div>
 
 <script>
+	const GENCODE_VERSION = "v46"
+
     const VARIANT_RE = new RegExp(
         "^[\\s]*" +
         "(chr)?([0-9XYMTt]{1,2})" +
@@ -759,7 +773,7 @@
         const alt = variantTokens[3]
 
         const baseUrl = baseApiUrl[`${tool.toLowerCase()}-${genomeVersion}`]
-        const urlArgs = `hg=${genomeVersion}&distance=${maxDistance}&mask=${mask}&variant=${chrom}-${pos}-${ref}-${alt}&raw=${variant}`
+        const urlArgs = `hg=${genomeVersion}&distance=${maxDistance}&mask=${mask}&variant=${chrom}-${pos}-${ref}-${alt}&raw=${variant}&variant_consequence=${variantConsequence}`
 
         let apiResponse
         try {
@@ -963,7 +977,7 @@
 
             // retrieve state from checkboxes
             tracksToShow = {}
-            for (const name of ["igv-variant", "igv-spliceai-ref-alt", "igv-spliceai-delta-scores", "igv-pangolin-delta-scores"]) {
+            for (const name of ["igv-variant", "igv-spliceai-ref-alt", "igv-spliceai-delta-scores", "igv-pangolin-delta-scores", "igv-gencode-genes"]) {
                 tracksToShow[name] = $(`input[name='${name}']`).prop("checked")
             }
             for (const name of ["igv-100-mer-mappability", "igv-segdups"]) {
@@ -1140,24 +1154,23 @@
             }
         }
 
-        const gencodeTrackPath = genomeVersion == "37" ?
-            "gs://tgg-viewer/ref/GRCh37/gencode_v44/gencode.v44.hg19.sorted.txt.gz" :
-            "gs://tgg-viewer/ref/GRCh38/gencode_v44/gencode.v44.hg38.sorted.txt.gz"
+        if (tracksToShow["igv-gencode-genes"]) {
+            const gencodeTrackPath = `gs://tgg-viewer/ref/GRCh${genomeVersion}/gencode_${GENCODE_VERSION}/gencode.${GENCODE_VERSION}.GRCh${genomeVersion}.sorted.txt.gz`
 
-        tracks.push({
-            name: "Gencode v44",
-            format: 'refgene',
-            url: gencodeTrackPath,
-            indexURL: `${gencodeTrackPath}.tbi`,
-            indexed: true,
-            searchable: true,
-            height: 350,
-            visibilityWindow: -1,
-            order: 1000001,
-            displayMode: 'EXPANDED',
-            color: 'rgb(76,171,225)',
-        })
-
+            tracks.push({
+                name: `Gencode ${GENCODE_VERSION}`,
+                format: 'refgene',
+                url: gencodeTrackPath,
+                indexURL: `${gencodeTrackPath}.tbi`,
+                indexed: true,
+                searchable: true,
+                height: 350,
+                visibilityWindow: -1,
+                order: 1000001,
+                displayMode: 'EXPANDED',
+                color: 'rgb(76,171,225)',
+            })
+        }
 
         if (genomeVersion == "38") {
             for (const minScore of [0.5, 0.2]) {   //0.2,  hide the >= 0.2 tracks for now
@@ -1420,9 +1433,10 @@
     }
 
     $(document).ready(() => {
+        $("#gencode-version").text(GENCODE_VERSION)
         // init UI elements
         $(".ui.checkbox").checkbox()
-        $(".question").popup()
+        $(".question").popup({"on": "click"})
         $("#search-box").focus()
         $("#response-box").hide()
 

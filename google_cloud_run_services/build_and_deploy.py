@@ -1,6 +1,8 @@
 import argparse
 import logging
 import os
+import pandas as pd
+import re
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s: %(message)s")
 
@@ -26,7 +28,7 @@ def main():
 	parser.add_argument("-t", "--tool", choices=["spliceai", "pangolin"], help="If not specified, command will run for both spliceai and pangolin")
 	g = parser.add_mutually_exclusive_group()
 	g.add_argument("--gencode-version",
-				   help="The gencode version to use for the 'update_annotations' command (example: '46'). Either this "
+				   help="The gencode version to use for the 'update_annotations' command (example: 'v46'). Either this "
 						"or --gencode-gtf must be specified for the 'update_annotations' command")
 	g.add_argument("--gencode-gtf",
 				   help="Path of the newest 'basic' Gencode GTF file that was downloaded from "
@@ -48,6 +50,13 @@ def main():
 	else:
 		tools = ["spliceai", "pangolin"]
 
+	if args.gencode_version:
+		if not re.match("v[0-9][0-9]", args.gencode_version):
+			parser.error("--gencode-version must be of the form 'v46'")
+		gencode_version_number = int(args.gencode_version.lstrip("v"))
+	else:
+		gencode_version_number = None
+
 	if args.command == "update_annotations":
 		if not args.gencode_version and not args.gencode_gtf:
 			parser.error("Either --gencode-version or --gencode-gtf must be specified for the update_annotations command")
@@ -56,13 +65,15 @@ def main():
 		if args.gencode_version:
 			for genome_version in genome_versions:
 				if genome_version == "37":
-					gencode_gtf_url = f"https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_{args.gencode_version}/GRCh37_mapping/gencode.v{args.gencode_version}lift37.basic.annotation.gtf.gz"
+					gencode_gtf_url = f"https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_{gencode_version_number}/GRCh37_mapping/gencode.{args.gencode_version}lift37.basic.annotation.gtf.gz"
 				elif genome_version == "38":
-					gencode_gtf_url = f"https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_{args.gencode_version}/gencode.v{args.gencode_version}.basic.annotation.gtf.gz"
+					gencode_gtf_url = f"https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_{gencode_version_number}/gencode.{args.gencode_version}.basic.annotation.gtf.gz"
 				else:
 					parser.error(f"Invalid genome version: {genome_version}")
 
 				run(f"wget -nc {gencode_gtf_url}")
+				run(f"wget -nc https://hgdownload.soe.ucsc.edu/admin/exe/macOSX.x86_64/gtfToGenePred")
+				run(f"chmod 777 gtfToGenePred")
 				gencode_gtf_paths[genome_version] = os.path.basename(gencode_gtf_url)
 		else:
 			if not args.genome_version:
@@ -72,6 +83,49 @@ def main():
 			gencode_gtf_paths[args.genome_version] = args.gencode_gtf
 
 		for genome_version, gencode_gtf_path in gencode_gtf_paths.items():
+			# generate genePred files to use as gene tracks in IGV.js
+			if args.gencode_version:
+				gene_pred_path = f"gencode.{args.gencode_version}.GRCh{genome_version}.txt"
+				run(f"./gtfToGenePred -genePredExt -geneNameAsName2 {gencode_gtf_path} {gene_pred_path}")
+
+				print(f"Reading {gene_pred_path}")
+				column_names = [
+					"name",
+					"chrom",
+					"strand",
+					"txStart",
+					"txEnd",
+					"cdsStart",
+					"cdsEnd",
+					"exonCount",
+					"exonStarts",
+					"exonEnds",
+					"score",
+					"name2",
+					"cdsStartStat",
+					"cdsEndStat",
+					"exonFrames",
+				]
+				df = pd.read_table(gene_pred_path, names=column_names)
+				df["txStart"] = df["txStart"].astype(int)
+				df["txEnd"] = df["txEnd"].astype(int)
+				filter_exp = (df["txStart"] > 0) & (df["txEnd"] > 0)
+				df2 = df[filter_exp]
+				if len(df) - len(df2) > 0:
+					print(f"Filtered out {len(df) - len(df2):,d} records from {gene_pred_path}:")
+					print(df[~filter_exp])
+
+				df2 = df2.sort_values(["chrom", "txStart", "txEnd"])
+				df2["i"] = df2["name2"].map({name: i for i, name in enumerate(df2.name2.unique())})
+				df2 = df2[["i"] + column_names]
+				sorted_gene_pred_path = gene_pred_path.replace(".txt", ".sorted.txt")
+				df2.to_csv(sorted_gene_pred_path, header=False, index=False, sep="\t")
+				run(f"bgzip -f {sorted_gene_pred_path}")
+				run(f"tabix -s 3 -b 5 -e 6 -f {sorted_gene_pred_path}.gz")
+
+				run(f"gsutil -m cp {sorted_gene_pred_path}.gz* gs://tgg-viewer/ref/GRCh{genome_version}/gencode_{args.gencode_version}/")
+
+			# generate SpliceAI annotation files
 			run(f"python3 ../annotations/generate_transcript_annotation_json.py {gencode_gtf_path}")
 			output_json_path = gencode_gtf_path.replace(".gtf.gz", ".transcript_annotations.json")
 			run(f"python3 ../annotations/convert_gtf_to_SpliceAI_annotation_input_format.py -a {output_json_path} {gencode_gtf_path}")
@@ -88,6 +142,7 @@ def main():
 				run(f"gzcat {gencode_gtf_path} | sed 's/chr//g' | bgzip > {gencode_gtf_path_without_chr_prefix}")
 				gencode_gtf_path = gencode_gtf_path_without_chr_prefix
 
+			# generate Pangolin annotation files
 			run(f"python3 create_pangolin_db.py {gencode_gtf_path}")
 			run(f"rm ./docker/pangolin/annotations/GRCh{genome_version}/gencode.*.annotation*.db")
 			run(f"mv {gencode_gtf_path.replace('.gtf.gz', '.db')} ./docker/pangolin/annotations/GRCh{genome_version}/")
@@ -100,15 +155,29 @@ def main():
 			with open("server.py", "wt") as f:
 				for i, line in enumerate(server_py):
 					if line.startswith("GENCODE_VERSION ="):
-						new_gencode_line = f"GENCODE_VERSION = \"v{args.gencode_version}\""
+						new_gencode_line = f"GENCODE_VERSION = \"{args.gencode_version}\""
 						f.write(f"{new_gencode_line}\n")
 						updated_line = True
 						print(f"Updated server.py line #{i} to {new_gencode_line}")
 					else:
 						f.write(line)
 
+			with open("../index.html", "rt") as f:
+				index_html = f.readlines()
+
+			updated_line = False
+			with open("../index.html", "wt") as f:
+				for i, line in enumerate(index_html):
+					if "const GENCODE_VERSION = " in line:
+						new_gencode_line = f"\tconst GENCODE_VERSION = \"{args.gencode_version}\""
+						f.write(f"{new_gencode_line}\n")
+						updated_line = True
+						print(f"Updated index.html line #{i} to {new_gencode_line}")
+					else:
+						f.write(line)
+
 			if not updated_line:
-				print("WARNING: Unable to find GENCODE_VERSION line in server.py")
+				print("WARNING: Unable to find GENCODE_VERSION line in index.html")
 
 		return
 
