@@ -583,7 +583,7 @@
 
         let chrom, pos, ref, alt, variantConsequence
         let matchedRegExp = variant.match(VARIANT_RE)
-        let ensemblApiUrl
+        let ensemblApiUrl, ensemblApiResponse, ensemblApiResponseJson
         if (matchedRegExp) {
             // was able to parse the user input using a simple reg-exp
             chrom = matchedRegExp[2].toUpperCase()
@@ -604,7 +604,7 @@
                 throw Error(`Ensembl API call failed: Unable to reach server`)
             }
 
-            const ensemblApiResponseJson = await ensemblApiResponse
+            ensemblApiResponseJson = await ensemblApiResponse
             console.log(`Ensembl API response:`, ensemblApiResponseJson)
 
             if (!ensemblApiResponse.ok || ensemblApiResponseJson.error) {
@@ -628,29 +628,27 @@
 
             variant = ensemblApiResponseJson[0].vcf_string
 
-            matchedRegExp = variant.match(VARIANT_RE)
-            if (!matchedRegExp) {
-                throw new Error(`Unexpected response: ${ensemblApiResponseJson}`)
-            }
-
-            chrom = matchedRegExp[2].toUpperCase()
-            pos = parseInt(matchedRegExp[3])
-            ref = matchedRegExp[4].toUpperCase()
-            alt = matchedRegExp[5].toUpperCase()
-
             variantConsequence = ensemblApiResponseJson[0].most_severe_consequence
         } catch (e) {
             console.error(e)
-
-            if (!chrom) {
-                throw Error(`Unable to parse variant: ${variant}`)
-            }
         }
 
-        return {
+        matchedRegExp = variant.match(VARIANT_RE)
+        if (!matchedRegExp) {
+            throw new Error(`Unexpected response: ${ensemblApiResponseJson}`)
+        }
+
+        chrom = matchedRegExp[2].toUpperCase()
+        pos = parseInt(matchedRegExp[3])
+        ref = matchedRegExp[4].toUpperCase()
+        alt = matchedRegExp[5].toUpperCase()
+
+        const result = {
             'variant': `${chrom}-${pos}-${ref}-${alt}`,
             'consequence': variantConsequence,
         }
+        console.log("EnsemblAPI result:", result)
+        return result
 
 
         /*
@@ -772,8 +770,6 @@
         const ref = variantTokens[2]
         const alt = variantTokens[3]
 
-        variantConsequence = variantConsequence || ""
-
         const baseUrl = baseApiUrl[`${tool.toLowerCase()}-${genomeVersion}`]
         const urlArgs = `hg=${genomeVersion}&distance=${maxDistance}&mask=${mask}&variant=${chrom}-${pos}-${ref}-${alt}&raw=${variant}&variant_consequence=${variantConsequence}`
 
@@ -791,7 +787,15 @@
             throw Error(`${tool} API call error ${apiResponseJson.error ? `: ${apiResponseJson.error}` : ""}`)
         }
 
-        //if (tool == "SpliceAI") throw Error(`${tool} error!!`)  // for testing API errors
+        variantConsequence = variantConsequence || ""
+        const variantConsequenceDiv = variantConsequence ? `
+        <div display: inline-block>
+            <a href="https://www.ensembl.org/info/genome/variation/prediction/predicted_data.html" class="small-link" target="_blank">
+            ${variantConsequence.replace(/_/g, ' ')}
+            </a>
+         </div>
+         <br class="only-large-screen"/>
+         ` : ""
 
         //sort transcripts
         apiResponseJson.scores = _(apiResponseJson.scores).sortBy((s) => (  //compute sort key
@@ -844,12 +848,7 @@
                     <div style="margin-right:10px; display: inline-block">${variant}</div><br class="only-large-screen"/>
                     ${normalizedVariantDiv}
                     <br class="only-large-screen"/>
-                    <div display: inline-block>
-                        <a href="https://www.ensembl.org/info/genome/variation/prediction/predicted_data.html" class="small-link" target="_blank">
-                        ${variantConsequence.replace(/_/g, ' ')}
-                        </a>
-                     </div>
-                     <br class="only-large-screen"/>
+                    ${variantConsequenceDiv}
                     <a href="${getUCSCBrowserUrl(genomeVersion, chrom, pos)}" class="small-link" target="_blank">UCSC</a>,
                     <a href="https://gnomad.broadinstitute.org/variant/${variant}?dataset=${gnomadVersion}" class="small-link" target="_blank">gnomAD</a>
                     <br class="only-large-screen"/>
@@ -925,10 +924,9 @@
         } else {
             $("#transcript-button-table").hide()
         }
-        if (Object.keys(transcriptCategories).length > 1) {
-            $("#transcript-button-table").show()
-            updateTranscriptButtons("main")
-        }
+
+        $("#transcript-button-table").show()
+        updateTranscriptButtons(Object.keys(transcriptCategories).length > 1 ? "main" : "all")
 
         return apiResponseJson
     }
@@ -1327,8 +1325,6 @@
             const normalizedVariantAndConsequence = await normalizeVariant(variant, genomeVersion)
             const normalizedVariant = normalizedVariantAndConsequence.variant
             const variantConsequence = normalizedVariantAndConsequence.consequence
-
-            console.log("variantConsequence", variantConsequence)
 
             //let [spliceaiResponseJson, pangolinResponseJson, variantAnnotationsJson] = await Promise.all([
             let [spliceaiResponseJson, pangolinResponseJson] = await Promise.all([
