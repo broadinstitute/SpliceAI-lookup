@@ -16,10 +16,7 @@ RUN python3 -m pip install tensorflow==2.16.1
 RUN apt update && apt-get install --no-install-recommends -y build-essential libpq-dev
 
 COPY docker/spliceai/requirements.txt /
-RUN python3 -m pip install setuptools==57.5.0 \
-    && python3 -m pip install pyvcf>=0.6.8 \
-	&& python3 -m pip install --upgrade setuptools \
-	&& python3 -m pip install --upgrade -r /requirements.txt
+RUN python3 -m pip install --upgrade -r /requirements.txt
 
 RUN git clone https://github.com/bw2/SpliceAI.git  \
     && cd SpliceAI \

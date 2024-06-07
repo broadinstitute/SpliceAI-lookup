@@ -1,5 +1,5 @@
 tensorflow==2.16.1
-keras==2.1.5
+keras>=3.0.0
 spliceai @ git+https://github.com/bw2/SpliceAI   # if the latest version isn't being installed, clone the repo and install from the local directory by running python3 setup.py install
 flask
 flask-cors
@@ -14,5 +14,5 @@ redis
 gffutils
 biopython
 pyfastx
-pyvcf>=0.6.8    # if you get an installation error like "use_2to3 is invalid", downgrade to setuptools==57.5.0, install pyvcf, then upgrade setuptools. 
+PyVCF3>=1.0.3
 pangolin @ git+https://github.com/bw2/Pangolin     # if the latest version isn't being installed, clone the repo and install from the local directory by running python3 setup.py install
