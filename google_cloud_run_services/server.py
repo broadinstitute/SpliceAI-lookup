@@ -690,4 +690,5 @@ def log_event(name):
 def catch_all(path):
     return f"SpliceAI-lookup APIs: invalid endpoint {path}"
 
-app.run(debug=DEBUG, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+if '__main__' == __name__:
+    app.run(debug=DEBUG, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
