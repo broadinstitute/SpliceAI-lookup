@@ -154,7 +154,7 @@
                                 <div id="more-details1" style="display:none">
                                     <br />
                                     This web service is maintained by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.
-                                    It runs the SpliceAI and Pangolin splicing prediction models on the user-specified variant and then shows the scores in a table and in a web-based IGV visualization.<br />
+                                    It runs the SpliceAI and Pangolin splicing prediction models on user-specified variants and then displays the scores.<br />
                                     <br />
                                     For more information about SpliceAI, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a>
                                     and this <a href="https://www.youtube.com/watch?v=oJvhj-tYbBI" target="_blank">recorded talk</a> by Kishore Jaganathan.<br />
@@ -166,10 +166,10 @@
                                     <a href="https://github.com/bw2/SpliceAI">https://github.com/bw2/SpliceAI</a><br />
                                     <a href="https://github.com/bw2/Pangolin">https://github.com/bw2/Pangolin</a><br />
                                     <br />
-                                    It does not use precomputed score tables. <br />
-                                    <br />
                                     The visualizations of SpliceAI and Pangolin results are implemented as custom <a href="https://github.com/igvteam/igv.js">IGV.js</a> tracks at: <br />
                                     <a href="https://github.com/bw2/igv.js/pull/1">https://github.com/bw2/igv.js</a><br />
+                                    <br />
+                                    We no longer use the Illumina precomputed SpliceAI score tables since they are based on an old version of Gencode. <br />
                                     <br />
                                     <b>NOTE:</b> This service supports no more than a handful of queries per-user per-minute. If you need to batch-process many variants, please use the
                                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/blob/master/README.md#local-install" target="_blank">source code</a>
@@ -184,7 +184,7 @@
                                     <thead style="text-align: left"><tr><th style="padding-bottom: 20px;">Examples &nbsp; (on hg38):</th><th></th></tr></thead>
                                     <tbody>
                                     <tr><td>chr8-140300616-T-G</td><td></td></tr>
-                                    <tr><td>chr8 &nbsp; 140300616 &nbsp; T &nbsp; G</td><td></td></tr>
+                                    <tr><td>6 &nbsp; 31740453 &nbsp; G &nbsp; T</td><td></td></tr>
                                     <tr>
                                         <td style="padding-right: 0px">NM_001089.3(ABCA3):c.875A>T (p.Glu292Val)</td>
                                         <td style="padding-left: 0px; padding-right:7px;">
@@ -261,9 +261,11 @@
                 <div>
                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website<br />
                     <br/>
+                    <b>June 20, 2024</b><br />
+                    - fixed SpliceAI visualizations to clarify positions of predicted splicing changes. See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/70" target="_blank">issue #70</a> for details. <br />
+                    <br />
                     <b>June 3, 2024</b><br />
                     - show the input variant's <a href="https://useast.ensembl.org/info/docs/tools/vep/index.html" target="blank">VEP</a> consequence in the results table<br />
-                    - updated SpliceAI visualizations to clarify positions of predicted splicing changes. See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/70" target="_blank">issue #70</a> for details. <br />
                     - the Gencode gene track is now optional in the visualizations<br />
                     - updated everything to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v46</a><br/>
                     <br />
