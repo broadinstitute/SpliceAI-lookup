@@ -607,32 +607,32 @@
             ensemblApiResponseJson = await ensemblApiResponse
             console.log(`Ensembl API response:`, ensemblApiResponseJson)
 
-            if (!ensemblApiResponse.ok || ensemblApiResponseJson.error) {
-                let errorText = `${ensemblApiResponseJson.error}`
-                const unableToParseHGVSErrorMatch = errorText.match("Unable to parse HGVS notation")
-                if (unableToParseHGVSErrorMatch) {
-                    errorText = `Ensembl API is unable to parse the variant ${variant}`
-                }
-                const refAlleleErrorMatch = errorText.match(
-                    new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
-                if (refAlleleErrorMatch) {
-                    errorText = `${variant} has an unexpected reference allele. The hg${genomeVersion} reference allele should be ${refAlleleErrorMatch[1]}`
-                }
-
-                throw new Error(errorText);
-            }
-
-            if (!ensemblApiResponseJson[0] || !ensemblApiResponseJson[0].vcf_string) {
-                throw new Error(`Unexpected response: ${ensemblApiResponseJson}`);
-            }
-
-            variant = ensemblApiResponseJson[0].vcf_string
-
-            variantConsequence = ensemblApiResponseJson[0].most_severe_consequence
         } catch (e) {
             console.error(e)
         }
+	
+        if (!ensemblApiResponse.ok || ensemblApiResponseJson.error) {
+            let errorText = `${ensemblApiResponseJson.error}`
+            const refAlleleErrorMatch = errorText.match(
+                new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
+            const unableToParseHGVSErrorMatch = errorText.match("Unable to parse HGVS notation")
+            if (refAlleleErrorMatch) {
+                errorText = `${variant} has an unexpected reference allele. The hg${genomeVersion} reference allele should be ${refAlleleErrorMatch[1]}`
+            } else if (unableToParseHGVSErrorMatch) {
+                errorText = `Ensembl API was unable to parse the variant ${variant}: ${errorText.split(/[:]/).pop()}`
+            }
 
+            throw new Error(errorText);
+        }
+	
+        if (!ensemblApiResponseJson[0] || !ensemblApiResponseJson[0].vcf_string) {
+            throw new Error(`Unexpected response: ${ensemblApiResponseJson}`);
+        }
+
+        variant = ensemblApiResponseJson[0].vcf_string
+
+        variantConsequence = ensemblApiResponseJson[0].most_severe_consequence
+	
         matchedRegExp = variant.match(VARIANT_RE)
         if (!matchedRegExp) {
             throw new Error(`Unexpected response: ${ensemblApiResponseJson}`)
@@ -1046,6 +1046,9 @@
             if (!apiResponse) {
                 continue
             }
+	    if (!apiResponse.allNonZeroScores) {
+                continue
+	    }
             for (const scores of apiResponse.allNonZeroScores) {
                 scores["chr"] = chrom
                 scores["start"] = scores["pos"]
@@ -1108,8 +1111,8 @@
                     rawOrDelta: "raw",
                     tool: "SpliceAI",
                     type: "spliceprediction",
-                    features: spliceaiResponseJson.allNonZeroScores,
-                    strand: spliceaiResponseJson.allNonZeroScoresStrand,
+                    features: spliceaiResponseJson.allNonZeroScores || [],
+                    strand: spliceaiResponseJson.allNonZeroScoresStrand || "+",
                 })
             }
             if (tracksToShow["igv-spliceai-delta-scores"]) {
@@ -1126,8 +1129,8 @@
                     rawOrDelta: "delta",
                     tool: "SpliceAI",
                     type: "spliceprediction",
-                    features: spliceaiResponseJson.allNonZeroScores,
-                    strand: spliceaiResponseJson.allNonZeroScoresStrand,
+                    features: spliceaiResponseJson.allNonZeroScores || [],
+                    strand: spliceaiResponseJson.allNonZeroScoresStrand || "+",
                 })
             }
         }
@@ -1148,8 +1151,8 @@
                     rawOrDelta: "delta",
                     tool: "Pangolin",
                     type: "spliceprediction",
-                    features: pangolinResponseJson.allNonZeroScores,
-                    strand: pangolinResponseJson.allNonZeroScoresStrand,
+                    features: pangolinResponseJson.allNonZeroScores || [],
+                    strand: pangolinResponseJson.allNonZeroScoresStrand || "+",
                 })
             }
         }
