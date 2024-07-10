@@ -212,7 +212,7 @@
                         </div>
                         <br />
                         <br />
-			-->
+            -->
                         <div class="ui form" style="width:100%">
                             <div class="ui input" style="padding-bottom:30px; padding-right:8px; width:100%">
                                 <input id="search-box" type="text" style="width: 100%; padding: 7px 10px" placeholder="Enter a variant...">
@@ -328,7 +328,7 @@
                     <div>
                       <b>Related web tools:</b><br/>
                         <a href="https://liftover.broadinstitute.org" target="_blank">liftover</a>: for variants/positions/intervals (hg19 <=> hg38 <=> T2T)<br/>		      
-		        <a href="https://tgg-viewer.broadinstitute.org" target="_blank">TGG Viewer</a>: igv.js-based web viewer for public reference tracks and private data in Google Storage buckets. Has custom track types for RNA-seq <a href="https://github.com/igvteam/igv.js/pull/1019#issue-521944897" target="_blank">splice junctions</a> and <a href="https://github.com/igvteam/igv.js/pull/1055#issue-560042328" target="_blank">gCNV</a> variants.<br/>
+                <a href="https://tgg-viewer.broadinstitute.org" target="_blank">TGG Viewer</a>: igv.js-based web viewer for public reference tracks and private data in Google Storage buckets. Has custom track types for RNA-seq <a href="https://github.com/igvteam/igv.js/pull/1019#issue-521944897" target="_blank">splice junctions</a> and <a href="https://github.com/igvteam/igv.js/pull/1055#issue-560042328" target="_blank">gCNV</a> variants.<br/>
                     </div>
                 </div>
             </div>
@@ -506,7 +506,7 @@
 </div>
 
 <script>
-	const GENCODE_VERSION = "v46"
+    const GENCODE_VERSION = "v46"
 
     const VARIANT_RE = new RegExp(
         "^[\\s]*" +
@@ -581,6 +581,8 @@
          *  string: the input variant reformatted as a "{chrom}-{pos}-{ref}-{alt}" string
          */
 
+        const ensemblApiPrefix = `https://${genomeVersion == '37' ? 'grch37.' : ''}rest.ensembl.org/vep/human/hgvs/`
+
         let chrom, pos, ref, alt, variantConsequence
         let matchedRegExp = variant.match(VARIANT_RE)
         let ensemblApiUrl, ensemblApiResponse, ensemblApiResponseJson
@@ -590,15 +592,28 @@
             pos = parseInt(matchedRegExp[3].replace(/,/g, ""))
             ref = matchedRegExp[4].toUpperCase()
             alt = matchedRegExp[5].toUpperCase()
-            ensemblApiUrl = `https://${genomeVersion == '37' ? 'grch37.' : ''}rest.ensembl.org/vep/human/hgvs/${chrom}:g.${pos}${ref}>${alt}?content-type=application/json&vcf_string=1`
+
+            if (ref.length == 1) {
+                //handle SNPs and insertions
+                ensemblApiUrl = `${ensemblApiPrefix}${chrom}:g.${pos}${ref}>${alt}`
+            } else if(alt.length == 1) {
+                //handle deletions
+                ensemblApiUrl = `${ensemblApiPrefix}${chrom}:g.${pos+1}_${pos+ref.length-1}del${ref.slice(1)}`
+            } else {
+                //converting MNP into HGVS is not straight forward, so just return the variant
+                return { 'variant': `${chrom}-${pos}-${ref}-${alt}` }
+            }
         }
         else {
-            ensemblApiUrl = `https://${genomeVersion == '37' ? 'grch37.' : ''}rest.ensembl.org/vep/human/hgvs/${variant.trim()}?content-type=application/json&vcf_string=1`
+            //assume the variant is already in HGVS notation
+            ensemblApiUrl = `${ensemblApiPrefix}${variant.trim()}`
         }
+
+
         // try calling the Ensembl API on the user input
         try {
             try {
-                ensemblApiResponse = await makeRequest(ensemblApiUrl)
+                ensemblApiResponse = await makeRequest(ensemblApiUrl + "?content-type=application/json&vcf_string=1")
             } catch (e) {
                 console.error(e)
                 throw Error(`Ensembl API call failed: Unable to reach server`)
@@ -607,48 +622,50 @@
             ensemblApiResponseJson = await ensemblApiResponse
             console.log(`Ensembl API response:`, ensemblApiResponseJson)
 
-        } catch (e) {
-            console.error(e)
-        }
-	
-        if (!ensemblApiResponse.ok || ensemblApiResponseJson.error) {
-            let errorText = `${ensemblApiResponseJson.error}`
-            const refAlleleErrorMatch = errorText.match(
-                new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
-            const unableToParseHGVSErrorMatch = errorText.match("Unable to parse HGVS notation")
-            if (refAlleleErrorMatch) {
-                errorText = `${variant} has an unexpected reference allele. The hg${genomeVersion} reference allele should be ${refAlleleErrorMatch[1]}`
-            } else if (unableToParseHGVSErrorMatch) {
-                errorText = `Ensembl API was unable to parse the variant ${variant}: ${errorText.split(/[:]/).pop()}`
+            if (!ensemblApiResponse.ok || ensemblApiResponseJson.error) {
+                let errorText = `${ensemblApiResponseJson.error}`
+                //const unableToParseHGVSErrorMatch = errorText.match("Unable to parse HGVS notation")
+                //if (unableToParseHGVSErrorMatch) {
+                //    errorText = `Ensembl API is unable to parse the variant ${variant}: ${errorText}`
+                //}
+                const refAlleleErrorMatch = errorText.match(
+                    new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
+                if (refAlleleErrorMatch) {
+                    errorText = `${variant} has an unexpected reference allele. The hg${genomeVersion} reference allele should be ${refAlleleErrorMatch[1]}`
+                }
+
+                throw new Error(errorText);
             }
 
-            throw new Error(errorText);
-        }
-	
-        if (!ensemblApiResponseJson[0] || !ensemblApiResponseJson[0].vcf_string) {
-            throw new Error(`Unexpected response: ${ensemblApiResponseJson}`);
+            if (!ensemblApiResponseJson[0] || !ensemblApiResponseJson[0].vcf_string) {
+                throw new Error(`Unexpected response: ${ensemblApiResponseJson}`);
+            }
+
+            variant = ensemblApiResponseJson[0].vcf_string
+            variantConsequence = ensemblApiResponseJson[0].most_severe_consequence
+            matchedRegExp = variant.match(VARIANT_RE)
+            if (!matchedRegExp) {
+                throw new Error(`Unexpected response: ${ensemblApiResponseJson}`)
+            }
+
+            chrom = matchedRegExp[2].toUpperCase()
+            pos = parseInt(matchedRegExp[3])
+            ref = matchedRegExp[4].toUpperCase()
+            alt = matchedRegExp[5].toUpperCase()
+
+            result = {
+                'variant': `${chrom}-${pos}-${ref}-${alt}`,
+                'consequence': variantConsequence,
+            }
+            console.log("EnsemblAPI result:", result)
+
+            return result
+
+        } catch (e) {
+            console.error(e)
+            throw new Error(e)
         }
 
-        variant = ensemblApiResponseJson[0].vcf_string
-
-        variantConsequence = ensemblApiResponseJson[0].most_severe_consequence
-	
-        matchedRegExp = variant.match(VARIANT_RE)
-        if (!matchedRegExp) {
-            throw new Error(`Unexpected response: ${ensemblApiResponseJson}`)
-        }
-
-        chrom = matchedRegExp[2].toUpperCase()
-        pos = parseInt(matchedRegExp[3])
-        ref = matchedRegExp[4].toUpperCase()
-        alt = matchedRegExp[5].toUpperCase()
-
-        const result = {
-            'variant': `${chrom}-${pos}-${ref}-${alt}`,
-            'consequence': variantConsequence,
-        }
-        console.log("EnsemblAPI result:", result)
-        return result
 
 
         /*
@@ -835,7 +852,8 @@
                 resultRowClasses.push("non-coding-transcript")
             }
 
-            const normalizedVariantDiv = variant.match(VARIANT_RE) && variant.toUpperCase().indexOf(normalizedVariant.toUpperCase()) >= 0 ? "" :
+            const noDifferenceDueToNormalization = variant.toLowerCase().trim().replace(/^chr/, "").replace(/[>: _-]+/g, "-") == normalizedVariant.toLowerCase().trim().replace(/^chr/, "").replace(/[>: _-]+/g, "-")
+            const normalizedVariantDiv = noDifferenceDueToNormalization ? "" :
                 `<br class="only-large-screen"/>
                  <div style="margin-left:5px;margin-right:10px; display: inline-block; color:#333333">
                     <i>⇒ ${chrom}:${pos} ${ref}&gt;${alt}</i>
@@ -1046,9 +1064,9 @@
             if (!apiResponse) {
                 continue
             }
-	    if (!apiResponse.allNonZeroScores) {
+            if (!apiResponse.allNonZeroScores) {
                 continue
-	    }
+            }
             for (const scores of apiResponse.allNonZeroScores) {
                 scores["chr"] = chrom
                 scores["start"] = scores["pos"]
