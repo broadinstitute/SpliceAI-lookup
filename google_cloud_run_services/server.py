@@ -608,7 +608,7 @@ def run_splice_prediction_tool(tool_name):
     response_json.update(params)  # copy input params to output
     response_json.update(results)
 
-    respone_string = json.dumps(response_json, indent=4)
+    respone_string = json.dumps(response_json, indent=1)
     print(f"{logging_prefix}: {variant} took {str(datetime.now() - start_time)} to compute response: {respone_string}", flush=True)
 
     return Response(respone_string, status=200, mimetype='application/json', headers=[
