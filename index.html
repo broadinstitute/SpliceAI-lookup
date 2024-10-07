@@ -154,7 +154,7 @@
                                 <div id="more-details1" style="display:none">
                                     <br />
                                     <a href="https://github.com/illumina/SpliceAI" target="_blank">SpliceAI</a> is a copyrighted work by Illumina and is provided under GPLv3 and CC BY NC 4.0 licenses for academic and non-commercial use.
-				    This web service is maintained by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.
+                                    This web service is maintained by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.
                                     It runs the SpliceAI and Pangolin splicing prediction models on user-specified variants and then displays the scores.<br />
                                     <br />
                                     For more information about SpliceAI, see <a href="https://doi.org/10.1016/j.cell.2018.12.015" target="_blank">Jaganathan et al, Cell 2019</a>
@@ -1403,7 +1403,10 @@
 
     const applyUrlSettingsToFormElements = () => {
         // get optional settings from the url and update form settings
-        const hgFromUrl = $.urlParam('hg')
+        let hgFromUrl = $.urlParam('hg')
+        if (hgFromUrl == "19") {
+            hgFromUrl = "37"
+        }
         if (hgFromUrl && (hgFromUrl == "38" || hgFromUrl == "37")) {
             $(`input[name='hg'][value='${hgFromUrl}']`).prop("checked", true)
         }
