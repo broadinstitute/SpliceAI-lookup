@@ -1,6 +1,7 @@
 from collections import defaultdict
 from datetime import datetime
 import json
+import logging
 import os
 import pandas as pd
 from pprint import pprint
@@ -24,6 +25,7 @@ DEBUG = True # if socket.gethostname() == "spliceai-lookup" else True
 if not DEBUG:
     Talisman(app)
 
+logging.getLogger('werkzeug').disabled = True
 
 DEFAULT_DISTANCE = 500  # maximum distance between the variant and gained/lost splice site, defaults to 500
 MAX_DISTANCE_LIMIT = 10000
@@ -165,36 +167,38 @@ def init_database_connection():
             return  # connection is already initialized
         except psycopg2.OperationalError as oe:
             print("WARNING: Connection has closed. Reopenning...")
+            DATABASE_CONNECTION = None
 
-    print("Environment:")
-    pprint(dict(os.environ))
-    try:
-        DATABASE_CONNECTION = psycopg2.connect(
-            host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
-            database="spliceai-lookup-db",
-            user="postgres",
-            password=os.environ.get("DB_PASSWORD"))
-        DATABASE_CONNECTION.autocommit = True
-    except Exception as e:
-        print(f"ERROR: Unable to connect to the database: {e}. Proceeding without a database connection...")
-        traceback.print_exc()
-        return
+    if DATABASE_CONNECTION is None:
+        print("Environment:", dict(os.environ))
 
-    def does_table_exist(table_name):
-        results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename=%s)", (table_name,))
-        does_table_already_exist = results[0][0]
-        return does_table_already_exist
+        try:
+            DATABASE_CONNECTION = psycopg2.connect(
+                host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
+                database="spliceai-lookup-db",
+                user="postgres",
+                password=os.environ.get("DB_PASSWORD"))
+            DATABASE_CONNECTION.autocommit = True
+        except Exception as e:
+            print(f"ERROR: Unable to connect to the database: {e}. Proceeding without a database connection...")
+            traceback.print_exc()
+            return
 
-    if not does_table_exist("cache"):
-        print("Creating cache table")
-        run_sql("""CREATE TABLE cache (key TEXT UNIQUE, value TEXT, counter INT, accessed TIMESTAMP DEFAULT now())""")
-        run_sql("""CREATE INDEX cache_index ON cache (key)""")
+        def does_table_exist(table_name):
+            results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename=%s)", (table_name,))
+            does_table_already_exist = results[0][0]
+            return does_table_already_exist
 
-    if not does_table_exist("log"):
-        print("Creating event_log table")
-        run_sql("""CREATE TABLE log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), distance INT, mask INT4, details TEXT, variant_consequence TEXT)""")
-        run_sql("""CREATE INDEX log_index1 ON log (event_name)""")
-        run_sql("""CREATE INDEX log_index2 ON log (ip)""")
+        if not does_table_exist("cache"):
+            print("Creating cache table")
+            run_sql("""CREATE TABLE cache (key TEXT UNIQUE, value TEXT, counter INT, accessed TIMESTAMP DEFAULT now())""")
+            run_sql("""CREATE INDEX cache_index ON cache (key)""")
+
+        if not does_table_exist("log"):
+            print("Creating event_log table")
+            run_sql("""CREATE TABLE log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), distance INT, mask INT4, details TEXT, variant_consequence TEXT)""")
+            run_sql("""CREATE INDEX log_index1 ON log (event_name)""")
+            run_sql("""CREATE INDEX log_index2 ON log (ip)""")
 
 
 def run_sql(sql_query, *args):
@@ -691,5 +695,5 @@ def log_event(name):
 def catch_all(path):
     return f"SpliceAI-lookup APIs: invalid endpoint {path}"
 
-if '__main__' == __name__:
+if '__main__' == __name__ or os.environ.get('RUNNING_ON_GOOGLE_CLOUD_RUN'):
     app.run(debug=DEBUG, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
