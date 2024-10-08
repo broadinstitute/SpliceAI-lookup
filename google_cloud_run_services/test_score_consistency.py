@@ -8,6 +8,7 @@ import pandas as pd
 import psycopg2
 import requests
 import tqdm
+import time
 
 p = configargparse.ArgParser(default_config_files=["~/.spliceai_lookup_db_config"])
 p.add_argument("--ip", required=True)
@@ -15,14 +16,20 @@ p.add_argument("--user", required=True)
 p.add_argument("--password", required=True)
 p.add_argument("--db", default="spliceai-lookup-db")
 p.add_argument("-n", type=int, help="number of rows to query", default=1000)
+p.add_argument("-p", "--show-progress-bar", action="store_true")
 args, _ = p.parse_known_args()
 
 
 conn = psycopg2.connect(f"dbname='{args.db}' user='{args.user}' host='{args.ip}' password='{args.password}'")
 df = pd.read_sql_query(f"SELECT key, value FROM cache LIMIT {args.n}", conn)
 counter = collections.Counter()
-for cache_key, cache_value in tqdm.tqdm(zip(df.key, df.value), total=len(df), unit=" variants", unit_scale=True):
-	print("Processing", cache_key)
+
+iterator = zip(df.key, df.value)
+if args.show_progress_bar:
+	iterator = tqdm.tqdm(iterator, total=len(df), unit=" variants", unit_scale=True)
+
+for i, (cache_key, cache_value) in enumerate(iterator):
+	print(f"{i+1:3,d}: Processing", cache_key)
 	data = json.loads(cache_value)
 	hg = data["genomeVersion"]
 	tool = data["source"].split(":")[0]
@@ -37,9 +44,12 @@ for cache_key, cache_value in tqdm.tqdm(zip(df.key, df.value), total=len(df), un
 	counter[f" m{mask}"] += 1
 
 	# get json response
+	# time requests
+	start_time = time.time()
 	url = f"https://{tool}-{hg}-xwkwwwxdwq-uc.a.run.app/{tool}/?hg={hg}&distance={distance}&mask={mask}&variant={variant}&raw={variant}"
 	#print(url)
 	response_json = requests.get(f"{url}&force=1").json()
+	elapsed_time = time.time() - start_time
 	response_scores = response_json["scores"]
 	cached_scores = cached_scores[0]
 	response_scores = response_scores[0]
@@ -60,7 +70,7 @@ for cache_key, cache_value in tqdm.tqdm(zip(df.key, df.value), total=len(df), un
 		print(f"	Cache: {json.dumps(data, indent=1)}")
 		print(f"	Response: {json.dumps(response_json, indent=1)}")
 
-	#print("Done with", cache_key)
+	print(f"{i+1:3,d}: Done with", cache_key, f"elapsed_time={elapsed_time:.1f}s")
 conn.close()
 
 print(f"Done")
