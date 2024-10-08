@@ -557,8 +557,7 @@ def run_splice_prediction_tool(tool_name):
     variant_consequence = params.get("variant_consequence")
 
     print(f"{logging_prefix}: ======================", flush=True)
-    print(f"{logging_prefix}: {variant} processing with hg={genome_version}, "
-          f"distance={distance_param}, mask={mask_param}", flush=True)
+    print(f"{logging_prefix}: {variant} hg={genome_version}, distance={distance_param}, mask={mask_param}", flush=True)
 
     
     if tool_name == "spliceai":
@@ -612,8 +611,8 @@ def run_splice_prediction_tool(tool_name):
     response_json.update(params)  # copy input params to output
     response_json.update(results)
 
-    response_log_string = json.dumps({k: v for k, v in response_json.items() if not k.startswith("allNonZeroScores")})
-    print(f"{logging_prefix}: {variant} took {str(datetime.now() - start_time)} to compute response: {response_log_string}", flush=True)
+    response_log_string = ", ".join([f"{k}: {v}" for k, v in response_json.items() if not k.startswith("allNonZeroScores")])
+    print(f"{logging_prefix}: {variant} response took {str(datetime.now() - start_time)}: {response_log_string}", flush=True)
 
     return Response(json.dumps(response_json), status=200, mimetype='application/json', headers=[
         ('Access-Control-Allow-Origin', '*'),
