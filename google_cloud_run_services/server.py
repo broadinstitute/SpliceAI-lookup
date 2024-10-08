@@ -242,11 +242,11 @@ def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, 
 
 
 def get_splicing_scores_from_cache(tool_name, variant, genome_version, distance, mask):
+    results = {}
     if DATABASE_CONNECTION is None:
-        return None
+        return results
 
     key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask)
-    results = None
     try:
         rows = run_sql(f"SELECT value FROM cache WHERE key=%s", (key,))
         if rows:
@@ -556,6 +556,8 @@ def run_splice_prediction_tool(tool_name):
 
     variant_consequence = params.get("variant_consequence")
 
+    force = params.get("force")  # ie. don't use cache
+
     print(f"{logging_prefix}: ======================", flush=True)
     print(f"{logging_prefix}: {variant} hg={genome_version}, distance={distance_param}, mask={mask_param}", flush=True)
 
@@ -576,7 +578,10 @@ def run_splice_prediction_tool(tool_name):
     user_ip = get_user_ip(request)
 
     # check cache before processing the variant
-    results = get_splicing_scores_from_cache(tool_name, variant, genome_version, distance_param, mask_param)
+    results = {}
+    if not force:
+        results = get_splicing_scores_from_cache(tool_name, variant, genome_version, distance_param, mask_param)
+
     duration = (datetime.now() - start_time).total_seconds()
     if results:
         log(f"{tool_name}:from-cache", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, variant_consequence=variant_consequence)
