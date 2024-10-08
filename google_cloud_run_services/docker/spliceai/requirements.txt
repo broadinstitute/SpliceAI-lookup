@@ -1,10 +1,10 @@
 flask
 flask_cors
-flask_talisman
+flask-talisman==1.1.0
 gunicorn
-pandas
-BioPython
+pandas==2.2.2
+biopython==1.83
+pyfastx==2.1.0
 
 # sql
-psycopg2
-pyfastx
+psycopg2==2.9.9

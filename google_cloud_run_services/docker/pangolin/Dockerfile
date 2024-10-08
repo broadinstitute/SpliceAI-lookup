@@ -33,5 +33,6 @@ ENV PORT=8080
 ENV TOOL=pangolin
 ENV GENOME_VERSION=${GENOME_VERSION}
 ENV CONCURRENCY=${CONCURRENCY}
+ENV RUNNING_ON_GOOGLE_CLOUD_RUN=1
 
 CMD exec gunicorn --preload --bind :$PORT --workers ${CONCURRENCY} --threads 1 --timeout 0 server:app

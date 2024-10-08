@@ -29,9 +29,12 @@ COPY docker/ref/GRCh${GENOME_VERSION} /
 COPY docker/spliceai/annotations/GRCh${GENOME_VERSION} /
 COPY server.py /
 
+ENV TF_CPP_MIN_LOG_LEVEL=3
+
 ENV PORT=8080
 ENV TOOL=spliceai
 ENV GENOME_VERSION=${GENOME_VERSION}
 ENV CONCURRENCY=${CONCURRENCY}
+ENV RUNNING_ON_GOOGLE_CLOUD_RUN=1
 
 CMD exec gunicorn --preload --bind :$PORT --workers ${CONCURRENCY} --threads 1 --timeout 0 server:app
