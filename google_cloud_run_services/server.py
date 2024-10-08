@@ -319,7 +319,6 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
     # generate error message if variant falls outside annotated exons or introns
     OTHER_GENOME_VERSION = {"37": "38", "38": "37"}
     chrom_without_chr = chrom.replace("chr", "")
-    source = None
     scores = []
 
     record = VariantRecord(chrom, pos, ref, alt)
@@ -329,7 +328,6 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
             SPLICEAI_ANNOTATOR[genome_version],
             distance_param,
             mask_param)
-        source = "spliceai:model"
     except Exception as e:
         print(f"ERROR while computing SpliceAI scores for {variant}: {e}")
         traceback.print_exc()
@@ -387,8 +385,9 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
         "ref": ref,
         "alt": alt,
         "distance": distance_param,
+        "mask": mask_param,
         "scores": scores,
-        "source": source,
+        "source": "spliceai:model",
         "allNonZeroScores": all_non_zero_scores,
         "allNonZeroScoresStrand": all_non_zero_scores_strand,
         "allNonZeroScoresTranscriptId": all_non_zero_scores_transcript_id,
@@ -486,8 +485,9 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param):
         "ref": ref,
         "alt": alt,
         "distance": distance_param,
+        "mask": mask_param,
         "scores": scores,
-        "source": "pangolin",
+        "source": "pangolin:model",
         "allNonZeroScores": all_non_zero_scores,
         "allNonZeroScoresStrand": all_non_zero_scores_strand,
         "allNonZeroScoresTranscriptId": all_non_zero_scores_transcript_id,
