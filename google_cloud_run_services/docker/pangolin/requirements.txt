@@ -1,15 +1,19 @@
 flask
 flask_cors
-flask_talisman
+flask-talisman==1.1.0
 gunicorn
-pandas
 
 # pangolin dependencies:
-gffutils
-biopython
-pyfastx
+gffutils==0.13
+biopython==1.83
+pyfastx==2.1.0
 PyVCF3>=1.0.3
 
 # sql
-psycopg2
+psycopg2==2.9.9
+
+# Pangolin dependencies
+numpy==1.26.4
+pandas==2.2.2
+torch==2.2.1+cpu
 
