@@ -176,7 +176,7 @@ def init_database_connection():
             password=os.environ.get("DB_PASSWORD"))
         DATABASE_CONNECTION.autocommit = True
     except Exception as e:
-        print(f"ERROR: Unable to connect to the database: {e}")
+        print(f"ERROR: Unable to connect to the database: {e}. Proceeding without a database connection...")
         traceback.print_exc()
         return
 
@@ -608,10 +608,10 @@ def run_splice_prediction_tool(tool_name):
     response_json.update(params)  # copy input params to output
     response_json.update(results)
 
-    respone_string = json.dumps(response_json, indent=1)
-    print(f"{logging_prefix}: {variant} took {str(datetime.now() - start_time)} to compute response: {respone_string}", flush=True)
+    response_log_string = json.dumps({k: v for k, v in response_json.items() if not k.startswith("allNonZeroScores")})
+    print(f"{logging_prefix}: {variant} took {str(datetime.now() - start_time)} to compute response: {response_log_string}", flush=True)
 
-    return Response(respone_string, status=200, mimetype='application/json', headers=[
+    return Response(json.dumps(response_json), status=200, mimetype='application/json', headers=[
         ('Access-Control-Allow-Origin', '*'),
     ])
 
