@@ -21,7 +21,7 @@ args, _ = p.parse_known_args()
 
 
 conn = psycopg2.connect(f"dbname='{args.db}' user='{args.user}' host='{args.ip}' password='{args.password}'")
-df = pd.read_sql_query(f"SELECT key, value FROM cache WHERE key LIKE 'spliceai%' AND accessed < now() - INTERVAL '5 days' ORDER BY accessed ASC", conn)
+df = pd.read_sql_query(f"SELECT key, value FROM cache WHERE accessed < now() - INTERVAL '5 days' ORDER BY accessed ASC", conn)
 counter = collections.Counter()
 
 iterator = zip(df.key, df.value)
@@ -39,8 +39,9 @@ for i, (cache_key, cache_value) in enumerate(iterator):
     assert cache_key[-2:] in ("m1", "m0")
     mask = cache_key[-1]
     variant = data["variant"]
-    cached_scores = data["scores"]
 
+    data["scores"] = list(sorted(data["scores"], key=lambda s: s.get("t_id")))
+    cached_scores = data["scores"]
     counter[f"   {tool}"] += 1
     counter[f"  hg{hg}"] += 1
     counter[f" m{mask}"] += 1
@@ -57,16 +58,24 @@ for i, (cache_key, cache_value) in enumerate(iterator):
         continue
 
     elapsed_time = time.time() - start_time
+    response_json["scores"] = list(sorted(response_json["scores"], key=lambda s: s.get("t_id")))
     response_scores = response_json["scores"]
-    cached_scores = list(sorted(cached_scores, key=lambda s: s.get("t_id")))[0]
-    response_scores = list(sorted(response_scores, key=lambda s: s.get("t_id")))[0]
+    cached_scores = data["scores"][0]
+    response_scores = response_scores[0]
     if not response_scores.get("t_id") or response_scores.get("t_id") != cached_scores.get("t_id"):
         print("Transcript ids don't match:", response_scores.get("t_id"), "vs", cached_scores.get("t_id"), ". Skipping...")
+        continue
+    if not response_scores.get("g_id") or response_scores.get("g_id") != cached_scores.get("g_id"):
+        print("Gene ids don't match:", response_scores.get("g_id"), "vs", cached_scores.get("g_id"), ". Skipping...")
         continue
 
     missing_keys = set()
     mismatched_values = set()
     for k, v in cached_scores.items():
+        if k in ("t_refseq_ids", "t_id", "g_id"):
+            # differences in gene ids are not important
+            continue
+
         if k not in response_scores:
             missing_keys.add(k)
             continue
