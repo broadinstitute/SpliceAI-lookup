@@ -117,6 +117,7 @@ def init_spliceai(genome_version):
     if genome_version not in SPLICEAI_ANNOTATOR:
         SPLICEAI_ANNOTATOR[genome_version] = Annotator(FASTA_PATH[genome_version], SPLICEAI_ANNOTATION_PATHS[genome_version])
 
+
 def init_pangolin(genome_version):
 
     if not PANGOLIN_MODELS:
@@ -133,6 +134,7 @@ def init_pangolin(genome_version):
                 model.load_state_dict(weights)
                 model.eval()
                 PANGOLIN_MODELS.append(model)
+
 
 def init_transcript_annotations(genome_version):
     if genome_version in SHARED_TRANSCRIPT_ANNOTATIONS:
@@ -317,10 +319,6 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
         return error_resonse
 
     # generate error message if variant falls outside annotated exons or introns
-    OTHER_GENOME_VERSION = {"37": "38", "38": "37"}
-    chrom_without_chr = chrom.replace("chr", "")
-    scores = []
-
     record = VariantRecord(chrom, pos, ref, alt)
     try:
         scores = get_delta_scores(
@@ -641,8 +639,10 @@ def log(event_name, ip=None, duration=None, variant=None, genome=None, distance=
     except Exception as e:
         print(f"Log error: {e}", flush=True)
 
+
 def get_user_ip(request):
     return request.environ.get("HTTP_X_FORWARDED_FOR")
+
 
 @app.route('/log/<string:name>/', strict_slashes=False)
 def log_event(name):
@@ -694,10 +694,12 @@ def log_event(name):
         ('Access-Control-Allow-Origin', '*'),
     ])
 
+
 @app.route('/', strict_slashes=False, defaults={'path': ''})
 @app.route('/<path:path>/')
 def catch_all(path):
     return f"SpliceAI-lookup APIs: invalid endpoint {path}"
+
 
 if '__main__' == __name__ or os.environ.get('RUNNING_ON_GOOGLE_CLOUD_RUN'):
     app.run(debug=DEBUG, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
