@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import datetime
+import gzip
 import json
 import logging
 import os
@@ -31,8 +32,8 @@ DEFAULT_DISTANCE = 500  # maximum distance between the variant and gained/lost s
 MAX_DISTANCE_LIMIT = 10000
 DEFAULT_MASK = 0        # mask scores representing annotated acceptor/donor gain and unannotated acceptor/donor loss, defaults to 0
 
-SPLICEAI_EXAMPLE_URL = f"/spliceai/?hg=38&distance=500&mask=0&variant=chr8-140300615-C-G"
-PANGOLIN_EXAMPLE_URL = f"/pangolin/?hg=38&distance=500&mask=0&variant=chr8-140300615-C-G"
+SPLICEAI_EXAMPLE_URL = f"/spliceai/?hg=38&distance=500&mask=0&variant=chr8-140300615-C-G&bc=basic"
+PANGOLIN_EXAMPLE_URL = f"/pangolin/?hg=38&distance=500&mask=0&variant=chr8-140300615-C-G&bc=basic"
 
 
 VARIANT_RE = re.compile(
@@ -52,12 +53,14 @@ FASTA_PATH = {
 
 PYFASTX_REF = {}
 
-GENCODE_VERSION = "v46"
+GENCODE_VERSION = "v47"
 
 SHARED_TRANSCRIPT_ANNOTATIONS = {}
 SHARED_TRANSCRIPT_ANNOTATION_PATHS = {
-    "37": f"/gencode.{GENCODE_VERSION}lift37.basic.annotation.transcript_annotations.json",
-    "38": f"/gencode.{GENCODE_VERSION}.basic.annotation.transcript_annotations.json",
+    ("37", "basic"): f"/gencode.{GENCODE_VERSION}lift37.basic.annotation.transcript_annotations.json.gz",
+    ("38", "basic"): f"/gencode.{GENCODE_VERSION}.basic.annotation.transcript_annotations.json.gz",
+    ("37", "comprehensive"): f"/gencode.{GENCODE_VERSION}lift37.annotation.transcript_annotations.json.gz",
+    ("38", "comprehensive"): f"/gencode.{GENCODE_VERSION}.annotation.transcript_annotations.json.gz",
 }
 
 TRANSCRIPT_PRIORITY_ORDER = {
@@ -87,8 +90,10 @@ if TOOL == "spliceai":
 
     SPLICEAI_ANNOTATOR = {}
     SPLICEAI_ANNOTATION_PATHS = {
-        "37": f"/gencode.{GENCODE_VERSION}lift37.basic.annotation.txt.gz",
-        "38": f"/gencode.{GENCODE_VERSION}.basic.annotation.txt.gz",
+        ("37", "basic"): f"/gencode.{GENCODE_VERSION}lift37.basic.annotation.txt.gz",
+        ("38", "basic"): f"/gencode.{GENCODE_VERSION}.basic.annotation.txt.gz",
+        ("37", "comprehensive"): f"/gencode.{GENCODE_VERSION}lift37.annotation.txt.gz",
+        ("38", "comprehensive"): f"/gencode.{GENCODE_VERSION}.annotation.txt.gz",
     }
 
 elif TOOL == "pangolin":
@@ -97,11 +102,16 @@ elif TOOL == "pangolin":
     from pangolin.model import torch, Pangolin, L, W, AR
     import gffutils
 
-    PANGOLIN_MODELS = []
+    PANGOLIN_MODELS = {
+        "basic": [],
+        "comprehensive": [],
+    }
 
     PANGOLIN_ANNOTATION_PATHS = {
-        "37": f"/gencode.{GENCODE_VERSION}lift37.basic.annotation.without_chr_prefix.db",
-        "38": f"/gencode.{GENCODE_VERSION}.basic.annotation.db",
+        ("37", "basic"): f"/gencode.{GENCODE_VERSION}lift37.basic.annotation.without_chr_prefix.db",
+        ("38", "basic"): f"/gencode.{GENCODE_VERSION}.basic.annotation.db",
+        ("37", "comprehensive"): f"/gencode.{GENCODE_VERSION}lift37.annotation.without_chr_prefix.db",
+        ("38", "comprehensive"): f"/gencode.{GENCODE_VERSION}.annotation.db",
     }
 else:
     raise ValueError(f'Environment variable "TOOL" should be set to either "spliceai" or "pangolin" instead of: "{os.environ.get("TOOL")}"')
@@ -112,14 +122,17 @@ def init_reference(genome_version):
         PYFASTX_REF[genome_version] = pyfastx.Fasta(FASTA_PATH[genome_version])
 
 
-def init_spliceai(genome_version):
+def init_spliceai(genome_version, basic_or_comprehensive):
     
-    if genome_version not in SPLICEAI_ANNOTATOR:
-        SPLICEAI_ANNOTATOR[genome_version] = Annotator(FASTA_PATH[genome_version], SPLICEAI_ANNOTATION_PATHS[genome_version])
+    if (genome_version, basic_or_comprehensive) not in SPLICEAI_ANNOTATOR:
+        SPLICEAI_ANNOTATOR[(genome_version, basic_or_comprehensive)] = Annotator(
+            FASTA_PATH[genome_version],
+            SPLICEAI_ANNOTATION_PATHS[(genome_version, basic_or_comprehensive)]
+        )
 
-def init_pangolin(genome_version):
+def init_pangolin(genome_version, basic_or_comprehensive):
 
-    if not PANGOLIN_MODELS:
+    if not PANGOLIN_MODELS[basic_or_comprehensive]:
         torch.set_num_threads(os.cpu_count()*2)
 
         for i in 0, 2, 4, 6:
@@ -132,15 +145,15 @@ def init_pangolin(genome_version):
                     weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)), map_location=torch.device('cpu'))
                 model.load_state_dict(weights)
                 model.eval()
-                PANGOLIN_MODELS.append(model)
+                PANGOLIN_MODELS[basic_or_comprehensive].append(model)
 
-def init_transcript_annotations(genome_version):
-    if genome_version in SHARED_TRANSCRIPT_ANNOTATIONS:
+def init_transcript_annotations(genome_version, basic_or_comprehensive):
+    if (genome_version, basic_or_comprehensive) in SHARED_TRANSCRIPT_ANNOTATIONS:
         return
 
     # init shared transcript annotations
-    with open(SHARED_TRANSCRIPT_ANNOTATION_PATHS[genome_version], "rt") as ta_f:
-        SHARED_TRANSCRIPT_ANNOTATIONS[genome_version] = json.load(ta_f)
+    with gzip.open(SHARED_TRANSCRIPT_ANNOTATION_PATHS[(genome_version, basic_or_comprehensive)], "rt") as ta_f:
+        SHARED_TRANSCRIPT_ANNOTATIONS[(genome_version, basic_or_comprehensive)] = json.load(ta_f)
 
 
 def error_response(error_message, source=None):
@@ -237,16 +250,16 @@ def exceeds_rate_limit(user_ip):
     #    print(f"Rate limit error: {e}", flush=True)
 
 
-def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask):
-    return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}"
+def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
+    return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}__{basic_or_comprehensive}"
 
 
-def get_splicing_scores_from_cache(tool_name, variant, genome_version, distance, mask):
+def get_splicing_scores_from_cache(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
     results = {}
     if DATABASE_CONNECTION is None:
         return results
 
-    key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask)
+    key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive)
     try:
         rows = run_sql(f"SELECT value FROM cache WHERE key=%s", (key,))
         if rows:
@@ -258,11 +271,11 @@ def get_splicing_scores_from_cache(tool_name, variant, genome_version, distance,
     return results
 
 
-def add_splicing_scores_to_cache(tool_name, variant, genome_version, distance, mask, results):
+def add_splicing_scores_to_cache(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive, results):
     if DATABASE_CONNECTION is None:
         return
 
-    key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask)
+    key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive)
     try:
         results_string = json.dumps(results)
 
@@ -302,7 +315,8 @@ def check_reference_allele(genome_version, chrom, pos, ref, alt):
 
     return None
 
-def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
+
+def get_spliceai_scores(variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param):
     try:
         chrom, pos, ref, alt = parse_variant(variant)
     except ValueError as e:
@@ -325,7 +339,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
     try:
         scores = get_delta_scores(
             record,
-            SPLICEAI_ANNOTATOR[genome_version],
+            SPLICEAI_ANNOTATOR[(genome_version, basic_or_comprehensive_param)],
             distance_param,
             mask_param)
     except Exception as e:
@@ -359,7 +373,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
         transcript_id_without_version = transcript_scores.get("NAME", "").split(".")[0]
 
         # get json annotations for this transcript
-        transcript_annotations = SHARED_TRANSCRIPT_ANNOTATIONS[genome_version].get(transcript_id_without_version)
+        transcript_annotations = SHARED_TRANSCRIPT_ANNOTATIONS[(genome_version, basic_or_comprehensive_param)].get(transcript_id_without_version)
         if transcript_annotations is None:
             raise ValueError(f"Missing annotations for {transcript_id_without_version} in {genome_version} annotations")
 
@@ -394,12 +408,15 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
     }
 
 
-def get_pangolin_scores(variant, genome_version, distance_param, mask_param):
+def get_pangolin_scores(variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param):
     if genome_version not in ("37", "38"):
         raise ValueError(f"Invalid genome_version: {mask_param}")
 
     if mask_param not in ("True", "False"):
         raise ValueError(f"Invalid mask_param: {mask_param}")
+
+    if basic_or_comprehensive_param not in ("basic", "comprehensive"):
+        raise ValueError(f"Invalid basic_or_comprehensive_param: {basic_or_comprehensive_param}")
 
     try:
         chrom, pos, ref, alt = parse_variant(variant)
@@ -431,9 +448,9 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param):
         score_cutoff = None
         score_exons = "False"
 
-    features_db = gffutils.FeatureDB(PANGOLIN_ANNOTATION_PATHS[GENOME_VERSION])
+    features_db = gffutils.FeatureDB(PANGOLIN_ANNOTATION_PATHS[(GENOME_VERSION, basic_or_comprehensive_param)])
     scores = process_variant_using_pangolin(
-        0, chrom, int(pos), ref, alt, features_db, PANGOLIN_MODELS, PangolinArgs)
+        0, chrom, int(pos), ref, alt, features_db, PANGOLIN_MODELS[basic_or_comprehensive_param], PangolinArgs)
 
     if not scores:
         return {
@@ -454,7 +471,7 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param):
         transcript_id_without_version = transcript_scores.get("NAME", "").split(".")[0]
 
         # get json annotations for this transcript
-        transcript_annotations = SHARED_TRANSCRIPT_ANNOTATIONS[genome_version].get(transcript_id_without_version)
+        transcript_annotations = SHARED_TRANSCRIPT_ANNOTATIONS[(genome_version, basic_or_comprehensive_param)].get(transcript_id_without_version)
         if transcript_annotations is None:
             raise ValueError(f"Missing annotations for {transcript_id_without_version} in {genome_version} annotations")
 
@@ -554,12 +571,16 @@ def run_splice_prediction_tool(tool_name):
     if mask_param not in ("0", "1"):
         return error_response(f'Invalid "mask" value: "{mask_param}". The value must be either "0" or "1". For example: {example_url}\n', source=tool_name)
 
+    basic_or_comprehensive_param = params.get("bc", "basic")
+    if basic_or_comprehensive_param not in ("basic", "comprehensive"):
+        return error_response(f'Invalid "bc" value: "{basic_or_comprehensive_param}". The value must be either "basic" or "comprehensive". For example: {example_url}\n', source=tool_name)
+
     variant_consequence = params.get("variant_consequence")
 
     force = params.get("force")  # ie. don't use cache
 
     print(f"{logging_prefix}: ======================", flush=True)
-    print(f"{logging_prefix}: {variant} hg={genome_version}, distance={distance_param}, mask={mask_param}", flush=True)
+    print(f"{logging_prefix}: {variant} hg={genome_version}, distance={distance_param}, mask={mask_param}, bc={basic_or_comprehensive_param}", flush=True)
 
     
     if tool_name == "spliceai":
@@ -572,7 +593,7 @@ def run_splice_prediction_tool(tool_name):
         raise ValueError(f"Invalid tool_name: {tool_name}")
 
     init_reference(genome_version)
-    init_transcript_annotations(genome_version)
+    init_transcript_annotations(genome_version, basic_or_comprehensive_param)
     init_database_connection()
 
     user_ip = get_user_ip(request)
@@ -580,7 +601,7 @@ def run_splice_prediction_tool(tool_name):
     # check cache before processing the variant
     results = {}
     if not force:
-        results = get_splicing_scores_from_cache(tool_name, variant, genome_version, distance_param, mask_param)
+        results = get_splicing_scores_from_cache(tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param)
 
     duration = (datetime.now() - start_time).total_seconds()
     if results:
@@ -593,10 +614,10 @@ def run_splice_prediction_tool(tool_name):
 
         try:
             if tool_name == "spliceai":
-                results = get_spliceai_scores(variant, genome_version, distance_param, int(mask_param))
+                results = get_spliceai_scores(variant, genome_version, distance_param, int(mask_param), basic_or_comprehensive_param)
             elif tool_name == "pangolin":
                 pangolin_mask_param = "True" if mask_param == "1" else "False"
-                results = get_pangolin_scores(variant, genome_version, distance_param, pangolin_mask_param)
+                results = get_pangolin_scores(variant, genome_version, distance_param, pangolin_mask_param, basic_or_comprehensive_param)
             else:
                 raise ValueError(f"Invalid tool_name: {tool_name}")
         except Exception as e:
@@ -624,7 +645,7 @@ def run_splice_prediction_tool(tool_name):
     ])
 
 
-def log(event_name, ip=None, duration=None, variant=None, genome=None, distance=None, mask=None, details=None, variant_consequence=None):
+def log(event_name, ip=None, duration=None, variant=None, genome=None, distance=None, mask=None, bc=None, details=None, variant_consequence=None):
     """Utility method for logging an event"""
 
     try:
@@ -636,13 +657,15 @@ def log(event_name, ip=None, duration=None, variant=None, genome=None, distance=
         return
 
     try:
-        run_sql(r"INSERT INTO log (event_name, ip, duration, variant, genome, distance, mask, details, variant_consequence) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (event_name, ip, duration, variant, genome, distance, mask, details, variant_consequence))
+        run_sql(r"INSERT INTO log (event_name, ip, duration, variant, genome, distance, mask, bc, details, variant_consequence) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (event_name, ip, duration, variant, genome, distance, mask, bc, details, variant_consequence))
     except Exception as e:
         print(f"Log error: {e}", flush=True)
 
+
 def get_user_ip(request):
     return request.environ.get("HTTP_X_FORWARDED_FOR")
+
 
 @app.route('/log/<string:name>/', strict_slashes=False)
 def log_event(name):
@@ -669,6 +692,7 @@ def log_event(name):
     genome_version = params.get("hg")
     distance_param = params.get("distance")
     mask_param = params.get("mask")
+    basic_or_comprehensive_param = params.get("bc")
     details = params.get("details")
     variant_consequence = params.get("variant_consequence")
     if details:
@@ -687,12 +711,14 @@ def log_event(name):
         genome=genome_version,
         distance=distance_param,
         mask=mask_param,
+        bc=basic_or_comprehensive_param,
         details=details,
         variant_consequence=variant_consequence)
 
     return Response(json.dumps({"status": "Done"}), status=200, mimetype='application/json', headers=[
         ('Access-Control-Allow-Origin', '*'),
     ])
+
 
 @app.route('/', strict_slashes=False, defaults={'path': ''})
 @app.route('/<path:path>/')
