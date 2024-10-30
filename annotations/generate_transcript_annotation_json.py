@@ -5,6 +5,7 @@ whether it's a "MANE select" transcript, canonical transcript, etc.
 """
 
 import argparse
+import gzip
 import json
 import os
 import re
@@ -109,8 +110,8 @@ def main():
         print(f"WARNING: {warning2_counter:,d} out of {len(gene_coordinates_lookup):,d} genes have a genomic interval "
               f"that is wider than the interval of any of their transcripts.")
 
-    output_path = re.sub(".gtf.gz$", "", os.path.basename(args.gtf_gz_path)) + ".transcript_annotations.json"
-    with open(output_path, "w") as f:
+    output_path = re.sub(".gtf.gz$", "", os.path.basename(args.gtf_gz_path)) + ".transcript_annotations.json.gz"
+    with gzip.open(output_path, "wt") as f:
         json.dump(output_json, f, indent=4, sort_keys=True)
 
     print(f"Done writing {len(output_json):,d} transcript annotations to {output_path}")

@@ -2,6 +2,7 @@
 
 import argparse
 import collections
+import gzip
 import json
 import os
 import pandas as pd
@@ -24,7 +25,8 @@ def main():
         if not os.path.exists(path):
             p.error(f"File not found: {path}")
 
-    with open(args.annotation_json_path, "rt") as f:
+    fopen = gzip.open if args.gtf_gz_path.endswith("gz") else open
+    with fopen(args.annotation_json_path, "rt") as f:
         transcript_annotations = json.load(f)
 
     print(f"Parsing {args.gtf_gz_path}")
