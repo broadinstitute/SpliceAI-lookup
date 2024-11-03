@@ -202,28 +202,33 @@ def run_sql(sql_query, *args):
 
 
 def exceeds_rate_limit(user_ip):
-    """Place holder for implementing rate limits based on user ip address"""
+    """Rate limit requests based on user ip address"""
     if DATABASE_CONNECTION is None:
         return False
 
-    """
-    SELECT * FROM log WHERE event_name like '%computed' AND duration > 2 AND ip='61.68.128.103' AND logtime >= NOW() - INTERVAL '5 minutes' ;
-    SELECT ip, count(*) FROM log WHERE event_name like '%computed' AND duration > 2 AND logtime >= NOW() - INTERVAL '20 minutes' GROUP BY ip ORDER BY count DESC;
-    """
-    return False
+    #"""
+    #SELECT * FROM log WHERE event_name like '%computed' AND duration > 2 AND ip='210.3.222.157' AND logtime >= NOW() - INTERVAL '5 minutes' ;
+    #SELECT ip, count(*) FROM log WHERE event_name like '%computed' AND duration > 2 AND logtime >= NOW() - INTERVAL '20 minutes' GROUP BY ip ORDER BY count DESC;
+    #"""
+    #return False
 
-    #rows = run_sql("SELECT COUNT(*) FROM log WHERE event_name like '%computed' AND duration > 2 AND ip=%s AND logtime >= NOW() - INTERVAL '5 minutes'", user_ip)
-    #request_count = int(rows[0][0])
-    #if request_count > 50: return True
-
-    # check rate limit
-    #try:
     #    rows = run_sql(f"SELECT count(*) FROM log WHERE ip=%s AND logtime > now() - interval '1 second' AND event_name=%s", (ip, request_type))
-    #    if rows and rows[0][0] > 4:
-    #        return f"Rate limit exceeded for {request_type} requests"
-    #except Exception as e:
-    #    print(f"Rate limit error: {e}", flush=True)
+    try:
+        #rows = run_sql("SELECT COUNT(*) FROM log WHERE event_name like '%computed' AND duration > 2 AND ip=%s AND logtime >= NOW() - INTERVAL '5 minutes'", user_ip)
+        #if rows:
+        #    request_count = int(rows[0][0])
+        #    if request_count > 50:
+        #        return f"Rate limit exceeded. This server supports no more than 5 requests per IP address per minute."
 
+        rows = run_sql("SELECT COUNT(*) FROM log WHERE event_name like '%computed' AND duration > 2 AND ip=%s AND logtime >= NOW() - INTERVAL '1 minutes'", user_ip)
+        if rows:
+            request_count = int(rows[0][0])
+            if request_count > 15:
+                return f"Rate limit exceeded. This server supports no more than 5 requests per IP address per minute."
+
+    except Exception as e:
+        print(f"Error while checking rate limit: {e}", flush=True)
+        return False
 
 def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
     return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}__{basic_or_comprehensive}"
@@ -516,8 +521,11 @@ def run_splice_prediction_tool(tool_name):
     if tool_name != TOOL:
         return error_response(f"ERROR: This server is configured to run {TOOL} rather than {tool_name}.\n", source=tool_name)
 
+    user_ip = get_user_ip(request)
+
+
     start_time = datetime.now()
-    logging_prefix = start_time.strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()}"
+    logging_prefix = start_time.strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()} ip:{user_ip}"
     example_url = SPLICEAI_EXAMPLE_URL if tool_name == "spliceai" else PANGOLIN_EXAMPLE_URL
 
     # check params
@@ -573,8 +581,6 @@ def run_splice_prediction_tool(tool_name):
     init_reference(genome_version)
     init_transcript_annotations(genome_version, basic_or_comprehensive_param)
     init_database_connection()
-
-    user_ip = get_user_ip(request)
 
     # check cache before processing the variant
     results = {}
