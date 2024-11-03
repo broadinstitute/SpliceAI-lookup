@@ -1,16 +1,12 @@
-from collections import defaultdict
 from datetime import datetime
 import gzip
 import json
 import logging
 import os
-import pandas as pd
-from pprint import pprint
 import pyfastx
 import psycopg2
 import re
 import traceback
-import time
 
 # flask imports
 from flask import Flask, request, Response, send_from_directory
@@ -102,11 +98,6 @@ elif TOOL == "pangolin":
     from pangolin.model import torch, Pangolin, L, W, AR
     import gffutils
 
-    PANGOLIN_MODELS = {
-        "basic": [],
-        "comprehensive": [],
-    }
-
     PANGOLIN_ANNOTATION_PATHS = {
         ("37", "basic"): f"/gencode.{GENCODE_VERSION}lift37.basic.annotation.without_chr_prefix.db",
         ("38", "basic"): f"/gencode.{GENCODE_VERSION}.basic.annotation.db",
@@ -130,22 +121,6 @@ def init_spliceai(genome_version, basic_or_comprehensive):
             SPLICEAI_ANNOTATION_PATHS[(genome_version, basic_or_comprehensive)]
         )
 
-def init_pangolin(genome_version, basic_or_comprehensive):
-
-    if not PANGOLIN_MODELS[basic_or_comprehensive]:
-        torch.set_num_threads(os.cpu_count()*2)
-
-        for i in 0, 2, 4, 6:
-            for j in 1, 2, 3:
-                model = Pangolin(L, W, AR)
-                if torch.cuda.is_available():
-                    model.cuda()
-                    weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)))
-                else:
-                    weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)), map_location=torch.device('cpu'))
-                model.load_state_dict(weights)
-                model.eval()
-                PANGOLIN_MODELS[basic_or_comprehensive].append(model)
 
 def init_transcript_annotations(genome_version, basic_or_comprehensive):
     if (genome_version, basic_or_comprehensive) in SHARED_TRANSCRIPT_ANNOTATIONS:
@@ -444,9 +419,23 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
         score_cutoff = None
         score_exons = "False"
 
+    pangolin_models = []
+
+    for i in 0, 2, 4, 6:
+        for j in 1, 2, 3:
+            model = Pangolin(L, W, AR)
+            if torch.cuda.is_available():
+                model.cuda()
+                weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)))
+            else:
+                weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)), map_location=torch.device('cpu'))
+            model.load_state_dict(weights)
+            model.eval()
+            pangolin_models.append(model)
+
     features_db = gffutils.FeatureDB(PANGOLIN_ANNOTATION_PATHS[(GENOME_VERSION, basic_or_comprehensive_param)])
     scores = process_variant_using_pangolin(
-        0, chrom, int(pos), ref, alt, features_db, PANGOLIN_MODELS[basic_or_comprehensive_param], PangolinArgs)
+        0, chrom, int(pos), ref, alt, features_db, pangolin_models, PangolinArgs)
 
     if not scores:
         return {
@@ -578,15 +567,8 @@ def run_splice_prediction_tool(tool_name):
     print(f"{logging_prefix}: ======================", flush=True)
     print(f"{logging_prefix}: {variant} hg={genome_version}, distance={distance_param}, mask={mask_param}, bc={basic_or_comprehensive_param}", flush=True)
 
-    
     if tool_name == "spliceai":
         init_spliceai(genome_version)
-        example_url = SPLICEAI_EXAMPLE_URL
-    elif tool_name == "pangolin":
-        init_pangolin(genome_version)
-        example_url = PANGOLIN_EXAMPLE_URL
-    else:
-        raise ValueError(f"Invalid tool_name: {tool_name}")
 
     init_reference(genome_version)
     init_transcript_annotations(genome_version, basic_or_comprehensive_param)
