@@ -223,10 +223,8 @@ if not does_table_exist("cache"):
 if not does_table_exist("log"):
     print("Creating event_log table")
     run_sql("""CREATE TABLE log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), bc VARCHAR(20), distance INT, mask INT4, details TEXT, variant_consequence TEXT)""")
-    run_sql("""CREATE INDEX log_index1 ON log (event_name)""")
-    run_sql("""CREATE INDEX log_index2 ON log (ip)""")
-
-
+    run_sql("""CREATE INDEX idx_log_ip_logtime ON log USING btree (ip, logtime DESC)""")
+    run_sql("""CREATE INDEX idx_log_event_name ON log USING btree (event_name)""")
 
 def exceeds_rate_limit(user_ip):
     """Rate limit requests based on user ip address"""
