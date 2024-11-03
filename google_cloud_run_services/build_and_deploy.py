@@ -198,7 +198,7 @@ def main():
 
         if args.command == "run":
             print("Run this command: ")
-            print(f"docker run -it {tag}:latest # /bin/bash")
+            print(f"docker run -it {tag}:latest /bin/bash")
         elif args.command == "test":
             run(f"docker run -p 8080:8080 {tag}:latest")
 

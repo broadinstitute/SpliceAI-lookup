@@ -327,7 +327,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
             "variant": variant,
             "source": "spliceai",
             "error": f"The SpliceAI model did not return any scores for {variant}. This may be because the variant does "
-                     f"not overlap any exons or introns defined by the GENCODE 'basic' annotation.",
+                     f"not overlap any exons or introns defined by the GENCODE '{basic_or_comprehensive_param}' annotation.",
         }
 
     #scores = [s[s.index("|")+1:] for s in scores]  # drop allele field
@@ -565,10 +565,10 @@ def run_splice_prediction_tool(tool_name):
     force = params.get("force")  # ie. don't use cache
 
     print(f"{logging_prefix}: ======================", flush=True)
-    print(f"{logging_prefix}: {variant} hg={genome_version}, distance={distance_param}, mask={mask_param}, bc={basic_or_comprehensive_param}", flush=True)
+    print(f"{logging_prefix}: {variant} tool={tool_name} hg={genome_version}, distance={distance_param}, mask={mask_param}, bc={basic_or_comprehensive_param}", flush=True)
 
     if tool_name == "spliceai":
-        init_spliceai(genome_version)
+        init_spliceai(genome_version, basic_or_comprehensive_param)
 
     init_reference(genome_version)
     init_transcript_annotations(genome_version, basic_or_comprehensive_param)
@@ -583,7 +583,7 @@ def run_splice_prediction_tool(tool_name):
 
     duration = (datetime.now() - start_time).total_seconds()
     if results:
-        log(f"{tool_name}:from-cache", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, variant_consequence=variant_consequence)
+        log(f"{tool_name}:from-cache", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
     else:
         error_message = exceeds_rate_limit(user_ip)
         if error_message:
@@ -603,13 +603,13 @@ def run_splice_prediction_tool(tool_name):
             return error_response(f"ERROR: {e}", source=tool_name)
 
         duration = (datetime.now() - start_time).total_seconds()
-        log(f"{tool_name}:computed", ip=user_ip, duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, variant_consequence=variant_consequence)
+        log(f"{tool_name}:computed", ip=user_ip, duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
 
         if "error" not in results:
             add_splicing_scores_to_cache(tool_name, variant, genome_version, distance_param, mask_param, results)
 
     if "error" in results:
-        log(f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], variant_consequence=variant_consequence)
+        log(f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
 
     response_json = {}
     response_json.update(params)  # copy input params to output

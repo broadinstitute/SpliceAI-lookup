@@ -13,7 +13,8 @@
             "pangolin-37": "https://pangolin-37-xwkwwwxdwq-uc.a.run.app",
             "pangolin-38": "https://pangolin-38-xwkwwwxdwq-uc.a.run.app",
             "spliceai-37": "https://spliceai-37-xwkwwwxdwq-uc.a.run.app",
-            "spliceai-38": "https://spliceai-38-xwkwwwxdwq-uc.a.run.app",
+            //"spliceai-38": "https://spliceai-38-xwkwwwxdwq-uc.a.run.app",
+            "spliceai-38": "localhost:8080",
         }
 
         //console.log("Using SpliceAI API url:", baseApiUrl)
@@ -26,8 +27,8 @@
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/semantic-ui@2.4.2/dist/semantic.min.js"></script>
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/underscore@1.12.0/underscore-min.js"></script>
-
-    <script type="text/javascript" src="https://storage.googleapis.com/tgg-viewer/igv.js-bw2/dist/igv.min.js?version=2024-06-20"></script>
+    <script type="text/javascript" src="https://broadinstitute.github.io/SpliceAI-lookup-dev/tabix-bundle.js"></script>
+    <script type="text/javascript" src="https://storage.googleapis.com/tgg-viewer/igv.js-bw2/dist/igv.min.js?version=2024-08-06"></script>
     <!-- script type="text/javascript" src="igv.min.js"></script -->
 
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-483HVKZCL1"></script>
@@ -219,13 +220,24 @@
                                 <input id="search-box" type="text" style="width: 100%; padding: 7px 10px" placeholder="Enter a variant...">
                             </div>
                             <div class="field" style="padding-right:10px; white-space:nowrap">
-                                <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Genome version:</b></span>
-                                <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                    <input type="radio" name="hg" value="37"/><label>hg19</label>
-                                </div>
-                                <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
-                                    <input type="radio" name="hg" value="38" checked/><label>hg38</label>
-                                </div>
+                                <span style="display: inline-block; white-space: nowrap; padding-right:35px;">
+                                    <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Genome version:</b></span>
+                                    <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                        <input type="radio" name="hg" value="37"/><label>hg19</label>
+                                    </div>
+                                    <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                        <input type="radio" name="hg" value="38" checked/><label>hg38</label>
+                                    </div>
+                                </span>
+                                <span style="display: inline-block; white-space: nowrap;">
+                                    <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Gencode:</b></span>
+                                    <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                        <input type="radio" name="gencode-gene-set" value="basic" checked/><label>basic</label>
+                                    </div>
+                                    <div class="ui radio checkbox" style="padding-left:15px; padding-bottom:10px">
+                                        <input type="radio" name="gencode-gene-set" value="comprehensive" /><label>comprehensive</label>
+                                    </div>
+                                </span>
                             </div>
                             <div class="ui stackable grid">
                                 <div class="row">
@@ -262,17 +274,21 @@
                 <div>
                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website<br />
                     <br/>
+                    <b>November 3, 2024</b><br />
+                    - added choice of <a href="https://genome.ucsc.edu/FAQ/FAQgenes.html#gencode" target="_blank">basic or comprehensive</a> Gencode gene set<br />
+                    - updated to Gencode v47 <br />
+                    <br/>
                     <b>June 20, 2024</b><br />
                     - fixed SpliceAI visualizations to clarify positions of predicted splicing changes. See <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/70" target="_blank">issue #70</a> for details. <br />
                     <br />
+                    <a id="more-details3-button" href="#"
+                       onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
+                    <div id="more-details3" style="display:none">
                     <b>June 3, 2024</b><br />
                     - show the input variant's <a href="https://useast.ensembl.org/info/docs/tools/vep/index.html" target="blank">VEP</a> consequence in the results table<br />
                     - the Gencode gene track is now optional in the visualizations<br />
                     - updated everything to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v46</a><br/>
                     <br />
-                    <a id="more-details3-button" href="#"
-                       onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
-                    <div id="more-details3" style="display:none">
                         <b>March 7, 2024</b><br/>
                         - added warning for insertion variants with delta scores ≥ 0.2 and position = 0bp saying that they may be difficult to interpret due to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/69">issue #67</a>. Thanks to @SophieCandille for the issue report and example variant: <a href="https://spliceailookup.broadinstitute.org/#variant=NM_000179.3%3Ac.261-3_261-2insAGTTG&hg=38&distance=500&mask=0&ra=1" target="_blank">2:47790924 C>CAGTTG</a><br />
                         - moved server to Google Cloud Run to better support higher usage<br />
@@ -362,10 +378,10 @@
                                 </div>
                             </th>
                             <th class="table-header">&#916;&nbsp; type</th>
-                            <th class="table-header" style="white-space: nowrap">&#916;&nbsp; score<i class='question circle outline icon'
-                                                                                 data-content="Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 500bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.2 or higher appear in green, 0.5 or higher appear in yellow, and 0.8 or higher appear in red."></i>
+                            <th class="table-header" style="white-space: nowrap">&#916;&nbsp; score &nbsp; <i class='question circle outline icon'
+                                                                                 data-html="Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 500bp by default). In the SpliceAI paper, a detailed characterization is provided for 0.2 (high recall), 0.5 (recommended), and 0.8 (high precision) cutoffs. Consequently, scores of 0.2 or higher appear in <b style='color:#1fb839'>green</b>, 0.5 or higher appear in <b style='color:#FFCB1F'>yellow</b>, and 0.8 or higher appear in <b style='color:#FF0000'>red</b>."></i>
                             </th>
-                            <th class="table-header" style="white-space: nowrap">position<i class='question circle outline icon'
+                            <th class="table-header" style="white-space: nowrap">position &nbsp; <i class='question circle outline icon'
                                                                                 data-content="For each variant, SpliceAI looks within a window (+/- 500bp by default) to see how the variant affects the probabily of different positions serving as splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are to the left of the variant in genomic coords, regardless of transcript strand."></i>
                             </th>
                             <th class="table-header ref-score-column" style="white-space: nowrap">
@@ -407,10 +423,10 @@
                                 <th class="table-header">Variant</th>
                                 <th class="table-header">Gene</th>
                                 <th class="table-header">&#916;&nbsp; type</th>
-                                <th class="table-header" style="white-space: nowrap">&#916;&nbsp; score<i class='question circle outline icon'
-                                                                                     data-content="Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 500bp by default). Pangolin does not recommend specific score thresholds; however, here scores of 0.2 or higher appear in green, 0.5 or higher appear in yellow, and 0.8 or higher appear in red."></i>
+                                <th class="table-header" style="white-space: nowrap">&#916;&nbsp; score &nbsp; <i class='question circle outline icon'
+                                                                                     data-html="Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 500bp by default). Pangolin does not recommend specific score thresholds; however, here scores of 0.2 or higher appear in <b style='color:#1fb839'>green</b>, 0.5 or higher appear in <b style='color:#FFCB1F'>yellow</b>, and 0.8 or higher appear in <b style='color:#FF0000'>red</b>."></i>
                                 </th>
-                                <th class="table-header" style="white-space: nowrap">position<i class='question circle outline icon'
+                                <th class="table-header" style="white-space: nowrap">position &nbsp; <i class='question circle outline icon'
                                                                                     data-content="For each variant, Pangolin looks within a window (+/- 500bp by default) to see how the variant affects the probability of splicing occuring at different positions. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant."></i>
                                 </th>
                                 <th class="table-header ref-score-column" style="white-space: nowrap">
@@ -558,6 +574,18 @@
         return `style='background-color:${color};'`
     }
 
+    const { TabixIndexedFile } = window.gmodTABIX
+
+    const lookupTableUrls = {
+        '37': 'https://storage.googleapis.com/spliceai-lookup-reference-data/PrimateAI_3D.hg19.with_gene_thresholds.txt.gz',
+        '38': 'https://storage.googleapis.com/spliceai-lookup-reference-data/PrimateAI_and_PromoterAI_scores.hg38.tsv.gz',
+    }
+
+    const lookupTables = {
+        '37': new TabixIndexedFile({ url: lookupTableUrls['37'], tbiUrl: `${lookupTableUrls['37']}.tbi` }),
+        '38': new TabixIndexedFile({ url: lookupTableUrls['38'], tbiUrl: `${lookupTableUrls['38']}.tbi` }),
+    }
+
     const getUCSCBrowserUrl = (genomeVersion, chrom, pos) => {
         const genomeVers = genomeVersion.replace('37', '19')
         const chromWithoutPrefix = chrom.toUpperCase().replace('CHR', '')
@@ -698,37 +726,6 @@
         */
     }
 
-
-    /*
-    const generateVariantAnnotationTable = async (normalizedVariant, genomeVersion) => {
-        const matchedRegExp = normalizedVariant.match(VARIANT_RE)
-        if (!matchedRegExp) {
-            console.error(`Unable to parse normalized variant: ${normalizedVariant}`)
-            return {}
-        }
-        // was able to parse the user input using a simple reg-exp
-        const chrom = matchedRegExp[2].toUpperCase()
-        const pos = parseInt(matchedRegExp[3].replace(/,/g, ""))
-        const ref = matchedRegExp[4]
-        const alt = matchedRegExp[5]
-
-        const myVariantApiUrl = `https://myvariant.info/v1/variant/chr${chrom}:g.${pos}${ref}>${alt}${genomeVersion == '38' ? '?assembly=hg38' : ''}`
-
-        let myVariantApiResponse
-        try {
-            myVariantApiResponse = await makeRequest(myVariantApiUrl)
-        } catch(e) {
-            console.error(e)
-            throw Error(`MyVariant API call failed: ${e}`)
-        }
-
-        const myVariantApiResponseJson = await myVariantApiResponse.json()
-        console.log(`MyVariant API response:`, myVariantApiResponseJson)
-
-        return myVariantApiResponseJson
-    }
-    */
-
     const makeRequest = (url) => {
         const method = "GET"
         return new Promise(async (resolve, reject) => {
@@ -779,7 +776,11 @@
         }
     }
 
-    const generateResultsTable = async (normalizedVariant, variantConsequence, tool, variant, genomeVersion, maxDistance, mask, showRefAltScoreColumns) => {
+    const getGnomadDataVersion = (genomeVersion) => {
+        return genomeVersion === "38" ? "gnomad_r4" : "gnomad_r2_1"
+    }
+
+    const generateSplicingResultsTable = async (normalizedVariant, variantConsequence, tool, variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltScoreColumns) => {
         /* Generate the results table to show either the SpliceAI or Pangolin scores */
 
         const variantTokens = (normalizedVariant || "---").split("-")
@@ -789,7 +790,7 @@
         const alt = variantTokens[3]
 
         const baseUrl = baseApiUrl[`${tool.toLowerCase()}-${genomeVersion}`]
-        const urlArgs = `hg=${genomeVersion}&distance=${maxDistance}&mask=${mask}&variant=${chrom}-${pos}-${ref}-${alt}&raw=${variant}&variant_consequence=${variantConsequence}`
+        const urlArgs = `hg=${genomeVersion}&bc=${basicOrComprehensive}&distance=${maxDistance}&mask=${mask}&variant=${chrom}-${pos}-${ref}-${alt}&raw=${variant}&variant_consequence=${variantConsequence}`
 
         let apiResponse
         try {
@@ -829,13 +830,22 @@
             "C": "Canonical transcript",
         }
 
+        const noDifferenceDueToNormalization = variant.toLowerCase().trim().replace(/^chr/, "").replace(/[>: _-]+/g, "-") == normalizedVariant.toLowerCase().trim().replace(/^chr/, "").replace(/[>: _-]+/g, "-")
+        const normalizedVariantDiv = noDifferenceDueToNormalization ? "" :
+            `<br class="only-large-screen"/>
+             <div style="margin-left:5px;margin-right:10px; display: inline-block; color:#333333">
+                <i>⇒ ${chrom}:${pos} ${ref}&gt;${alt}</i>
+             </div>
+             <br class="only-large-screen"/>`
+
+
         const transcriptCategories = {}
         const tableRows = []
         for (const scores of apiResponseJson.scores) {
             const isPangolin = tool.toLowerCase() == "pangolin"
             const subRowCount = isPangolin ? 2 : 4
             const strand = scores['t_strand'] == "-" ? "minus" : "plus"
-            const gnomadVersion = genomeVersion === "38" ? "gnomad_r3" : "gnomad_r2_1"
+            const gnomadVersion = getGnomadDataVersion(genomeVersion)
             const isMainTranscript = scores['t_priority'] != "N" && (scores['t_priority'] != "C" || transcriptCategories["MS"] == undefined)
             const refSeqLink = scores['t_refseq_ids']? `/ <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${scores['t_refseq_ids'][0]}" target="_blank">${scores['t_refseq_ids'][0]}</a>` : ""
 
@@ -852,14 +862,6 @@
             } else {
                 resultRowClasses.push("non-coding-transcript")
             }
-
-            const noDifferenceDueToNormalization = variant.toLowerCase().trim().replace(/^chr/, "").replace(/[>: _-]+/g, "-") == normalizedVariant.toLowerCase().trim().replace(/^chr/, "").replace(/[>: _-]+/g, "-")
-            const normalizedVariantDiv = noDifferenceDueToNormalization ? "" :
-                `<br class="only-large-screen"/>
-                 <div style="margin-left:5px;margin-right:10px; display: inline-block; color:#333333">
-                    <i>⇒ ${chrom}:${pos} ${ref}&gt;${alt}</i>
-                 </div>
-                 <br class="only-large-screen"/>`
 
             $(`#${tool.toLowerCase()}-header`).nextAll().remove()
             let row = `<tr class="${resultRowClasses.join(' ')}">
@@ -931,7 +933,6 @@
             tableRows.push(row)
         }
 
-        $("#response-box").show()
         $(`#${tool.toLowerCase()}-header`).after(tableRows.join(""))
 
         if (transcriptCategories["MS"]) {
@@ -1329,6 +1330,7 @@
         const variant = $("#search-box").val().trim()
         if (!variant) return
         const genomeVersion = $("input[name='hg']:checked").val().trim()
+        const basicOrComprehensive = $("input[name='gencode-gene-set']:checked").val().trim()
         const maxDistance = $("#max-distance-input").val().trim()
         const mask = $(`input[name='mask']`).prop("checked") ? "1" : "0";
         const showRefAltColumns = $(`input[name='show-ref-alt']`).prop("checked") ? "1" : "0";
@@ -1351,15 +1353,21 @@
 
             //let [spliceaiResponseJson, pangolinResponseJson, variantAnnotationsJson] = await Promise.all([
             let [spliceaiResponseJson, pangolinResponseJson] = await Promise.all([
-                generateResultsTable(normalizedVariant, variantConsequence, "SpliceAI", variant, genomeVersion, maxDistance, mask, showRefAltColumns),
-                generateResultsTable(normalizedVariant, variantConsequence, "Pangolin", variant, genomeVersion, maxDistance, mask, showRefAltColumns),
+                generateSplicingResultsTable(normalizedVariant, variantConsequence, "SpliceAI", variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltColumns),
+                generateSplicingResultsTable(normalizedVariant, variantConsequence, "Pangolin", variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltColumns),
                 //generateVariantAnnotationTable(normalizedVariant, genomeVersion),
             ].map(p => p.catch(e => ({'error': e.message}))))  // if an error is thrown, return {'error': e} instead of the JSON response
+
+            $("#response-box").show()
+
+            $(".question").popup({"on": "click"})
+            $(".question").css("cursor", "pointer")
+            $(".question").css("color", "#666666")
 
             $(".exclamation").popup({hoverable: true, html: $(".exclamation").attr("data-content")})
 
             if (spliceaiResponseJson.error) {
-                showError(`SpliceAI API error: ${spliceaiResponseJson.error}`)
+                showError(`${spliceaiResponseJson.error}`)
                 spliceaiResponseJson = null
                 $("#spliceai-table, #transcript-button-table").hide()
             } else {
@@ -1367,7 +1375,7 @@
             }
 
             if (pangolinResponseJson.error) {
-                showError(`Pangolin API error: ${pangolinResponseJson.error}`)
+                showError(`${pangolinResponseJson.error}`)
                 pangolinResponseJson = null
                 $("#pangolin-table").hide()
             } else {
@@ -1378,6 +1386,7 @@
             window.location.hash = "#" + $.param({
                 variant: variant,
                 hg: genomeVersion,
+                bc: basicOrComprehensive,
                 distance: maxDistance,
                 mask: mask,
                 ra: showRefAltColumns,
@@ -1409,6 +1418,11 @@
         }
         if (hgFromUrl && (hgFromUrl == "38" || hgFromUrl == "37")) {
             $(`input[name='hg'][value='${hgFromUrl}']`).prop("checked", true)
+        }
+
+        const bcFromUrl = $.urlParam('bc')
+        if (bcFromUrl && (bcFromUrl == "basic" || bcFromUrl == "comprehensive")) {
+            $(`input[name='gencode-gene-set'][value='${bcFromUrl}']`).prop("checked", true)
         }
 
         const maxDistanceFromUrl = $.urlParam('distance')
