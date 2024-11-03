@@ -606,7 +606,7 @@ def run_splice_prediction_tool(tool_name):
         log(f"{tool_name}:computed", ip=user_ip, duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
 
         if "error" not in results:
-            add_splicing_scores_to_cache(tool_name, variant, genome_version, distance_param, mask_param, results)
+            add_splicing_scores_to_cache(tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive, results)
 
     if "error" in results:
         log(f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
