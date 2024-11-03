@@ -8,8 +8,12 @@ import psycopg2
 import re
 import traceback
 
+# used for DB connection pooling
+from psycopg2.pool import SimpleConnectionPool
+from contextlib import contextmanager
+
 # flask imports
-from flask import Flask, request, Response, send_from_directory
+from flask import Flask, g, request, Response, send_from_directory
 from flask_cors import CORS
 from flask_talisman import Talisman
 
@@ -145,60 +149,74 @@ def parse_variant(variant_str):
 
     return match['chrom'], int(match['pos']), match['ref'], match['alt']
 
+try:
+    DATABASE_CONNECTION_POOL = SimpleConnectionPool(
+        minconn=1,
+        maxconn=30,
+        dbname="spliceai-lookup-db",
+        user="postgres",
+        password=os.environ.get("DB_PASSWORD"),
+        host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
+        port="5432",
+        connect_timeout=5,
+    )
+except psycopg2.Error as e:
+    print(f"Error connecting to database: {e}", flush=True)
+    DATABASE_CONNECTION_POOL = None
 
-DATABASE_CONNECTION = None
-def init_database_connection():
-    global DATABASE_CONNECTION
-    if DATABASE_CONNECTION is not None:
+@contextmanager
+def get_db_connection():
+    """Get a database connection from the pool"""
+    conn = DATABASE_CONNECTION_POOL.getconn()
+    try:
+        yield conn
+    finally:
+        DATABASE_CONNECTION_POOL.putconn(conn)
+
+@contextmanager
+def get_db_cursor():
+    """Get a database cursor using a connection from the pool"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
         try:
-            DATABASE_CONNECTION.isolation_level
-            return  # connection is already initialized
-        except psycopg2.OperationalError as oe:
-            print("WARNING: Connection has closed. Reopenning...")
-            DATABASE_CONNECTION = None
+            yield cursor
+            conn.commit()
+        finally:
+            cursor.close()
 
-    if DATABASE_CONNECTION is None:
-        print("Environment:", dict(os.environ))
 
+def run_sql(sql_query, *params):
+    with get_db_cursor() as cursor:
+        cursor.execute(sql_query, *params)
         try:
-            DATABASE_CONNECTION = psycopg2.connect(
-                host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
-                database="spliceai-lookup-db",
-                user="postgres",
-                password=os.environ.get("DB_PASSWORD"))
-            DATABASE_CONNECTION.autocommit = True
-        except Exception as e:
-            print(f"ERROR: Unable to connect to the database: {e}. Proceeding without a database connection...")
-            traceback.print_exc()
-            return
-
-        def does_table_exist(table_name):
-            results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename=%s)", (table_name,))
-            does_table_already_exist = results[0][0]
-            return does_table_already_exist
-
-        if not does_table_exist("cache"):
-            print("Creating cache table")
-            run_sql("""CREATE TABLE cache (key TEXT UNIQUE, value TEXT, counter INT, accessed TIMESTAMP DEFAULT now())""")
-            run_sql("""CREATE INDEX cache_index ON cache (key)""")
-
-        if not does_table_exist("log"):
-            print("Creating event_log table")
-            run_sql("""CREATE TABLE log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), bc VARCHAR(20), distance INT, mask INT4, details TEXT, variant_consequence TEXT)""")
-            run_sql("""CREATE INDEX log_index1 ON log (event_name)""")
-            run_sql("""CREATE INDEX log_index2 ON log (ip)""")
-
-
-def run_sql(sql_query, *args):
-    with DATABASE_CONNECTION:
-        c = DATABASE_CONNECTION.cursor()
-        c.execute(sql_query, *args)
-        try:
-            results = c.fetchall()
+            results = cursor.fetchall()
         except:
             results = []
-        c.close()
     return results
+
+@app.teardown_appcontext
+def close_connections(exception):
+    try:
+        DATABASE_CONNECTION_POOL.closeall()
+    except Exception as e:
+        print(f"Error closing database connections: {e}", flush=True)
+
+def does_table_exist(table_name):
+    results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename=%s)", (table_name,))
+    does_table_already_exist = results[0][0]
+    return does_table_already_exist
+
+if not does_table_exist("cache"):
+    print("Creating cache table")
+    run_sql("""CREATE TABLE cache (key TEXT UNIQUE, value TEXT, counter INT, accessed TIMESTAMP DEFAULT now())""")
+    run_sql("""CREATE INDEX cache_index ON cache (key)""")
+
+if not does_table_exist("log"):
+    print("Creating event_log table")
+    run_sql("""CREATE TABLE log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), bc VARCHAR(20), distance INT, mask INT4, details TEXT, variant_consequence TEXT)""")
+    run_sql("""CREATE INDEX log_index1 ON log (event_name)""")
+    run_sql("""CREATE INDEX log_index2 ON log (ip)""")
+
 
 
 def exceeds_rate_limit(user_ip):
