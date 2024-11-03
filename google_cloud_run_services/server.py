@@ -221,8 +221,6 @@ if not does_table_exist("log"):
 
 def exceeds_rate_limit(user_ip):
     """Rate limit requests based on user ip address"""
-    if DATABASE_CONNECTION is None:
-        return False
 
     #"""
     #SELECT * FROM log WHERE event_name like '%computed' AND duration > 2 AND ip='210.3.222.157' AND logtime >= NOW() - INTERVAL '5 minutes' ;
@@ -256,9 +254,6 @@ def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, 
 
 def get_splicing_scores_from_cache(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
     results = {}
-    if DATABASE_CONNECTION is None:
-        return results
-
     key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive)
     try:
         rows = run_sql(f"SELECT value FROM cache WHERE key=%s", (key,))
@@ -272,9 +267,6 @@ def get_splicing_scores_from_cache(tool_name, variant, genome_version, distance,
 
 
 def add_splicing_scores_to_cache(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive, results):
-    if DATABASE_CONNECTION is None:
-        return
-
     key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive)
     try:
         results_string = json.dumps(results)
@@ -673,10 +665,6 @@ def get_user_ip(request):
 
 @app.route('/log/<string:name>/', strict_slashes=False)
 def log_event(name):
-    if DATABASE_CONNECTION is None:
-        message = f"Log error: Database not available"
-        print(message, flush=True)
-        return error_response(f"ERROR: {message}")
 
     if name != "show_igv":
         message = f"Log error: invalid event name: {name}"
