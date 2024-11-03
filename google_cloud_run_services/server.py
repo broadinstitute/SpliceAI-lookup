@@ -194,12 +194,12 @@ def run_sql(sql_query, *params):
             results = []
     return results
 
-@app.teardown_appcontext
-def close_connections(exception):
-    try:
-        DATABASE_CONNECTION_POOL.closeall()
-    except Exception as e:
-        print(f"Error closing database connections: {e}", flush=True)
+#@app.teardown_appcontext
+#def close_connections(exception):
+#    try:
+#        DATABASE_CONNECTION_POOL.closeall()
+#    except Exception as e:
+#        print(f"Error closing database connections: {e}", flush=True)
 
 def does_table_exist(table_name):
     results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename=%s)", (table_name,))
