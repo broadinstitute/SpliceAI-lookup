@@ -214,13 +214,13 @@ def exceeds_rate_limit(user_ip):
 
     #    rows = run_sql(f"SELECT count(*) FROM log WHERE ip=%s AND logtime > now() - interval '1 second' AND event_name=%s", (ip, request_type))
     try:
-        #rows = run_sql("SELECT COUNT(*) FROM log WHERE event_name like '%computed' AND duration > 2 AND ip=%s AND logtime >= NOW() - INTERVAL '5 minutes'", user_ip)
+        #rows = run_sql("SELECT COUNT(*) FROM log WHERE event_name like '%%computed' AND duration > 2 AND ip=%s AND logtime >= NOW() - INTERVAL '5 minutes'", user_ip)
         #if rows:
         #    request_count = int(rows[0][0])
         #    if request_count > 50:
         #        return f"Rate limit exceeded. This server supports no more than 5 requests per IP address per minute."
 
-        rows = run_sql("SELECT COUNT(*) FROM log WHERE event_name like '%computed' AND duration > 2 AND ip=%s AND logtime >= NOW() - INTERVAL '1 minutes'", user_ip)
+        rows = run_sql("SELECT COUNT(*) FROM log WHERE event_name like '%%computed' AND duration > 2 AND ip='%s' AND logtime >= NOW() - INTERVAL '1 minutes'", user_ip)
         if rows:
             request_count = int(rows[0][0])
             if request_count > 15:
@@ -228,6 +228,8 @@ def exceeds_rate_limit(user_ip):
 
     except Exception as e:
         print(f"Error while checking rate limit: {e}", flush=True)
+        # print traceback
+        traceback.print_exc()
         return False
 
 def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
@@ -525,7 +527,8 @@ def run_splice_prediction_tool(tool_name):
 
 
     start_time = datetime.now()
-    logging_prefix = start_time.strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()} ip:{user_ip}"
+    #logging_prefix = start_time.strftime("%m/%d/%Y %H:%M:%S") + f" t{os.getpid()} ip:{user_ip}"
+    logging_prefix = f"t{os.getpid()} ip:{user_ip}"
     example_url = SPLICEAI_EXAMPLE_URL if tool_name == "spliceai" else PANGOLIN_EXAMPLE_URL
 
     # check params
