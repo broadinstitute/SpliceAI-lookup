@@ -220,7 +220,7 @@ def exceeds_rate_limit(user_ip):
         #    if request_count > 50:
         #        return f"Rate limit exceeded. This server supports no more than 5 requests per IP address per minute."
 
-        rows = run_sql("SELECT COUNT(*) FROM log WHERE event_name like '%%computed' AND duration > 2 AND ip=%s AND logtime >= NOW() - INTERVAL '1 minutes'", (user_ip,))
+        rows = run_sql("SELECT COUNT(*) FROM log WHERE event_name LIKE %s AND duration > 2 AND ip=%s AND logtime >= NOW() - INTERVAL '1 minutes'", ('%computed', user_ip,))
         if rows:
             request_count = int(rows[0][0])
             if request_count > 15:
