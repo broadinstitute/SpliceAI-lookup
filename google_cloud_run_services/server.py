@@ -184,7 +184,7 @@ def init_database_connection():
 
         if not does_table_exist("log"):
             print("Creating event_log table")
-            run_sql("""CREATE TABLE log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), distance INT, mask INT4, details TEXT, variant_consequence TEXT)""")
+            run_sql("""CREATE TABLE log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), bc VARCHAR(20), distance INT, mask INT4, details TEXT, variant_consequence TEXT)""")
             run_sql("""CREATE INDEX log_index1 ON log (event_name)""")
             run_sql("""CREATE INDEX log_index2 ON log (ip)""")
 
