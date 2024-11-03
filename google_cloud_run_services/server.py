@@ -601,7 +601,6 @@ def run_splice_prediction_tool(tool_name):
 
     init_reference(genome_version)
     init_transcript_annotations(genome_version, basic_or_comprehensive_param)
-    init_database_connection()
 
     # check cache before processing the variant
     results = {}
@@ -674,8 +673,6 @@ def get_user_ip(request):
 
 @app.route('/log/<string:name>/', strict_slashes=False)
 def log_event(name):
-    init_database_connection()
-
     if DATABASE_CONNECTION is None:
         message = f"Log error: Database not available"
         print(message, flush=True)
