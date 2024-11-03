@@ -152,7 +152,7 @@ def parse_variant(variant_str):
 try:
     DATABASE_CONNECTION_POOL = SimpleConnectionPool(
         minconn=1,
-        maxconn=30,
+        maxconn=20,
         dbname="spliceai-lookup-db",
         user="postgres",
         password=os.environ.get("DB_PASSWORD"),
@@ -160,6 +160,7 @@ try:
         port="5432",
         connect_timeout=5,
     )
+    print(f"Successfully connected to database", flush=True)
 except psycopg2.Error as e:
     print(f"Error connecting to database: {e}", flush=True)
     DATABASE_CONNECTION_POOL = None
