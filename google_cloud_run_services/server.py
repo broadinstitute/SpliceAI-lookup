@@ -331,10 +331,6 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
         return error_resonse
 
     # generate error message if variant falls outside annotated exons or introns
-    OTHER_GENOME_VERSION = {"37": "38", "38": "37"}
-    chrom_without_chr = chrom.replace("chr", "")
-    scores = []
-
     record = VariantRecord(chrom, pos, ref, alt)
     try:
         scores = get_delta_scores(
@@ -724,6 +720,7 @@ def log_event(name):
 @app.route('/<path:path>/')
 def catch_all(path):
     return f"SpliceAI-lookup APIs: invalid endpoint {path}"
+
 
 if '__main__' == __name__ or os.environ.get('RUNNING_ON_GOOGLE_CLOUD_RUN'):
     app.run(debug=DEBUG, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
