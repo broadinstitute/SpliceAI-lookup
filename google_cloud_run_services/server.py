@@ -6,6 +6,8 @@ import os
 import pyfastx
 import psycopg2
 import re
+import signal
+import sys
 import traceback
 
 # used for DB connection pooling
@@ -195,12 +197,18 @@ def run_sql(sql_query, *params):
             results = []
     return results
 
-#@app.teardown_appcontext
-#def close_connections(exception):
-#    try:
-#        DATABASE_CONNECTION_POOL.closeall()
-#    except Exception as e:
-#        print(f"Error closing database connections: {e}", flush=True)
+
+def signal_handler(sig, frame):
+    print(f"Received signal {sig}. Shutting down database connections and exiting...", flush=True)
+    try:
+        DATABASE_CONNECTION_POOL.closeall()
+    except Exception as e:
+        print(f"Error closing database connections: {e}", flush=True)
+
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, signal_handler)
+
 
 def does_table_exist(table_name):
     results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename=%s)", (table_name,))
