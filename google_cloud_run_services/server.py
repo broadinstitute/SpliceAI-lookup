@@ -155,11 +155,14 @@ def parse_variant(variant_str):
 
 
 while True:
+    # https://groups.google.com/g/google-cloud-sql-discuss/c/mxsaf-YDrbA?pli=1
+    # https://cloud.google.com/sql/docs/postgres/flags#gcloud
+
     error_count = 0
     try:
         DATABASE_CONNECTION_POOL = SimpleConnectionPool(
             minconn=1,
-            maxconn=10,
+            maxconn=5,
             dbname="spliceai-lookup-db",
             user="postgres",
             password=os.environ.get("DB_PASSWORD"),
