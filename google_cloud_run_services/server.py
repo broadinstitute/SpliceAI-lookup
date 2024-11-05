@@ -8,7 +8,9 @@ import psycopg2
 import re
 import signal
 import sys
+import time
 import traceback
+
 
 # used for DB connection pooling
 from psycopg2.pool import SimpleConnectionPool
@@ -151,21 +153,31 @@ def parse_variant(variant_str):
 
     return match['chrom'], int(match['pos']), match['ref'], match['alt']
 
-try:
-    DATABASE_CONNECTION_POOL = SimpleConnectionPool(
-        minconn=1,
-        maxconn=20,
-        dbname="spliceai-lookup-db",
-        user="postgres",
-        password=os.environ.get("DB_PASSWORD"),
-        host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
-        port="5432",
-        connect_timeout=5,
-    )
-    print(f"Successfully connected to database", flush=True)
-except psycopg2.Error as e:
-    print(f"Error connecting to database: {e}", flush=True)
-    DATABASE_CONNECTION_POOL = None
+
+while True:
+    error_count = 0
+    try:
+        DATABASE_CONNECTION_POOL = SimpleConnectionPool(
+            minconn=1,
+            maxconn=10,
+            dbname="spliceai-lookup-db",
+            user="postgres",
+            password=os.environ.get("DB_PASSWORD"),
+            host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
+            port="5432",
+            connect_timeout=5,
+        )
+        print(f"Successfully connected to database", flush=True)
+        break
+    except psycopg2.Error as e:
+        error_count += 1
+        time.sleep(2)
+        print(f"Error connecting to database: {e}", flush=True)
+        traceback.print_exc()
+        if error_count > 5:
+            print(f"Error connecting to database. Exiting...", flush=True)
+            sys.exit(1)
+
 
 @contextmanager
 def get_db_connection():
