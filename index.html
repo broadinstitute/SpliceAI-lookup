@@ -236,7 +236,7 @@
                                     </div>
                                 </span>
                                 <i style="margin-left:10px" class="question circle outline icon" data-position="right center"
-                                   data-content="The basic gene set starts with the most useful Gencode transcripts, prioritizing full-length protein coding transcripts over partial or non-coding ones. The comprehensive gene set starts with all Gencode transcripts. To improve efficiency, we filter both gene sets to remove redundant transcript models that differ only in internal exon boundaries but share the same transcript start and end coordinates and strand. This filtering approach is based on the fact that SpliceAI (unmasked) scores depend solely on pre-mRNA coordinates (i.e. the transcript strand, start, and end coordinates) and not on exon boundaries."></i>
+                                   data-content="The basic gene set starts with the most useful Gencode transcripts, prioritizing full-length protein coding transcripts over partial or non-coding ones. The comprehensive gene set starts with all Gencode transcripts. To improve efficiency, we then filter both gene sets, removing redundant transcripts which differ only in their internal exon boundaries but share the same transcript strand, start, and end coordinates. This filtering approach is based on the fact that SpliceAI (unmasked) scores depend solely on pre-mRNA reference and alternate sequence (defined by transcript strand, start, and end coordinates) and not on exon boundaries."></i>
                             </div>
                             <div class="ui stackable grid">
                                 <div class="row">
