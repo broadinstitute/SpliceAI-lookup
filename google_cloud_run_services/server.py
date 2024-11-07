@@ -116,6 +116,13 @@ else:
     raise ValueError(f'Environment variable "TOOL" should be set to either "spliceai" or "pangolin" instead of: "{os.environ.get("TOOL")}"')
 
 
+RATE_LIMIT_ERROR_MESSAGE = (
+    f"Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, "
+    f"please install a local instance of the API server, or just run the prediction models directly. Attempts to query large "
+    f"numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact "
+    f"us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
+)
+
 def init_reference(genome_version):
     if genome_version not in PYFASTX_REF:
         PYFASTX_REF[genome_version] = pyfastx.Fasta(FASTA_PATH[genome_version])
@@ -268,20 +275,19 @@ def exceeds_rate_limit(conn, user_ip):
     #return False
 
     try:
-
         # check if the user has exceeded the rate limit or is on the list of restricted IPs
         rows = run_sql(conn, "SELECT COUNT(ip) FROM restricted_ips WHERE ip=%s AND created >= NOW() - INTERVAL '1 weeks'", (user_ip,))
         if rows:
             request_count = int(rows[0][0])
             if request_count > 0:
-                return f"Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us @ https://github.com/broadinstitute/spliceai-lookup if you have any questions."
+                return RATE_LIMIT_ERROR_MESSAGE
 
         rows = run_sql(conn, "SELECT COUNT(ip) FROM log WHERE event_name LIKE %s AND ip=%s AND logtime >= NOW() - INTERVAL '10 minutes'", ("%computed%", user_ip))
         if rows:
             request_count = int(rows[0][0])
             if request_count > 50:
                 log(conn, f"rate_limit_exceeded", ip=user_ip)
-                return f"Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us @ https://github.com/broadinstitute/spliceai-lookup if you have any questions."
+                return RATE_LIMIT_ERROR_MESSAGE
 
         # check if the user has exceeded the rate limit more than
 
