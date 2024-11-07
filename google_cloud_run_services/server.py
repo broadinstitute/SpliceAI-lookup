@@ -154,57 +154,66 @@ def parse_variant(variant_str):
     return match['chrom'], int(match['pos']), match['ref'], match['alt']
 
 
-while True:
-    # https://groups.google.com/g/google-cloud-sql-discuss/c/mxsaf-YDrbA?pli=1
-    # https://cloud.google.com/sql/docs/postgres/flags#gcloud
-
-    error_count = 0
-    try:
-        DATABASE_CONNECTION_POOL = SimpleConnectionPool(
-            minconn=1,
-            maxconn=5,
-            dbname="spliceai-lookup-db",
-            user="postgres",
-            password=os.environ.get("DB_PASSWORD"),
-            host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
-            port="5432",
-            connect_timeout=5,
-        )
-        print(f"Successfully connected to database", flush=True)
-        break
-    except psycopg2.Error as e:
-        error_count += 1
-        time.sleep(2)
-        print(f"Error connecting to database: {e}", flush=True)
-        traceback.print_exc()
-        if error_count > 5:
-            print(f"Error connecting to database. Exiting...", flush=True)
-            sys.exit(1)
+#while True:
+#    # https://groups.google.com/g/google-cloud-sql-discuss/c/mxsaf-YDrbA?pli=1
+#    # https://cloud.google.com/sql/docs/postgres/flags#gcloud
+#
+#    error_count = 0
+#    try:
+#        DATABASE_CONNECTION_POOL = SimpleConnectionPool(
+#            minconn=1,
+#            maxconn=5,
+#            dbname="spliceai-lookup-db",
+#            user="postgres",
+#            password=os.environ.get("DB_PASSWORD"),
+#            host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
+#            port="5432",
+#            connect_timeout=5,
+#        )
+#        print(f"Successfully connected to database", flush=True)
+#        break
+#    except psycopg2.Error as e:
+#        error_count += 1
+#        time.sleep(2)
+#        print(f"Error connecting to database: {e}", flush=True)
+#        traceback.print_exc()
+#        if error_count > 5:
+#            print(f"Error connecting to database. Exiting...", flush=True)
+#            sys.exit(1)
 
 
 @contextmanager
 def get_db_connection():
-    """Get a database connection from the pool"""
-    conn = DATABASE_CONNECTION_POOL.getconn()
+    """Get a database connection"""
+    #conn = DATABASE_CONNECTION_POOL.getconn()
+    conn = psycopg2.connect(
+        dbname="spliceai-lookup-db",
+        user="postgres",
+        password=os.environ.get("DB_PASSWORD"),
+        host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
+        port="5432",
+        connect_timeout=5,
+    )
+
     try:
         yield conn
     finally:
-        DATABASE_CONNECTION_POOL.putconn(conn)
+        conn.close()
+        #DATABASE_CONNECTION_POOL.putconn(conn)
 
 @contextmanager
-def get_db_cursor():
-    """Get a database cursor using a connection from the pool"""
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        try:
-            yield cursor
-            conn.commit()
-        finally:
-            cursor.close()
+def get_db_cursor(conn):
+    """Get a database cursor"""
+    cursor = conn.cursor()
+    try:
+        yield cursor
+        conn.commit()
+    finally:
+        cursor.close()
 
 
-def run_sql(sql_query, *params):
-    with get_db_cursor() as cursor:
+def run_sql(conn, sql_query, *params):
+    with get_db_cursor(conn) as cursor:
         cursor.execute(sql_query, *params)
         try:
             results = cursor.fetchall()
@@ -213,35 +222,43 @@ def run_sql(sql_query, *params):
     return results
 
 
-def signal_handler(sig, frame):
-    print(f"Received signal {sig}. Shutting down database connections and exiting...", flush=True)
-    try:
-        DATABASE_CONNECTION_POOL.closeall()
-    except Exception as e:
-        print(f"Error closing database connections: {e}", flush=True)
+#def signal_handler(sig, frame):
+#    print(f"Received signal {sig}. Shutting down database connections and exiting...", flush=True)
+#    try:
+#        DATABASE_CONNECTION_POOL.closeall()
+#    except Exception as e:
+#        print(f"Error closing database connections: {e}", flush=True)
+#
+#    sys.exit(0)
+#
+#signal.signal(signal.SIGTERM, signal_handler)
 
-    sys.exit(0)
 
-signal.signal(signal.SIGTERM, signal_handler)
+#def does_table_exist(table_name):
+#    results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename=%s)", (table_name,))
+#    does_table_already_exist = results[0][0]
+#    return does_table_already_exist
 
+#if not does_table_exist("cache"):
+#    print("Creating cache table")
+#    run_sql("""CREATE TABLE cache (key TEXT UNIQUE, value TEXT, counter INT, accessed TIMESTAMP DEFAULT now())""")
+#    run_sql("""CREATE INDEX cache_index ON cache (key)""")
 
-def does_table_exist(table_name):
-    results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename=%s)", (table_name,))
-    does_table_already_exist = results[0][0]
-    return does_table_already_exist
+#if not does_table_exist("log"):
+#    print("Creating event_log table")
+#    run_sql("""CREATE TABLE log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), bc VARCHAR(20), distance INT, mask INT4, details TEXT, variant_consequence TEXT)""")
+#    run_sql("""CREATE INDEX idx_log_ip_logtime ON log USING btree (ip, logtime DESC)""")
+#    run_sql("""CREATE INDEX idx_log_event_name ON log USING btree (event_name)""")
 
-if not does_table_exist("cache"):
-    print("Creating cache table")
-    run_sql("""CREATE TABLE cache (key TEXT UNIQUE, value TEXT, counter INT, accessed TIMESTAMP DEFAULT now())""")
-    run_sql("""CREATE INDEX cache_index ON cache (key)""")
+#if not does_table_exist("restricted_ips"):
+#    print("Creating restricted_ips table")
+#    run_sql("""CREATE TABLE restricted_ips (ip TEXT UNIQUE, created TIMESTAMP DEFAULT now())""")
+#    run_sql("""CREATE INDEX idx_restricted_ips_created ON restricted_ips USING btree (created)""")
 
-if not does_table_exist("log"):
-    print("Creating event_log table")
-    run_sql("""CREATE TABLE log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), bc VARCHAR(20), distance INT, mask INT4, details TEXT, variant_consequence TEXT)""")
-    run_sql("""CREATE INDEX idx_log_ip_logtime ON log USING btree (ip, logtime DESC)""")
-    run_sql("""CREATE INDEX idx_log_event_name ON log USING btree (event_name)""")
+# Query to add ip to the restricted_ips table
+#run_sql("""INSERT INTO restricted_ips (ip) VALUES ('210.3.222.157')""")
 
-def exceeds_rate_limit(user_ip):
+def exceeds_rate_limit(conn, user_ip):
     """Rate limit requests based on user ip address"""
 
     #"""
@@ -250,19 +267,23 @@ def exceeds_rate_limit(user_ip):
     #"""
     #return False
 
-    #    rows = run_sql(f"SELECT count(*) FROM log WHERE ip=%s AND logtime > now() - interval '1 second' AND event_name=%s", (ip, request_type))
     try:
-        #rows = run_sql("SELECT COUNT(*) FROM log WHERE event_name like '%%computed' AND duration > 2 AND ip=%s AND logtime >= NOW() - INTERVAL '5 minutes'", user_ip)
-        #if rows:
-        #    request_count = int(rows[0][0])
-        #    if request_count > 50:
-        #        return f"Rate limit exceeded. This server supports no more than 5 requests per IP address per minute."
 
-        rows = run_sql("SELECT COUNT(*) FROM log WHERE event_name LIKE %s AND duration > 2 AND ip=%s AND logtime >= NOW() - INTERVAL '1 minutes'", ('%computed', user_ip,))
+        # check if the user has exceeded the rate limit or is on the list of restricted IPs
+        rows = run_sql(conn, "SELECT COUNT(ip) FROM restricted_ips WHERE ip=%s AND created >= NOW() - INTERVAL '1 weeks'", (user_ip,))
         if rows:
             request_count = int(rows[0][0])
-            if request_count > 10:
-                return f"Rate limit exceeded. This server supports no more than 5 requests per IP address per minute."
+            if request_count > 0:
+                return f"Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us @ https://github.com/broadinstitute/spliceai-lookup if you have any questions."
+
+        rows = run_sql(conn, "SELECT COUNT(ip) FROM log WHERE event_name LIKE %s AND ip=%s AND logtime >= NOW() - INTERVAL '10 minutes'", ("%computed%", user_ip))
+        if rows:
+            request_count = int(rows[0][0])
+            if request_count > 50:
+                log(conn, f"rate_limit_exceeded", ip=user_ip)
+                return f"Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us @ https://github.com/broadinstitute/spliceai-lookup if you have any questions."
+
+        # check if the user has exceeded the rate limit more than
 
     except Exception as e:
         print(f"Error while checking rate limit: {e}", flush=True)
@@ -270,15 +291,16 @@ def exceeds_rate_limit(user_ip):
         traceback.print_exc()
         return False
 
+
 def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
     return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}__{basic_or_comprehensive}"
 
 
-def get_splicing_scores_from_cache(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
+def get_splicing_scores_from_cache(conn, tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
     results = {}
     key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive)
     try:
-        rows = run_sql(f"SELECT value FROM cache WHERE key=%s", (key,))
+        rows = run_sql(conn, f"SELECT value FROM cache WHERE key=%s", (key,))
         if rows:
             results = json.loads(rows[0][0])
             results["source"] += ":cache"
@@ -288,12 +310,13 @@ def get_splicing_scores_from_cache(tool_name, variant, genome_version, distance,
     return results
 
 
-def add_splicing_scores_to_cache(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive, results):
+def add_splicing_scores_to_cache(conn, tool_name, variant, genome_version, distance, mask, basic_or_comprehensive, results):
     key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive)
     try:
         results_string = json.dumps(results)
 
-        run_sql(r"""INSERT INTO cache (key, value, counter, accessed) VALUES (%s, %s, 1, now()) """ +
+        run_sql(conn,
+                r"""INSERT INTO cache (key, value, counter, accessed) VALUES (%s, %s, 1, now()) """ +
                 r"""ON CONFLICT (key) DO """ +
                 r"""UPDATE SET key=%s, value=%s, counter=cache.counter+1, accessed=now()""", (key, results_string, key, results_string))
     except Exception as e:
@@ -537,18 +560,21 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
 
 @app.route("/spliceai/", methods=['POST', 'GET'])
 def run_spliceai():
-    return run_splice_prediction_tool(tool_name="spliceai")
+    with get_db_connection() as conn:
+        return run_splice_prediction_tool(conn, tool_name="spliceai")
 
 
 @app.route("/pangolin/", methods=['POST', 'GET'])
 def run_pangolin():
-    return run_splice_prediction_tool(tool_name="pangolin")
+    with get_db_connection() as conn:
+        return run_splice_prediction_tool(conn, tool_name="pangolin")
 
 
-def run_splice_prediction_tool(tool_name):
+def run_splice_prediction_tool(conn, tool_name):
     """Handles API request for splice prediction
 
     Args:
+        conn (psycopg2.connection): Database connection
         tool_name (str): "spliceai" or "pangolin"
     """
 
@@ -619,13 +645,13 @@ def run_splice_prediction_tool(tool_name):
     # check cache before processing the variant
     results = {}
     if not force:
-        results = get_splicing_scores_from_cache(tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param)
+        results = get_splicing_scores_from_cache(conn, tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param)
 
     duration = (datetime.now() - start_time).total_seconds()
     if results:
-        log(f"{tool_name}:from-cache", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
+        log(conn, f"{tool_name}:from-cache", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
     else:
-        error_message = exceeds_rate_limit(user_ip)
+        error_message = exceeds_rate_limit(conn, user_ip)
         if error_message:
             print(f"{logging_prefix}: {user_ip}: response: {error_message}", flush=True)
             return error_response(error_message, source=tool_name)
@@ -643,13 +669,13 @@ def run_splice_prediction_tool(tool_name):
             return error_response(f"ERROR: {e}", source=tool_name)
 
         duration = (datetime.now() - start_time).total_seconds()
-        log(f"{tool_name}:computed", ip=user_ip, duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
+        log(conn, f"{tool_name}:computed", ip=user_ip, duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
 
         if "error" not in results:
-            add_splicing_scores_to_cache(tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param, results)
+            add_splicing_scores_to_cache(conn, tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param, results)
 
     if "error" in results:
-        log(f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
+        log(conn, f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
 
     response_json = {}
     response_json.update(params)  # copy input params to output
@@ -663,7 +689,7 @@ def run_splice_prediction_tool(tool_name):
     ])
 
 
-def log(event_name, ip=None, duration=None, variant=None, genome=None, distance=None, mask=None, bc=None, details=None, variant_consequence=None):
+def log(conn, event_name, ip=None, duration=None, variant=None, genome=None, distance=None, mask=None, bc=None, details=None, variant_consequence=None):
     """Utility method for logging an event"""
 
     try:
@@ -675,7 +701,8 @@ def log(event_name, ip=None, duration=None, variant=None, genome=None, distance=
         return
 
     try:
-        run_sql(r"INSERT INTO log (event_name, ip, duration, variant, genome, distance, mask, bc, details, variant_consequence) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        run_sql(conn,
+                r"INSERT INTO log (event_name, ip, duration, variant, genome, distance, mask, bc, details, variant_consequence) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (event_name, ip, duration, variant, genome, distance, mask, bc, details, variant_consequence))
     except Exception as e:
         print(f"Log error: {e}", flush=True)
@@ -714,18 +741,19 @@ def log_event(name):
     user_ip = get_user_ip(request)
     logging_prefix = datetime.now().strftime("%m/%d/%Y %H:%M:%S") + f" {user_ip} t{os.getpid()}"
     print(f"{logging_prefix}: ======================", flush=True)
-    print(f"{logging_prefix}: {variant} show igv with hg={genome_version}, "
-          f"distance={distance_param}, mask={mask_param}", flush=True)
+    print(f"{logging_prefix}: {variant} show igv with hg={genome_version}, distance={distance_param}, mask={mask_param}", flush=True)
 
-    log(name,
-        ip=user_ip,
-        variant=variant,
-        genome=genome_version,
-        distance=distance_param,
-        mask=mask_param,
-        bc=basic_or_comprehensive_param,
-        details=details,
-        variant_consequence=variant_consequence)
+    with get_db_connection() as conn:
+        log(conn,
+            name,
+            ip=user_ip,
+            variant=variant,
+            genome=genome_version,
+            distance=distance_param,
+            mask=mask_param,
+            bc=basic_or_comprehensive_param,
+            details=details,
+            variant_consequence=variant_consequence)
 
     return Response(json.dumps({"status": "Done"}), status=200, mimetype='application/json', headers=[
         ('Access-Control-Allow-Origin', '*'),
