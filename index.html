@@ -1102,7 +1102,7 @@
                         chr: chrom,   //see createVCFVariant function in the igv.js repo for the allowed fields
                         pos: variantPos,
                         start: variantPos - 1,
-                        end: variantPos,
+                        end: variantPos + variantRef.length - 1,
                         referenceAllele: variantRef,
                         alternateBases: variantAlt,
                         names: ".", // id in VCF
