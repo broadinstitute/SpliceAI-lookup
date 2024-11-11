@@ -288,7 +288,7 @@ def exceeds_rate_limit(conn, user_ip):
             if request_count > 50:
                 log(conn, f"rate_limit_exceeded", ip=user_ip)
                 # check how many times the user has exceeded the rate limit in the last day
-                rows = run_sql(conn, "SELECT COUNT(ip) FROM log WHERE event_name='rate_limit_exceeded' AND ip=%s AND logtime >= NOW() - INTERVAL '1 days'", (user_ip,))
+                rows = run_sql(conn, "SELECT COUNT(ip) FROM log WHERE event_name='rate_limit_exceeded' AND ip=%s AND logtime >= NOW() - INTERVAL '2 days'", (user_ip,))
                 if rows:
                     request_count = int(rows[0][0])
                     if request_count > 10:
