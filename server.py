@@ -379,8 +379,6 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
                      f"variant falling outside of all Gencode exons and introns.",
         }
 
-    #scores = [s[s.index("|")+1:] for s in scores]  # drop allele field
-
     # to reduce the response size, return all non-zero scores only for the canonial transcript (or the 1st transcript)
     all_non_zero_scores = None
     all_non_zero_scores_strand = None
@@ -421,6 +419,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
         "distance": distance_param,
         "scores": scores,
         "source": source,
+
         "allNonZeroScores": all_non_zero_scores,
         "allNonZeroScoresStrand": all_non_zero_scores_strand,
         "allNonZeroScoresTranscriptId": all_non_zero_scores_transcript_id,

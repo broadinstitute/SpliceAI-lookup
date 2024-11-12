@@ -19,16 +19,17 @@ p.add_argument("-n", type=int, help="number of rows to query", default=1000)
 p.add_argument("-p", "--show-progress-bar", action="store_true")
 args, _ = p.parse_known_args()
 
-days_ago = 5
+days_ago = 3
 conn = psycopg2.connect(f"dbname='{args.db}' user='{args.user}' host='{args.ip}' password='{args.password}'")
 #query = f"SELECT key, value, accessed FROM cache WHERE accessed < now() - INTERVAL '{days_ago} days' ORDER BY accessed ASC"
-query = f"SELECT key, value, accessed FROM cache WHERE key like 'pangolin%hg38%' AND accessed < now() - INTERVAL '{days_ago} days' ORDER BY accessed ASC"
+query = f"SELECT key, value, accessed FROM cache WHERE key LIKE 'pangolin%hg38%' AND accessed > now() - INTERVAL '{days_ago} months' ORDER BY accessed ASC"
 df = pd.read_sql_query(query, conn)
-print(f"Retrieved {len(df):,d} records from cache that were last accessed more than {days_ago} days ago.")
+print(f"Retrieved {len(df):,d} records from cache that were last accessed less than {days_ago} days ago.")
 if args.n:
     keep_every_kth_record = len(df)//args.n
-    df = df[df.index % keep_every_kth_record == 0]
-    print(f"Kept {len(df):,d} records after applying -n {args.n} arg")
+    if keep_every_kth_record > 1:
+        df = df[df.index % keep_every_kth_record == 0]
+        print(f"Kept {len(df):,d} records after applying -n {args.n} arg")
 
 counter = collections.Counter()
 iterator = zip(df.key, df.value, df.accessed)
@@ -46,6 +47,7 @@ for i, (cache_key, cache_value, last_accessed) in enumerate(iterator):
     tool = data["source"].split(":")[0]
     hg = data["genomeVersion"]
     distance = data["distance"]
+    cache_key = cache_key.replace("__basic", "").replace("__comprehensive", "")
     assert cache_key[-2:] in ("m1", "m0")
     mask = cache_key[-1]
     variant = data["variant"]

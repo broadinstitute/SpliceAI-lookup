@@ -756,9 +756,46 @@
         })
     }
 
-    const generateWarningAboutInsertions = (label, score, position, ref, alt) => {
+    const generateWarningAboutInsertions = (label, score, position, ref, alt, scoresForInsertedBases) => {
         //warn about insertion variants that are predicted to cause a donor or acceptor gain somewhere within the inserted sequence.
         if (score >= 0.2 && position == 0 && (alt.length - ref.length) >= 2 && label.toLowerCase().indexOf("gain") >= 0) {
+            let table = ""
+            let tableRows = []
+            // check if scoresForInsertedBases defined and non-empty
+            if (scoresForInsertedBases && scoresForInsertedBases.length > 0) {
+                for (const scoreObj of scoresForInsertedBases) {
+                    const RA = parseFloat(scoreObj.RA)
+                    const AA = parseFloat(scoreObj.AA)
+                    const RD = parseFloat(scoreObj.RD)
+                    const AD = parseFloat(scoreObj.AD)
+
+                    tableRows.push(
+                        `<tr><td>${scoreObj.chrom.replace('chr', '')}</td><td style='text-align:right'>${scoreObj.pos}</td><td>${scoreObj.ref}</td><td>${scoreObj.alt}</td>
+                             <td>${RA}</td><td>${RD}</td><td>${AA}</td><td>${AD}</td></tr>`)
+                }
+
+                table = (
+                    `<div>
+                       SpliceAI scores for bases in and around the insertion: <br>
+                       <table class='ui celled table'>
+                        <thead>
+                            <tr style='text-align:center'>
+                                <th>Chrom</th>
+                                <th>Pos</th>
+                                <th>Ref</th>
+                                <th>Alt</th>
+                                <th>Acceptor Loss</th>
+                                <th>Donor Loss</th>
+                                <th>Acceptor Gain</th>
+                                <th>Donor Gain</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${tableRows.join("\n")}
+                        </tbody>
+                    </table></div>`
+                ).replace(/\n/g, "")
+            }
             let warning = (
                 `<b>WARNING:</b> Although this delta score suggests a possible ${label.toLowerCase()} ` +
                 `directly within the inserted sequence, the exact location and biological consequence of the predicted splicing ` +
@@ -769,7 +806,12 @@
                 `that 1) the variant is an insertion of at least 2bp and 2) its delta score is ≥ 0.2 and has a relative position of 0bp. `
             )
 
-            return `<i style="margin-left:10px; color:red" class="exclamation circle icon" data-position="right center" data-content="${warning}"></i>`
+            let iconHtml = `<i style="margin-left:10px; color:red" class="exclamation circle icon" data-position="right center" data-html="${warning}"></i>`
+            if (table) {
+                iconHtml += `<i style="margin-left:10px; color:#000080" class="table icon score-table" data-position="right center" data-html="${table}"></i>`
+            }
+            return iconHtml
+
         } else {
             return ""
         }
@@ -913,7 +955,7 @@
                 row += `<td>${label}</td>
                         <td ${getScoreStyle(scores[DS])}>
                             ${formatScore(scores[DS])}
-                            ${generateWarningAboutInsertions(label, scores[DS], scores[DP], ref, alt)}
+                            ${generateWarningAboutInsertions(label, scores[DS], scores[DP], ref, alt, scores["SCORES_FOR_INSERTED_BASES"])}
                          </td>
                         <td>${
                             (
@@ -1359,11 +1401,13 @@
 
             $("#response-box").show()
 
-            $(".question").popup({"on": "click"})
-            $(".question").css("cursor", "pointer")
-            $(".question").css("color", "#666666")
+            $(".question, .exclamation, .score-table").popup({
+                "on": "click",
+                "lastResort": "bottom left",
+            })
+            $(".question").css({"color": "#666666", "cursor": "pointer"})
+            $(".score-table").css({"color": "#000080", "cursor": "pointer"})
 
-            $(".exclamation").popup({hoverable: true, html: $(".exclamation").attr("data-content")})
 
             if (spliceaiResponseJson.error) {
                 showError(`${spliceaiResponseJson.error}`)
@@ -1473,8 +1517,8 @@
         $("#gencode-version").text(GENCODE_VERSION)
         // init UI elements
         $(".ui.checkbox").checkbox()
-        $(".question").popup({"on": "click"})
-        $(".question").css("cursor", "pointer")
+        $(".question, .exclamation, .score-table").popup({"on": "click"})
+        $(".question, .exclamation, .score-table").css("cursor", "pointer")
         $("#search-box").focus()
         $("#response-box").hide()
 
