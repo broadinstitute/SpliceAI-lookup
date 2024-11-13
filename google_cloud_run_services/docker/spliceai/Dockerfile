@@ -17,6 +17,8 @@ RUN apt update && apt-get install --no-install-recommends -y build-essential lib
 
 COPY docker/spliceai/requirements.txt /
 RUN python3 -m pip install --upgrade -r /requirements.txt
+
+ARG RANDOM=1
 RUN python3 -m pip install https://github.com/bw2/SpliceAI/archive/refs/heads/master.zip
 
 ARG CONCURRENCY="2"
