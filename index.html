@@ -550,6 +550,7 @@
         if (score == null) {
             return ""
         }
+
         return Math.abs(parseFloat(score)).toFixed(2)
     }
 
@@ -570,6 +571,7 @@
         } else {
             return ""
         }
+
         return `style='white-space:nowrap;background-color:${color};'`
     }
 
@@ -756,71 +758,84 @@
         })
     }
 
-    const generateWarningAboutInsertions = (label, score, position, ref, alt, scoresForInsertedBases) => {
+    const considerInsertedBases = (score, position, ref, alt, scoresForInsertedBases) => {
+        //check if the variant is an insertion and if so, return the number of inserted bases
+        return score >= 0.01 && position == 0 && ref.length == 1 && alt.length > 1 && scoresForInsertedBases && scoresForInsertedBases.length > 0
+    }
+
+    const generateTableOfScoresForInsertedBases = (score, position, ref, alt, scoresForInsertedBases) => {
         //warn about insertion variants that are predicted to cause a donor or acceptor gain somewhere within the inserted sequence.
-        if (score >= 0.2 && position == 0 && (alt.length - ref.length) >= 2 && label.toLowerCase().indexOf("gain") >= 0) {
-            let table = ""
-            let tableRows = []
-            // check if scoresForInsertedBases defined and non-empty
-            if (scoresForInsertedBases && scoresForInsertedBases.length > 0) {
-                for (const scoreObj of scoresForInsertedBases) {
-                    const RA = parseFloat(scoreObj.RA)
-                    const AA = parseFloat(scoreObj.AA)
-                    const RD = parseFloat(scoreObj.RD)
-                    const AD = parseFloat(scoreObj.AD)
-
-                    tableRows.push(
-                        `<tr><td>${scoreObj.chrom}</td>
-                             <td style='text-align:right'>${scoreObj.pos}</td>
-                             <td>${scoreObj.ref}</td>
-                             <td>${scoreObj.alt}</td>
-                             <td ${getScoreStyle(RA)}>${RA}</td>
-                             <td ${getScoreStyle(RD)}>${RD}</td>
-                             <td ${getScoreStyle(AA)}>${AA}</td>
-                             <td ${getScoreStyle(AD)}>${AD}</td></tr>`)
-                }
-
-                table = (
-                    `<div>
-                       SpliceAI scores for bases within and around the variant: <br>
-                       <table class='ui celled table'>
-                        <thead>
-                            <tr style='text-align:center'>
-                                <th>Chrom</th>
-                                <th>Pos</th>
-                                <th>Ref</th>
-                                <th>Alt</th>
-                                <th>REF acceptor score</th>
-                                <th>REF donor score</th>
-                                <th>ALT acceptor score</th>
-                                <th>ALT donor score</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${tableRows.join("\n")}
-                        </tbody>
-                    </table></div>`
-                ).replace(/\n/g, "")
-            }
-            let warning = (
-                `<b>WARNING:</b> Although this delta score suggests a possible ${label.toLowerCase()} ` +
-                `directly within the inserted sequence, the exact location and biological consequence of the predicted splicing ` +
-                `change may be challenging to interpret. This is because the model assigns delta scores to genomic reference coordinates, ` +
-                `and so has to discard information about where exactly the high score is located within the inserted bases on the ALT haplotype. ` +
-                `For an example of how this can lead to problems with interpretation, see ` +
-                `<a href='https://github.com/broadinstitute/SpliceAI-lookup/issues/69'>issue #69</a>. The criteria for showing this warning were ` +
-                `that 1) the variant is an insertion of at least 2bp and 2) its delta score is ≥ 0.2 and has a relative position of 0bp. `
-            )
-
-            let iconHtml = `<i style="margin-left:10px; color:red" class="exclamation circle icon" data-position="right center" data-html="${warning}"></i>`
-            if (table) {
-                iconHtml += `<i style="margin-left:10px; color:#000080" class="table icon score-table" data-position="right center" data-html="${table}"></i>`
-            }
-            return iconHtml
-
-        } else {
+        if (!considerInsertedBases(score, position, ref, alt, scoresForInsertedBases)) {
             return ""
         }
+
+        let tableRows = []
+        for (const scoreObj of scoresForInsertedBases) {
+            const RA = parseFloat(scoreObj.RA)
+            const RD = parseFloat(scoreObj.RD)
+            const AA = parseFloat(scoreObj.AA)
+            const AD = parseFloat(scoreObj.AD)
+
+            tableRows.push(
+                `<tr><td>${scoreObj.chrom}</td>
+                     <td style='text-align:right'>${scoreObj.pos}</td>
+                     <td>${scoreObj.ref}</td>
+                     <td>${scoreObj.alt}</td>
+                     <td ${getScoreStyle(RA)}>${RA}</td>
+                     <td ${getScoreStyle(RD)}>${RD}</td>
+                     <td ${getScoreStyle(AA)}>${AA}</td>
+                     <td ${getScoreStyle(AD)}>${AD}</td></tr>`)
+        }
+
+        const table = (
+            `<div>
+               Detailed SpliceAI predictions for bases within and around the inserted sequence: <br>
+               <table class='ui celled table'>
+                <thead>
+                    <tr style='text-align:center'>
+                        <th>Chrom</th>
+                        <th>Pos</th>
+                        <th>Ref</th>
+                        <th>Alt</th>
+                        <th>REF acceptor score</th>
+                        <th>REF donor score</th>
+                        <th>ALT acceptor score</th>
+                        <th>ALT donor score</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${tableRows.join("\n")}
+                </tbody>
+            </table></div>`
+        ).replace(/\n/g, "")
+
+        return `<i style="margin-left:10px; color:#000080" class="table icon score-table" data-position="right center" data-html="${table}"></i>`
+    }
+
+    const updatePositionAccountingForInsertedBases = (scoreKey, score, position, ref, alt, scoresForInsertedBases) => {
+        if (!considerInsertedBases(score, position, ref, alt, scoresForInsertedBases)) {
+            return `${position} bp`
+        }
+
+        if (scoreKey == 'DS_AG') {
+            scoreKey = 'AA'
+        } else if (scoreKey == 'DS_DG') {
+            scoreKey = 'AD'
+        } else {
+            return `${position} bp`
+        }
+        // find the position within scoresForInsertedBases at which the score is the highest. Look at the AA score if scoreKey == 'DS_AG', and AD score if scoreKey == 'DS_DG'
+        let maxScore = -1
+        let maxScorePosition = 0
+        for (const scoreObj of scoresForInsertedBases) {
+            const scoreValue = parseFloat(scoreObj[scoreKey])
+            if (scoreValue > maxScore) {
+                maxScore = scoreValue
+                maxScorePosition = parseInt(scoreObj.pos)
+            }
+        }
+
+        return `+${maxScorePosition} bp position within the inserted sequence`
     }
 
     const getGnomadDataVersion = (genomeVersion) => {
@@ -945,7 +960,7 @@
                     <a href="https://www.genecards.org/cgi-bin/carddisp.pl?gene=${scores['g_name']}" class="small-link" target="_blank">GeneCards</a>
                 </td>`
 
-            for (const [i, label, DS, DP, RAW_REF, RAW_ALT] of (
+            for (const [i, label, scoreKey, positionKey, REF_scoreKey, ALT_scoreKey] of (
                 isPangolin ? [
                     [0, "Splice Loss", "DS_SL", "DP_SL", "SL_REF", "SL_ALT"],
                     [1, "Splice Gain", "DS_SG", "DP_SG", "SG_REF", "SG_ALT"],
@@ -959,20 +974,21 @@
                     row += `</tr><tr class="${resultRowClasses.join(' ')}">`
                 }
                 row += `<td>${label}</td>
-                        <td ${getScoreStyle(scores[DS])}>
-                            ${formatScore(scores[DS])}
-                            ${generateWarningAboutInsertions(label, scores[DS], scores[DP], ref, alt, scores["SCORES_FOR_INSERTED_BASES"])}
+                        <td ${getScoreStyle(scores[scoreKey])}>
+                            ${formatScore(scores[scoreKey])}
+                            ${generateTableOfScoresForInsertedBases(scores[scoreKey], scores[positionKey], ref, alt, scores["SCORES_FOR_INSERTED_BASES"])}
                          </td>
                         <td>${
                             (
-                                parseFloat(scores[DS]) == 0 &&
-                                parseFloat(scores[RAW_REF]) == 0 &&
-                                parseFloat(scores[RAW_ALT]) == 0
-                            )? "" : scores[DP] + " bp"}
+                                parseFloat(scores[scoreKey]) == 0 &&
+                                parseFloat(scores[REF_scoreKey]) == 0 &&
+                                parseFloat(scores[ALT_scoreKey]) == 0
+                            )? "" : updatePositionAccountingForInsertedBases(scoreKey, scores[scoreKey], scores[positionKey], ref, alt, scores["SCORES_FOR_INSERTED_BASES"])}
                         </td>`
+
                 if (showRefAltScoreColumns == "1") {
-                    row += `<td class="ref-score-column">${formatScore(scores[RAW_REF])}</td>
-                            <td class="alt-score-column">${formatScore(scores[RAW_ALT])}</td>`
+                    row += `<td class="ref-score-column">${formatScore(scores[REF_scoreKey])}</td>
+                            <td class="alt-score-column">${formatScore(scores[ALT_scoreKey])}</td>`
                 }
             }
             row += "</tr>"
