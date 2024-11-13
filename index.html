@@ -770,8 +770,14 @@
                     const AD = parseFloat(scoreObj.AD)
 
                     tableRows.push(
-                        `<tr><td>${scoreObj.chrom.replace('chr', '')}</td><td style='text-align:right'>${scoreObj.pos}</td><td>${scoreObj.ref}</td><td>${scoreObj.alt}</td>
-                             <td>${RA}</td><td>${RD}</td><td>${AA}</td><td>${AD}</td></tr>`)
+                        `<tr><td>${scoreObj.chrom.replace('chr', '')}</td>
+                             <td style='text-align:right'>${scoreObj.pos}</td>
+                             <td>${scoreObj.ref}</td>
+                             <td>${scoreObj.alt}</td>
+                             <td ${getScoreStyle(RA)}>${RA}</td>
+                             <td ${getScoreStyle(RD)}>${RD}</td>
+                             <td ${getScoreStyle(AA)}>${AA}</td>
+                             <td ${getScoreStyle(AD)}>${AD}</td></tr>`)
                 }
 
                 table = (
