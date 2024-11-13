@@ -384,11 +384,11 @@
                                                                                 data-content="For each variant, SpliceAI looks within a window (+/- 500bp by default) to see how the variant affects the probabily of different positions serving as splice acceptors or donors. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are to the left of the variant in genomic coords, regardless of transcript strand."></i>
                             </th>
                             <th class="table-header ref-score-column" style="white-space: nowrap">
-                                REF score<i class='question circle outline icon'
+                                REF score &nbsp; <i class='question circle outline icon'
                                             data-content="SpliceAI's computed probability that the given position is a splice acceptor or donor based on the reference haplotype sequence. SpliceAI computes delta scores by taking the difference between the REF and ALT score at each position."></i>
                             </th>
                             <th class="table-header alt-score-column" style="white-space: nowrap">
-                                ALT score<i class='question circle outline icon'
+                                ALT score &nbsp; <i class='question circle outline icon'
                                             data-content="SpliceAI's computed probability that the given position is a splice acceptor or donor based on the alternate haplotype sequence. SpliceAI computes delta scores by taking the difference between the REF and ALT score at each position."></i>
                             </th>
                         </tr>
@@ -429,10 +429,10 @@
                                                                                     data-content="For each variant, Pangolin looks within a window (+/- 500bp by default) to see how the variant affects the probability of splicing occuring at different positions. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant."></i>
                                 </th>
                                 <th class="table-header ref-score-column" style="white-space: nowrap">
-                                    REF score<i class='question circle outline icon'
+                                    REF score &nbsp; <i class='question circle outline icon'
                                     data-content="Pangolin's computed probability that the given position is a splice site based on the reference haplotype sequence."></i></th>
                                 <th class="table-header alt-score-column" style="white-space: nowrap">
-                                    ALT score<i class='question circle outline icon'
+                                    ALT score &nbsp; <i class='question circle outline icon'
                                                 data-content="Pangolin's computed probability that the given position is a splice site based on the alternate haplotype sequence."></i></th>
                             </tr>
                         </thead>
@@ -790,10 +790,10 @@
                                 <th>Pos</th>
                                 <th>Ref</th>
                                 <th>Alt</th>
-                                <th>Acceptor Loss</th>
-                                <th>Donor Loss</th>
-                                <th>Acceptor Gain</th>
-                                <th>Donor Gain</th>
+                                <th>REF acceptor score</th>
+                                <th>REF donor score</th>
+                                <th>ALT acceptor score</th>
+                                <th>ALT donor score</th>
                             </tr>
                         </thead>
                         <tbody>
