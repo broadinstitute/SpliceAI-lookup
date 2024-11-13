@@ -770,7 +770,7 @@
                     const AD = parseFloat(scoreObj.AD)
 
                     tableRows.push(
-                        `<tr><td>${scoreObj.chrom.replace('chr', '')}</td>
+                        `<tr><td>${scoreObj.chrom}</td>
                              <td style='text-align:right'>${scoreObj.pos}</td>
                              <td>${scoreObj.ref}</td>
                              <td>${scoreObj.alt}</td>
@@ -782,7 +782,7 @@
 
                 table = (
                     `<div>
-                       SpliceAI scores for bases in and around the insertion: <br>
+                       SpliceAI scores for bases within and around the variant: <br>
                        <table class='ui celled table'>
                         <thead>
                             <tr style='text-align:center'>
