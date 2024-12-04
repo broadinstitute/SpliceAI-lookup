@@ -442,12 +442,14 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
 
         # decide whether to use ALL_NON_ZERO_SCORES from this transcript
         current_transcript_priority = TRANSCRIPT_PRIORITY_ORDER[transcript_annotations["t_priority"]]
-        current_delta_score_sum = sum(float(scores.get(key, 0)) for key in ("DP_AG", "DP_AL", "DP_DG", "DP_DL"))
+        current_delta_score_sum = sum(abs(float(transcript_scores[key])) for key in ("DS_AG", "DS_AL", "DS_DG", "DS_DL"))
         if current_transcript_priority > all_non_zero_scores_transcript_priority:
+            max_delta_score_sum = current_delta_score_sum
             all_non_zero_scores_transcript_priority = current_transcript_priority
             all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
             all_non_zero_scores_strand = transcript_scores["t_strand"]
             all_non_zero_scores_transcript_id = transcript_scores["t_id"]
+
         elif current_transcript_priority == all_non_zero_scores_transcript_priority and current_delta_score_sum > max_delta_score_sum:
             # select the one with the highest delta score sum
             max_delta_score_sum = current_delta_score_sum
@@ -560,17 +562,17 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
         transcript_scores.update(transcript_annotations)
 
         # decide whether to use ALL_NON_ZERO_SCORES from this gene
-        delta_score_sum = sum(abs(float(s.get("SG_ALT", 0)) - float(s.get("SG_REF", 0)))
+        current_delta_score_sum = sum(abs(float(s.get("SG_ALT", 0)) - float(s.get("SG_REF", 0)))
                               for s in transcript_scores["ALL_NON_ZERO_SCORES"])
-        delta_score_sum += sum(abs(float(s.get("SL_ALT", 0)) - float(s.get("SL_REF", 0)))
+        current_delta_score_sum += sum(abs(float(s.get("SL_ALT", 0)) - float(s.get("SL_REF", 0)))
                                for s in transcript_scores["ALL_NON_ZERO_SCORES"])
 
         # return all_non_zero_scores for the transcript or gene with the highest delta score sum
-        if delta_score_sum > max_delta_score_sum:
+        if current_delta_score_sum > max_delta_score_sum:
             all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
             all_non_zero_scores_strand = transcript_scores["STRAND"]
             all_non_zero_scores_transcript_id = transcript_scores["NAME"]
-            max_delta_score_sum = delta_score_sum
+            max_delta_score_sum = current_delta_score_sum
 
         for redundant_key in "NAME", "STRAND", "ALL_NON_ZERO_SCORES":
             del transcript_scores[redundant_key]
