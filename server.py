@@ -400,7 +400,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
         transcript_scores.update(transcript_annotations)
 
         current_transcript_priority = TRANSCRIPT_PRIORITY_ORDER[transcript_annotations["t_priority"]]
-        current_delta_score_sum = sum(float(scores.get(key, 0)) for key in ("DP_AG", "DP_AL", "DP_DG", "DP_DL"))
+        current_delta_score_sum = sum(float(transcript_scores.get(key, 0)) for key in ("DP_AG", "DP_AL", "DP_DG", "DP_DL"))
         if current_transcript_priority > all_non_zero_scores_transcript_priority:
             all_non_zero_scores_transcript_priority = current_transcript_priority
             all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
