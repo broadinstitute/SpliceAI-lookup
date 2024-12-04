@@ -283,11 +283,11 @@
                     <a id="more-details3-button" href="#"
                        onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
                     <div id="more-details3" style="display:none">
-                    <b>June 3, 2024</b><br />
-                    - show the input variant's <a href="https://useast.ensembl.org/info/docs/tools/vep/index.html" target="blank">VEP</a> consequence in the results table<br />
-                    - the Gencode gene track is now optional in the visualizations<br />
-                    - updated everything to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v46</a><br/>
-                    <br />
+                        <b>June 3, 2024</b><br />
+                        - show the input variant's <a href="https://useast.ensembl.org/info/docs/tools/vep/index.html" target="blank">VEP</a> consequence in the results table<br />
+                        - the Gencode gene track is now optional in the visualizations<br />
+                        - updated everything to <a href="https://www.gencodegenes.org/human/releases.html">Gencode v46</a><br/>
+                        <br />
                         <b>March 7, 2024</b><br/>
                         - added warning for insertion variants with delta scores ≥ 0.2 and position = 0bp saying that they may be difficult to interpret due to <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/69">issue #67</a>. Thanks to @SophieCandille for the issue report and example variant: <a href="https://spliceailookup.broadinstitute.org/#variant=NM_000179.3%3Ac.261-3_261-2insAGTTG&hg=38&distance=500&mask=0&ra=1" target="_blank">2:47790924 C>CAGTTG</a><br />
                         - moved server to Google Cloud Run to better support higher usage<br />
@@ -763,7 +763,7 @@
         return score >= 0.01 && position == 0 && ref.length == 1 && alt.length > 1 && scoresForInsertedBases && scoresForInsertedBases.length > 0
     }
 
-    const generateTableOfScoresForInsertedBases = (score, position, ref, alt, scoresForInsertedBases) => {
+    const generateTableOfScoresForInsertedBases = (modalId, score, position, ref, alt, scoresForInsertedBases) => {
         //warn about insertion variants that are predicted to cause a donor or acceptor gain somewhere within the inserted sequence.
         if (!considerInsertedBases(score, position, ref, alt, scoresForInsertedBases)) {
             return ""
@@ -793,14 +793,14 @@
                <table class='ui celled table'>
                 <thead>
                     <tr style='text-align:center'>
-                        <th>chrom</th>
+                        <th style='width:1%'>chrom</th>
                         <th>position</th>
-                        <th>REF</th>
-                        <th>ALT</th>
-                        <th>REF acceptor score</th>
-                        <th>REF donor score</th>
-                        <th>ALT acceptor score</th>
-                        <th>ALT donor score</th>
+                        <th style='width:1%'>REF</th>
+                        <th style='width:1%'>ALT</th>
+                        <th style='width:1%'>REF acceptor score</th>
+                        <th style='width:1%'>REF donor score</th>
+                        <th style='width:1%'>ALT acceptor score</th>
+                        <th style='width:1%'>ALT donor score</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -809,7 +809,16 @@
             </table></div>`
         ).replace(/\n/g, "")
 
-        return `<i style="margin-left:10px; color:#000080" class="table icon score-table" data-position="right center" data-html="${table}"></i>`
+        //check if browser is chrome, safari or firefox
+        //const isChrome = /Chrome/.test(navigator.userAgent) && /Google Inc/.test(navigator.vendor)
+        //const isSafari = /Safari/.test(navigator.userAgent) && /Apple Computer/.test(navigator.vendor)
+        //const isFirefox = /Firefox/.test(navigator.userAgent)
+
+        const popupIcon = `<i style="margin-left:10px; color:#000000" class="table icon score-table" data-position="right center" data-html="${table}"></i>`
+        const modal = `<div id='modal-with-table${modalId}' class='ui modal'><i class='close icon'></i><div class='scrolling content'>${table}</div></div>`
+        const modalIcon = `<i id='table-icon${modalId}' style='margin-left:10px;color:#000080;cursor:pointer' class='window maximize outline icon'></i>`
+        return `${modalIcon}${modal} ${popupIcon}`
+
     }
 
     const updatePositionAccountingForInsertedBases = (scoreKey, score, position, ref, alt, scoresForInsertedBases) => {
@@ -870,13 +879,13 @@
 
         variantConsequence = variantConsequence || ""
         const variantConsequenceDiv = variantConsequence ? `
-        <div display: inline-block>
-            <a href="https://www.ensembl.org/info/genome/variation/prediction/predicted_data.html" class="small-link" target="_blank">
-            ${variantConsequence.replace(/_/g, ' ')}
-            </a>
-         </div>
-         <br class="only-large-screen"/>
-         ` : ""
+            <div display: inline-block>
+                <a href="https://www.ensembl.org/info/genome/variation/prediction/predicted_data.html" class="small-link" target="_blank">
+                ${variantConsequence.replace(/_/g, ' ')}
+                </a>
+             </div>
+             <br class="only-large-screen"/>
+             ` : ""
 
         //sort transcripts
         apiResponseJson.scores = _(apiResponseJson.scores).sortBy((s) => (  //compute sort key
@@ -903,6 +912,8 @@
 
         const transcriptCategories = {}
         const tableRows = []
+        const modalDialogIds = []
+        let transcriptIndex = 0
         for (const scores of apiResponseJson.scores) {
             const isPangolin = tool.toLowerCase() == "pangolin"
             const subRowCount = isPangolin ? 2 : 4
@@ -973,10 +984,19 @@
                 if (i > 0) {
                     row += `</tr><tr class="${resultRowClasses.join(' ')}">`
                 }
+
+                const modalDialogId = transcriptIndex*10 + i
+                const detailedScoresTable = generateTableOfScoresForInsertedBases(
+                    modalDialogId, scores[scoreKey], scores[positionKey], ref, alt, scores["SCORES_FOR_INSERTED_BASES"])
+
+                if (detailedScoresTable) {
+                    modalDialogIds.push(modalDialogId)
+                }
+
                 row += `<td>${label}</td>
                         <td ${getScoreStyle(scores[scoreKey])}>
                             ${formatScore(scores[scoreKey])}
-                            ${generateTableOfScoresForInsertedBases(scores[scoreKey], scores[positionKey], ref, alt, scores["SCORES_FOR_INSERTED_BASES"])}
+                            ${detailedScoresTable}
                          </td>
                         <td>${
                             (
@@ -994,6 +1014,7 @@
             row += "</tr>"
 
             tableRows.push(row)
+            transcriptIndex++
         }
 
         $(`#${tool.toLowerCase()}-header`).after(tableRows.join(""))
@@ -1008,6 +1029,12 @@
             $("#transcript-button-table").hide()
         }
 
+        // initialize any modal dialogs
+        for (const modalDialogIndex of modalDialogIds) {
+            $(`#table-icon${modalDialogIndex}`).click(() => {
+                $(`#modal-with-table${modalDialogIndex}`).modal('show')
+            })
+        }
         $("#transcript-button-table").show()
         updateTranscriptButtons(Object.keys(transcriptCategories).length > 1 ? "main" : "all")
 
@@ -1053,9 +1080,7 @@
                         console.log(e)
                     }
                 }
-                //console.log("Retrieved tracksToShow from local storage", tracksToShow)
             }
-            
         } else {
 
             // retrieve state from checkboxes
@@ -1428,9 +1453,9 @@
                 "lastResort": "bottom left",
             })
             $(".question").css({"color": "#666666", "cursor": "pointer"})
-            $(".score-table").css({"color": "#000080", "cursor": "pointer"})
             $(".exclamation").css({"cursor": "pointer"})
-
+            $(".score-table").css({"color": "#000080", "cursor": "pointer"})
+            $(".ui.modal").modal()
 
             if (spliceaiResponseJson.error) {
                 showError(`${spliceaiResponseJson.error}`)
