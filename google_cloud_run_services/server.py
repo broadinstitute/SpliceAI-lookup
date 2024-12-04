@@ -193,24 +193,32 @@ def parse_variant(variant_str):
 def get_db_connection():
     """Get a database connection"""
     #conn = DATABASE_CONNECTION_POOL.getconn()
-    conn = psycopg2.connect(
-        dbname="spliceai-lookup-db",
-        user="postgres",
-        password=os.environ.get("DB_PASSWORD"),
-        host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
-        port="5432",
-        connect_timeout=5,
-    )
+    try:
+        conn = psycopg2.connect(
+            dbname="spliceai-lookup-db",
+            user="postgres",
+            password=os.environ.get("DB_PASSWORD"),
+            host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
+            port="5432",
+            connect_timeout=5,
+        )
+    except Exception as e:
+        print(f"ERROR: Unable to connect to SQL database: {e}")
+        conn = None
 
     try:
         yield conn
     finally:
-        conn.close()
-        #DATABASE_CONNECTION_POOL.putconn(conn)
+        if conn is not None:
+            conn.close()
+            #DATABASE_CONNECTION_POOL.putconn(conn)
 
 @contextmanager
 def get_db_cursor(conn):
     """Get a database cursor"""
+    if conn is None:
+        return
+
     cursor = conn.cursor()
     try:
         yield cursor
@@ -220,6 +228,9 @@ def get_db_cursor(conn):
 
 
 def run_sql(conn, sql_query, *params):
+    if conn is None:
+        return
+
     with get_db_cursor(conn) as cursor:
         cursor.execute(sql_query, *params)
         try:
@@ -272,7 +283,9 @@ def exceeds_rate_limit(conn, user_ip):
     #SELECT * FROM log WHERE event_name like '%computed' AND duration > 2 AND ip='210.3.222.157' AND logtime >= NOW() - INTERVAL '5 minutes' ;
     #SELECT ip, count(*) FROM log WHERE event_name like '%computed' AND duration > 2 AND logtime >= NOW() - INTERVAL '20 minutes' GROUP BY ip ORDER BY count DESC;
     #"""
-    #return False
+
+    if conn is None:
+        return False
 
     try:
         # check if the user has exceeded the rate limit or is on the list of restricted IPs
@@ -412,6 +425,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
     all_non_zero_scores_strand = None
     all_non_zero_scores_transcript_id = None
     all_non_zero_scores_transcript_priority = -1
+    max_delta_score_sum = 0
     for i, transcript_scores in enumerate(scores):
         if "ALL_NON_ZERO_SCORES" not in transcript_scores:
             continue
@@ -428,8 +442,15 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
 
         # decide whether to use ALL_NON_ZERO_SCORES from this transcript
         current_transcript_priority = TRANSCRIPT_PRIORITY_ORDER[transcript_annotations["t_priority"]]
+        current_delta_score_sum = sum(float(scores.get(key, 0)) for key in ("DP_AG", "DP_AL", "DP_DG", "DP_DL"))
         if current_transcript_priority > all_non_zero_scores_transcript_priority:
             all_non_zero_scores_transcript_priority = current_transcript_priority
+            all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
+            all_non_zero_scores_strand = transcript_scores["t_strand"]
+            all_non_zero_scores_transcript_id = transcript_scores["t_id"]
+        elif current_transcript_priority == all_non_zero_scores_transcript_priority and current_delta_score_sum > max_delta_score_sum:
+            # select the one with the highest delta score sum
+            max_delta_score_sum = current_delta_score_sum
             all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
             all_non_zero_scores_strand = transcript_scores["t_strand"]
             all_non_zero_scores_transcript_id = transcript_scores["t_id"]
