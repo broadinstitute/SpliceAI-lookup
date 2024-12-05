@@ -1433,7 +1433,7 @@
                             if (Array.isArray(score)) {
                                 score = score[0]  // if its an array, get the first elegment
                             }
-                            const otherPredictorName = key1 === "revel"? "revel_max" : key1
+                            const otherPredictorName = key1.replace("revel", "revel_max").replace("sift", "sift_max")
                             if (otherPredictorScores[otherPredictorName]) {
                                 if (Math.abs(otherPredictorScores[otherPredictorName].score - score) > 0.001) {
                                     console.error(`Mismatch between myvariant.info and gnomAD scores for ${key1}: ${score} vs ${otherPredictorScores[otherPredictorName].score}`)
