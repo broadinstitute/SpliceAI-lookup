@@ -1365,15 +1365,21 @@
               }
             }`
 
-            const response = await fetch("https://gnomad.broadinstitute.org/api", {
-                "method": "POST",
-                "headers": {
+            let response
+            try {
+                response = await fetch("https://gnomad.broadinstitute.org/api", {
+                    "method": "POST",
+                    "headers": {
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                    "body": JSON.stringify({ query }),
+                }) //, { mode: 'no-cors' })
+            } catch (e) {
+                console.error("gnomAD query failed:", e)
+                return
+            }
 
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
-                "body": JSON.stringify({ query }),
-            }, { mode: 'no-cors' })
 
             if (response.ok) {
                 const responseJson = await response.json()
@@ -1411,12 +1417,18 @@
             console.log("Querying myvariant.info")
             const variantId = `${chrom}:g.${pos}${ref}>${alt}`
             //add a data section to the body of the request
-            const response = await fetch(`https://myvariant.info/v1/variant/${encodeURIComponent(variantId)}?fields=dbnsfp&size=10&assembly=${genomeVersion == '37' ? 'hg19' : 'hg38'}`, {
-                "method": "GET",
-                "headers": {
-                    "accept": "*/*",
-                }
-            })
+            let response
+            try {
+                response = await fetch(`https://myvariant.info/v1/variant/${encodeURIComponent(variantId)}?fields=dbnsfp&size=10&assembly=${genomeVersion == '37' ? 'hg19' : 'hg38'}`, {
+                    "method": "GET",
+                    "headers": {
+                        "accept": "*/*",
+                    }
+                })
+            } catch (e) {
+                console.error("myvariant.info query failed:", e)
+                return
+            }
 
             if (response.ok) {
                 const responseJson = await response.json()
