@@ -214,8 +214,7 @@ def main():
                 max_instances = 3
                 if not args.command or args.command == "build":
                     run(f"docker build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest .")
-                    run(f"docker push {tag}:latest")
-                    run(f"docker pull {tag}:latest 2>&1 | grep Digest | cut -c 9- > docker/{tool}/sha256.txt")
+                    run(f"docker push {tag}:latest 2>&1 | grep digest: | cut -d ' ' -f 3 > docker/{tool}/sha256.txt")
 
                 if not args.command or args.command == "deploy":
                     with open(f"docker/{tool}/sha256.txt") as f:
