@@ -18,6 +18,7 @@ def main():
 
     p.add_argument("-a", "--annotation-json-path", required=True, help="Path of the transcript annotations JSON file "
                    "created by generate_transcript_annotation_json.py")
+    p.add_argument("--gtf-id-field", default="transcript_id", choices=["transcript_id", "gene_id"])
     p.add_argument("gtf_gz_path", help="Path of gene annotations file in GTF format")
     args = p.parse_args()
 
@@ -30,13 +31,13 @@ def main():
         transcript_annotations = json.load(f)
 
     print(f"Parsing {args.gtf_gz_path}")
-    transcript_id_to_exons = collections.defaultdict(set)
+    gtf_id_to_exons = collections.defaultdict(set)
     for record in parse_gtf(os.path.expanduser(args.gtf_gz_path), "exon"):
-        key = (record["transcript_id"], record["strand"], record["chrom"])
-        exon_2_tuple = (record["start"], record["end"])
-        if exon_2_tuple in transcript_id_to_exons[key]:
-            raise ValueError(f"Duplicate exon: {exon_2_tuple} in transcript {key}")
-        transcript_id_to_exons[key].add(exon_2_tuple)
+        key = (record[args.gtf_id_field], record["strand"], record["chrom"])
+        exon_tuple = (record["start"], record["end"])
+        if exon_tuple in gtf_id_to_exons[key]:
+            raise ValueError(f"Duplicate exon: {exon_tuple} in transcript {key}")
+        gtf_id_to_exons[key].add(exon_tuple)
 
     output_records = []
     # SpliceAI predictions (prior to 'masking') depend only on transcript chrom/start/end/strand. Often, transcripts
@@ -44,14 +45,14 @@ def main():
     # We can discard these redundant transcripts (while making sure to keep all MANE Select and canonical transcripts).
     output_records_transcript_keys = set()
     maybe_output_records = []
-    for (transcript_id, strand, chrom), exon_set in transcript_id_to_exons.items():
+    for (gtf_id, strand, chrom), exon_set in gtf_id_to_exons.items():
         tx_start_0based = min([start_1based - 1 for start_1based, _ in exon_set])
         tx_end_1based = max([end_1based for _, end_1based in exon_set])
-        transcript_id_without_version = transcript_id.split(".")[0]
-        if transcript_id_without_version not in transcript_annotations:
-            print(f"WARNING: transcript {transcript_id_without_version} not found in {args.annotation_json_path}")
+        gtf_id_without_version = gtf_id.split(".")[0]
+        if gtf_id_without_version not in transcript_annotations:
+            print(f"WARNING: transcript {gtf_id_without_version} not found in {args.annotation_json_path}")
             continue
-        transcript_annotation = transcript_annotations[transcript_id_without_version]
+        transcript_annotation = transcript_annotations[gtf_id_without_version]
         if transcript_annotation['t_priority'] == "N":
             output_list = maybe_output_records
         else:
@@ -66,7 +67,7 @@ def main():
 
         # reformat the records into a list which can be turned into a pandas DataFrame
         output_list.append({
-            "#NAME": transcript_id,
+            "#NAME": gtf_id,
             "CHROM": chrom,
             "STRAND": strand,
             "TX_START": str(tx_start_0based),
@@ -88,8 +89,8 @@ def main():
     assert transcripts_kept_counter1 + transcripts_kept_counter2 == len(output_records)
     print(f"Kept {transcripts_kept_counter1:,d} transcripts which were MANE Select, MANE Plus Clinical or canonical.")
     print(f"Kept {transcripts_kept_counter2:,d} additional transcripts with unique transcript start/stop coords.")
-    print(f"Discarded {len(maybe_output_records) - transcripts_kept_counter2:,d} out of {len(transcript_id_to_exons):,d} "
-          f"({(len(maybe_output_records) - transcripts_kept_counter2) / len(transcript_id_to_exons):.1%}) transcripts "
+    print(f"Discarded {len(maybe_output_records) - transcripts_kept_counter2:,d} out of {len(gtf_id_to_exons):,d} "
+          f"({(len(maybe_output_records) - transcripts_kept_counter2) / len(gtf_id_to_exons):.1%}) transcripts "
           f"because they were redundant.")
 
     output_df = pd.DataFrame(output_records)
