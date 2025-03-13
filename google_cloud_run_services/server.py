@@ -290,26 +290,36 @@ def exceeds_rate_limit(conn, user_ip):
     try:
         # check if the user has exceeded the rate limit or is on the list of restricted IPs
         rows = run_sql(conn, "SELECT COUNT(ip) FROM restricted_ips WHERE ip=%s AND created >= NOW() - INTERVAL '1 weeks'", (user_ip,))
-        if rows:
-            request_count = int(rows[0][0])
-            if request_count > 0:
-                return RATE_LIMIT_ERROR_MESSAGE
+        is_user_currently_blocked = rows and int(rows[0][0]) > 0
+        if is_user_currently_blocked:
+            return RATE_LIMIT_ERROR_MESSAGE
 
         rows = run_sql(conn, "SELECT COUNT(ip) FROM log WHERE event_name LIKE %s AND ip=%s AND logtime >= NOW() - INTERVAL '7 minutes'", ("%computed%", user_ip))
-        if rows:
-            request_count = int(rows[0][0])
-            if request_count > 50:
-                log(conn, f"rate_limit_exceeded", ip=user_ip)
-                # check how many times the user has exceeded the rate limit in the last day
-                rows = run_sql(conn, "SELECT COUNT(ip) FROM log WHERE event_name='rate_limit_exceeded' AND ip=%s AND logtime >= NOW() - INTERVAL '1 days'", (user_ip,))
-                if rows:
-                    request_count = int(rows[0][0])
-                    if request_count > 7:
+        did_user_exceed_rate_limit = rows and int(rows[0][0]) >= 50
+        if did_user_exceed_rate_limit:
+            rows = run_sql(conn, "SELECT COUNT(ip) FROM whitelist_ips WHERE ip=%s", (user_ip,))
+            is_user_on_whitelist = rows and int(rows[0][0]) > 0
+            if not is_user_on_whitelist:
+                # the user has exceeded the rate limit: computing scores for 50 or more variants in the last 7 minutes
+                rows = run_sql(conn, "SELECT COUNT(ip) FROM log WHERE event_name='rate_limit_exceeded' AND ip=%s AND logtime >= NOW() - INTERVAL '5 minutes'", (user_ip,))
+                user_hit_rate_limit_exceeded_recently = rows and int(rows[0][0]) > 0
+                if not user_hit_rate_limit_exceeded_recently:
+                    # the user will receive at most one "rate_limit_exceeded" event every 5 minutes
+                    log(conn, f"rate_limit_exceeded", ip=user_ip)
+                    rows = run_sql(conn, "SELECT COUNT(ip) FROM log WHERE event_name='rate_limit_exceeded' AND ip=%s AND logtime >= NOW() - INTERVAL '1 days'", (user_ip,))
+                    user_triggered_too_many_rate_limit_exceeded_errors_today = rows and int(rows[0][0]) >= 5
+                    if user_triggered_too_many_rate_limit_exceeded_errors_today:
+                        # the user has hit the limit of 5 or more "rate_limit_exceeded" events during the last 24 hours
+                        rows = run_sql(conn, "SELECT COUNT(ip) FROM restricted_ips WHERE ip=%s", (user_ip,))
+                        need_to_delete_previous_restricted_ip_record = rows and int(rows[0][0]) > 0
+                        if need_to_delete_previous_restricted_ip_record:
+                            # delete the previous record
+                            run_sql(conn, "DELETE FROM restricted_ips WHERE ip=%s", (user_ip,))
+
+                        # block the user's IP for 1 week
                         run_sql(conn, "INSERT INTO restricted_ips (ip) VALUES (%s)", (user_ip,))
 
                 return RATE_LIMIT_ERROR_MESSAGE
-
-        # check if the user has exceeded the rate limit more than
 
     except Exception as e:
         print(f"Error while checking rate limit: {e}", flush=True)
