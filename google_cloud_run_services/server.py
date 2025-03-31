@@ -3,11 +3,8 @@ import gzip
 import json
 import logging
 import os
-import pyfastx
 import psycopg2
 import re
-import signal
-import sys
 import time
 import traceback
 
@@ -54,8 +51,6 @@ FASTA_PATH = {
     "37": "/hg19.fa.gz",
     "38": "/hg38.fa.gz",
 }
-
-PYFASTX_REF = {}
 
 GENCODE_VERSION = "v47"
 
@@ -122,10 +117,6 @@ RATE_LIMIT_ERROR_MESSAGE = (
     f"numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact "
     f"us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
 )
-
-def init_reference(genome_version):
-    if genome_version not in PYFASTX_REF:
-        PYFASTX_REF[genome_version] = pyfastx.Fasta(FASTA_PATH[genome_version])
 
 
 def init_spliceai(genome_version, basic_or_comprehensive):
@@ -240,18 +231,6 @@ def run_sql(conn, sql_query, *params):
     return results
 
 
-#def signal_handler(sig, frame):
-#    print(f"Received signal {sig}. Shutting down database connections and exiting...", flush=True)
-#    try:
-#        DATABASE_CONNECTION_POOL.closeall()
-#    except Exception as e:
-#        print(f"Error closing database connections: {e}", flush=True)
-#
-#    sys.exit(0)
-#
-#signal.signal(signal.SIGTERM, signal_handler)
-
-
 #def does_table_exist(table_name):
 #    results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename=%s)", (table_name,))
 #    does_table_already_exist = results[0][0]
@@ -359,36 +338,6 @@ def add_splicing_scores_to_cache(conn, tool_name, variant, genome_version, dista
         print(f"Cache error: {e}", flush=True)
 
 
-def check_reference_allele(genome_version, chrom, pos, ref, alt):
-    # check that variant matches the reference allele
-    if genome_version not in PYFASTX_REF:
-        raise ValueError(f"Invalid genome_version: {genome_version}")
-
-    chrom = chrom.replace("chr", "")
-    if genome_version == "37":
-        if chrom.upper() in ("M", "MT"):
-            chrom = "MT"
-    else:
-        if chrom.upper() in ("M", "MT"):
-            chrom = "M"
-        chrom = "chr" + chrom
-
-
-    variant = f"{chrom}-{pos}-{ref}-{alt}"
-    try:
-        ref_sequence = PYFASTX_REF[genome_version][chrom][pos-1:pos+len(ref)-1].seq
-        if ref_sequence.upper() != ref.upper():
-            return {
-                "variant": variant,
-                "source": "spliceai",
-                "error": f"Unexpected reference allele in {chrom}-{pos}-{ref}-{alt}. The reference allele should be: {ref_sequence}",
-            }
-    except Exception as e:
-        print(f"ERROR while checking the reference allele for {variant}: {e}")
-
-    return None
-
-
 def get_spliceai_scores(variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param):
     try:
         chrom, pos, ref, alt = parse_variant(variant)
@@ -398,10 +347,6 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
             "source": "spliceai",
             "error": str(e),
         }
-
-    error_resonse = check_reference_allele(genome_version, chrom, pos, ref, alt)
-    if error_resonse:
-        return error_resonse
 
     # generate error message if variant falls outside annotated exons or introns
     record = VariantRecord(chrom, pos, ref, alt)
@@ -508,10 +453,6 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
             "source": "pangolin",
             "error": str(e),
         }
-
-    error_resonse = check_reference_allele(genome_version, chrom, pos, ref, alt)
-    if error_resonse:
-        return error_resonse
 
     if len(ref) > 1 and len(alt) > 1:
         return {
@@ -685,7 +626,6 @@ def run_splice_prediction_tool(conn, tool_name):
     if tool_name == "spliceai":
         init_spliceai(genome_version, basic_or_comprehensive_param)
 
-    init_reference(genome_version)
     init_transcript_annotations(genome_version, basic_or_comprehensive_param)
 
     # check cache before processing the variant
