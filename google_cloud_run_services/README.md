@@ -1,6 +1,6 @@
 This folder contains the [Google Cloud Run](https://cloud.google.com/run) implementation of SpliceAI and Pangolin web service APIs used by [spliceai-lookup.broadinstitute.org](https://spliceai-lookup.broadinstitute.org)  (NOTE: `Cloud Run` is different from Google's `Cloud Functions` service).
 
-The `build_and_deploy.py` script includes the follwoing commands for building docker images, updating gencode annotations, updating the SpliceAI-lookup Google Cloud Run services, and running tests:
+The `build_and_deploy.py` script includes the following commands for building docker images, updating gencode annotations, updating the SpliceAI-lookup Google Cloud Run services, and running tests:
 
 * **build** the docker images for the SpliceAI and Pangolin services
 * **update_annotations** download Gencode annotations and reprocess them into the formats used by SpliceAI and Pangolin
