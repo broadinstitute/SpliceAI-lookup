@@ -6,10 +6,10 @@ This repo contains:
 
 The SpliceAI and Pangolin APIs are available at the following urls:
 
-https://spliceai-37-xwkwwwxdwq-uc.a.run.app - SpliceAI for variants on GRCh37<br />
-https://spliceai-38-xwkwwwxdwq-uc.a.run.app - SpliceAI for variants on GRCh38<br />
-https://pangolin-37-xwkwwwxdwq-uc.a.run.app - Pangolin for variants on GRCh37<br />
-https://pangolin-38-xwkwwwxdwq-uc.a.run.app - Pangolin for variants on GRCh38 <br />
+`https://spliceai-37-xwkwwwxdwq-uc.a.run.app` - SpliceAI for variants on GRCh37<br />
+`https://spliceai-38-xwkwwwxdwq-uc.a.run.app` - SpliceAI for variants on GRCh38<br />
+`https://pangolin-37-xwkwwwxdwq-uc.a.run.app` - Pangolin for variants on GRCh37<br />
+`https://pangolin-38-xwkwwwxdwq-uc.a.run.app` - Pangolin for variants on GRCh38 <br />
 <br />
 <b>WARNING:</b> the APIs are intended for interactive use only, and do not support more than several requests per user per minute.
 To process many variants in batch, please install and run the underlying models directly on your local infrastructure.
