@@ -4,40 +4,42 @@ This repo contains:
 
 ---
 
-The SpliceAI and Pangolin APIs are available at the following urls:
+#### SpliceAI, Pangolin APIs
 
-`https://spliceai-37-xwkwwwxdwq-uc.a.run.app` - SpliceAI for variants on GRCh37<br />
-`https://spliceai-38-xwkwwwxdwq-uc.a.run.app` - SpliceAI for variants on GRCh38<br />
-`https://pangolin-37-xwkwwwxdwq-uc.a.run.app` - Pangolin for variants on GRCh37<br />
-`https://pangolin-38-xwkwwwxdwq-uc.a.run.app` - Pangolin for variants on GRCh38 <br />
-<br />
-<b>WARNING:</b> the APIs are intended for interactive use only, and do not support more than several requests per user per minute.
+
+<b>NOTE:</b> These APIs are intended for interactive use only, and do not support more than several requests per user per minute.
 To process many variants in batch, please install and run the underlying models directly on your local infrastructure.
 Their source code is available @ [https://github.com/bw2/SpliceAI](https://github.com/bw2/SpliceAI) and [https://github.com/bw2/Pangolin](https://github.com/bw2/Pangolin). <br />
 <br />
-To query the API, select the appropriate base url above, and then use the following endpoints and arguments:<br>
 
-*[/spliceai/?hg=38&distance=50&variant=chr8-140300616-T-G](https://spliceai-38-xwkwwwxdwq-uc.a.run.app/spliceai/?hg=38&variant=chr8-140300616-T-G)*
+The SpliceAI and Pangolin APIs have different base urls for different genome versions:
+
+`https://spliceai-37-xwkwwwxdwq-uc.a.run.app/spliceai/?hg=37&variant=` - SpliceAI for variants on GRCh37<br />
+`https://spliceai-38-xwkwwwxdwq-uc.a.run.app/spliceai/?hg=38&variant=` - SpliceAI for variants on GRCh38<br />
+`https://pangolin-37-xwkwwwxdwq-uc.a.run.app/pangolin/?hg=37&variant=` - Pangolin for variants on GRCh37<br />
+`https://pangolin-38-xwkwwwxdwq-uc.a.run.app/pangolin/?hg=38&variant=` - Pangolin for variants on GRCh38 <br />
+
+To query the API, append your variant of interest in `chrom-pos-ref-alt` format to the appropriate base url above.
+
+For example, to get SpliceAI scores for `chr8-140300616-T-G`:<br>
+
+*[https://spliceai-38-xwkwwwxdwq-uc.a.run.app/spliceai/?hg=38&variant=chr8-140300616-T-G](https://spliceai-38-xwkwwwxdwq-uc.a.run.app/spliceai/?hg=38&variant=chr8-140300616-T-G)*
   
-Get SpliceAI scores for the given variant.   
+To get Pangolin scores while also setting the `distance` and `mask` parameters:<br>
 
-- **variant** (required) a variant in the format "chrom-pos-ref-alt"
-- **hg** (required) can be 37 or 38
-- **distance** (optional) distance parameter of SpliceAI model (default: 50)  
+*[https://pangolin-38-xwkwwwxdwq-uc.a.run.app/pangolin/?hg=38&variant=chr8-140300616-T-G&distance=1000&mask=1](https://pangolin-38-xwkwwwxdwq-uc.a.run.app/pangolin/?hg=38&variant=chr8-140300616-T-G&distance=1000&mask=1)*
+
+#### API parameters
+
+Parameter descriptions:  
+
+- **variant** (required) a variant in the format "chrom-pos-ref-alt"  
+- **hg** (required) can be 37 or 38  
+- **distance** (optional) distance parameter of SpliceAI model (default: 50)   
 - **mask** (optional) can be 0 which means raw scores or 1 which means masked scores (default: 0). 
 Splicing changes corresponding to strengthening annotated splice sites and weakening unannotated splice sites are typically much less pathogenic than weakening annotated splice sites and
 strengthening unannotated splice sites. When this parameter is = 1 (masked), the delta scores of such splicing changes are set to 0. SpliceAI developers recommend using raw (0) for alternative splicing analysis and masked (1) for variant interpretation.  
 
-*[/pangolin/?hg=38&distance=50&variant=chr8-140300616-T-G](https://pangolin-38-xwkwwwxdwq-uc.a.run.app/pangolin/?hg=38&variant=chr8-140300616-T-G)*
-
-Get Pangolin scores for the given variant.
-
-- **variant** (required) a variant in the format "chrom-pos-ref-alt"
-- **hg** (required) can be 37 or 38
-- **distance** (optional) distance parameter of SpliceAI model (default: 50)
-- **mask** (optional) can be 0 which means raw scores or 1 which means masked scores (default: 0).
-  Splicing changes corresponding to strengthening annotated splice sites and weakening unannotated splice sites are typically much less pathogenic than weakening annotated splice sites and
-  strengthening unannotated splice sites. When this parameter is = 1 (masked), the delta scores of such splicing changes are set to 0. SpliceAI developers recommend using raw (0) for alternative splicing analysis and masked (1) for variant interpretation.
 
 ---
 #### Local Install
