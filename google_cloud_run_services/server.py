@@ -255,7 +255,7 @@ def run_sql(conn, sql_query, *params):
 # Query to add ip to the restricted_ips table
 #run_sql("""INSERT INTO restricted_ips (ip) VALUES ('210.3.222.157')""")
 
-def exceeds_rate_limit(conn, user_ip):
+def exceeds_rate_limit(conn, user_ip, params):
     """Rate limit requests based on user ip address"""
 
     #"""
@@ -267,6 +267,7 @@ def exceeds_rate_limit(conn, user_ip):
         return False
 
     try:
+
         # check if the user has exceeded the rate limit or is on the list of restricted IPs
         rows = run_sql(conn, "SELECT COUNT(ip) FROM restricted_ips WHERE ip=%s AND created >= NOW() - INTERVAL '1 weeks'", (user_ip,))
         is_user_currently_blocked = rows and int(rows[0][0]) > 0
@@ -276,7 +277,10 @@ def exceeds_rate_limit(conn, user_ip):
         rows = run_sql(conn, "SELECT COUNT(ip) FROM log WHERE event_name LIKE %s AND ip=%s AND logtime >= NOW() - INTERVAL '7 minutes'", ("%computed%", user_ip))
         did_user_exceed_rate_limit = rows and int(rows[0][0]) >= 50
         if did_user_exceed_rate_limit:
-            rows = run_sql(conn, "SELECT COUNT(ip) FROM whitelist_ips WHERE ip=%s", (user_ip,))
+            ip_for_whitelist_check = params.get("ip")
+            if not ip_for_whitelist_check or not re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", ip_for_whitelist_check):
+                ip_for_whitelist_check = user_ip
+            rows = run_sql(conn, "SELECT COUNT(ip) FROM whitelist_ips WHERE ip=%s", (ip_for_whitelist_check,))
             is_user_on_whitelist = rows and int(rows[0][0]) > 0
             if not is_user_on_whitelist:
                 # the user has exceeded the rate limit: computing scores for 50 or more variants in the last 7 minutes
@@ -637,7 +641,7 @@ def run_splice_prediction_tool(conn, tool_name):
     if results:
         log(conn, f"{tool_name}:from-cache", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
     else:
-        error_message = exceeds_rate_limit(conn, user_ip)
+        error_message = exceeds_rate_limit(conn, user_ip, params)
         if error_message:
             print(f"{logging_prefix}: {user_ip}: response: {error_message}", flush=True)
             return error_response(error_message, source=tool_name)
