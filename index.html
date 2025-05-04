@@ -139,6 +139,10 @@
                 print-color-adjust: exact !important;
             }
 
+            @page { 
+               size: landscape;
+            }
+
             /* Avoid font changes */
             body {
                 font-family: inherit !important;
@@ -272,7 +276,7 @@
                             <div class="ui stackable grid">
                                 <div class="row">
                                     <div class="thirteen wide column">
-                                        <div class="field">
+                                        <div class="field" style="display: inline-block; white-space: nowrap>
                                             <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Max distance:</b></span>
                                             <div class="ui input" style="padding-left:15px; padding-bottom:10px; padding-right:8px; width:100px">
                                                 <input id="max-distance-input" type="text" value="500" style="padding:7px 10px">
