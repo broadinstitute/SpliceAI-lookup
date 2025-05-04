@@ -132,6 +132,37 @@
             }
         }
 
+        @media print {
+            /* Ensure background colors and images show */
+            * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+
+            /* Avoid font changes */
+            body {
+                font-family: inherit !important;
+                font-size: inherit !important;
+            }
+
+            /* Prevent layout shifts */
+            html, body {
+                width: 100%;
+                height: auto;
+                overflow: visible;
+            }
+
+            /* Keep elements from breaking awkwardly */
+            .no-break {
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+            }
+
+            /* Optional: Hide elements not needed in print */
+            .no-print {
+                display: none !important;
+            }   
+        }
     </style>
 </head>
 <body>
@@ -143,7 +174,7 @@
                 <div class="row">
                     <div class="twelve wide column">
                         <div style="padding:25px 0px">
-                            <div>
+                            <div class="no-print">
                                 <div style="display:inline-block; ">Enter a variant below to see its
                                     <a href="https://pubmed.ncbi.nlm.nih.gov/30661751" target="_blank">SpliceAI</a>,
                                     <a href="https://github.com/tkzeng/Pangolin" target="_blank">Pangolin</a>, and other scores
@@ -178,7 +209,7 @@
                                 </div>
                             </div>
                             <br/>
-                            <div style="padding-left: 0px; color: gray">
+                            <div class="no-print" style="padding-left: 0px; color: gray">
                                 <table>
                                     <thead style="text-align: left"><tr><th style="padding-bottom: 20px;">Examples &nbsp; (on hg38):</th><th></th></tr></thead>
                                     <tbody>
