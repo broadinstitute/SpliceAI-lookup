@@ -26,6 +26,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-g", "--genome-version", choices=["37", "38"], help="If not specified, command will run for both GRCh37 and GRCh38")
     parser.add_argument("-t", "--tool", choices=["spliceai", "pangolin"], help="If not specified, command will run for both spliceai and pangolin")
+    parser.add_argument("-d", "--docker-command", choices=["docker", "podman"], default="docker", help="Whether to use docker or podman to build the image")
     g = parser.add_mutually_exclusive_group()
     g.add_argument("--gencode-version",
                    help="The gencode version to use for the 'update_annotations' command (example: 'v46'). Either this "
@@ -198,9 +199,9 @@ def main():
 
         if args.command == "run":
             print("Run this command: ")
-            print(f"docker run -it {tag}:latest /bin/bash")
+            print(f"{args.docker_command} run -it {tag}:latest /bin/bash")
         elif args.command == "test":
-            run(f"docker run -p 8080:8080 {tag}:latest")
+            run(f"{args.docker_command} run -p 8080:8080 {tag}:latest")
 
         return
 
@@ -213,8 +214,8 @@ def main():
                 min_instances = 0  # if tool == 'pangolin' else 2
                 max_instances = 3
                 if not args.command or args.command == "build":
-                    run(f"docker build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest .")
-                    run(f"docker push {tag}:latest 2>&1 | grep digest: | cut -d ' ' -f 3 > docker/{tool}/sha256.txt")
+                    run(f"{args.docker_command} build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest .")
+                    run(f"{args.docker_command} push {tag}:latest 2>&1 | grep digest: | cut -d ' ' -f 3 > docker/{tool}/sha256.txt")
 
                 if not args.command or args.command == "deploy":
                     with open(f"docker/{tool}/sha256.txt") as f:
