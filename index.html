@@ -276,7 +276,7 @@
                             <div class="ui stackable grid">
                                 <div class="row">
                                     <div class="thirteen wide column">
-                                        <div class="field" style="display: inline-block; white-space: nowrap>
+                                        <div class="field" style="display: inline-block; white-space: nowrap">
                                             <span style="display: inline-block; white-space: nowrap; padding-bottom:10px;"><b>Max distance:</b></span>
                                             <div class="ui input" style="padding-left:15px; padding-bottom:10px; padding-right:8px; width:100px">
                                                 <input id="max-distance-input" type="text" value="500" style="padding:7px 10px">
@@ -310,7 +310,7 @@
                     <br/>
                     <b>December 5, 2024</b>
                     <br />
-                    - add <a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10187174/" target="_blank">PrimateAI-3D</a>, PromoterAI, <a href="https://www.science.org/doi/10.1126/science.adg7492" target="_blank">AlphaMissense</a> and other scores<br/>
+                    - add <a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10187174/" target="_blank">PrimateAI-3D</a>, <a href="https://www.science.org/doi/10.1126/science.ads7373">PromoterAI</a>, <a href="https://www.science.org/doi/10.1126/science.adg7492" target="_blank">AlphaMissense</a> and other scores<br/>
                     - provide a table with detailed SpliceAI scores for insertion variants whenever donor or acceptor gain is predicted to occurs within the inserted sequence itself. This addresses <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/84" target="_blank">issue #84</a>.<br/>
                     <br />
                     <a id="more-details3-button" href="#"
@@ -797,7 +797,7 @@
 
     const helpTextForPredictorScores = {
         "primateai3d": (record) => `<a href='https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10187174/' target='_blank'>PrimateAI-3D</a> gene-specific thresholds are provided by the authors. Values above the threshold are shown with a red background to indicate a 'likely deleterious' prediction.`,
-        "promoterai": (record) => `PromoterAI scores range from -1 to 1 with 0 meaning no activity. Negative values represent under-expression and positive values represent over-expression. A threshold of +/-0.1 is used for high sensitivity, and +/-0.5 for high precision.`,
+        "promoterai": (record) => `<a href='https://www.science.org/doi/10.1126/science.ads7373' target='_blank'>PromoterAI</a>  &nbsp; <a href='https://github.com/Illumina/PromoterAI' target='_blank'><i class='github square icon'></i></a> &nbsp; scores range from -1 to 1 with 0 meaning no activity. Negative values represent under-expression and positive values represent over-expression. A threshold of +/-0.1 is used for high sensitivity, and +/-0.5 for high precision.`,
         "cadd": (record) => computeHelpTextForPredictorScores("cadd", record),
         "revel_max": (record) => computeHelpTextForPredictorScores("revel_max", record),
         "sift_max": (record) => computeHelpTextForPredictorScores("sift_max", record),
