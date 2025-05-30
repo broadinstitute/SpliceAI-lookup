@@ -435,7 +435,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param):
 
 def get_pangolin_scores(variant, genome_version, distance_param, mask_param):
     if genome_version not in ("37", "38"):
-        raise ValueError(f"Invalid genome_version: {mask_param}")
+        raise ValueError(f"Invalid genome_version: {genome_version}")
 
     if mask_param not in ("True", "False"):
         raise ValueError(f"Invalid mask_param: {mask_param}")
