@@ -1532,6 +1532,7 @@
 
         const tableRows = []
         const missingScores = []
+        const notAvailableOnHg19 = []
         for (const otherPredictorName of otherPredictorNames) {
             const predictorLabel = nameMapForPredictorScores[otherPredictorName] || otherPredictorName
             const otherPredictor = otherPredictorMap[otherPredictorName]
@@ -1554,7 +1555,11 @@
                     tableRows.push(row)
                     firstColumn = ""
                 } else {
-                    missingScores.push(otherPredictorName)
+                    if (genomeVersion == "37") {
+                        notAvailableOnHg19.push(otherPredictorName)
+                    } else {
+                        missingScores.push(otherPredictorName)
+                    }
                 }
             } else if (otherPredictorName in predictorScoreToPoints) {
                 if (otherPredictor) {
@@ -1572,11 +1577,25 @@
             }
         }
 
-        if (missingScores.length > 0) {
-            console.log("Missing scores for", missingScores)
-            const missingScoresRow = `<tr><td class="four wide column"></td><td class="four wide column" style="vertical-align: top; white-space: nowrap" colspan="3"><div style="padding-top: 10px; display:inline-block">${missingScores.map((name, i) => `${i === 0 || i < missingScores.length - 1 ? nameMapForPredictorScores[name] : 'and ' + nameMapForPredictorScores[name]}`).join(", &nbsp;")} scores are not available for this variant &nbsp; <i class='question circle outline icon' data-position='right center' data-content='AlphaMissense, PrimateAI-3D, and PromoterAI scores are retrieved from public lookup tables of precomputed scores, while CADD, PhyloP, PolyPhen, REVEL, and SIFT scores are retrieved from the gnomAD and myvariant.info APIs'/></div></td></tr>`
-            tableRows.push(missingScoresRow)
+        if (missingScores.length > 0 || notAvailableOnHg19.length > 0) {
+            console.log("Missing scores for", missingScores, notAvailableOnHg19)
+            let missingOrUnavailableScoresRow = `<tr><td class="four wide column"></td><td class="four wide column" style="vertical-align: top; white-space: nowrap" colspan="3">`
+            missingOrUnavailableScoresRow += `<div style="padding-top: 10px; display:inline-block">`
+            if (notAvailableOnHg19.length > 0) {
+                missingOrUnavailableScoresRow += `${notAvailableOnHg19.map((name, i) => `${i === 0 || i < notAvailableOnHg19.length - 1 ? nameMapForPredictorScores[name] : 'and ' + nameMapForPredictorScores[name]}`).join(", &nbsp;")} scores are not available on hg19`
+            }
+            if (missingScores.length > 0) {
+                if (notAvailableOnHg19.length > 0) {
+                    missingOrUnavailableScoresRow += `, while `
+                }
+                missingOrUnavailableScoresRow += `${missingScores.map((name, i) => `${i === 0 || i < missingScores.length - 1 ? nameMapForPredictorScores[name] : 'and ' + nameMapForPredictorScores[name]}`).join(", &nbsp;")} `
+                missingOrUnavailableScoresRow += `scores are not available for this variant`
+            }
+            missingOrUnavailableScoresRow += ` &nbsp; <i class='question circle outline icon' data-position='right center' data-content='AlphaMissense, PrimateAI-3D, and PromoterAI scores are retrieved from public lookup tables of precomputed scores, while CADD, PhyloP, PolyPhen, REVEL, and SIFT scores are retrieved from the gnomAD and myvariant.info APIs'/>`
+            missingOrUnavailableScoresRow += `</div></td></tr>`
+            tableRows.push(missingOrUnavailableScoresRow)
         }
+
         $("#other-predictors-header").after(tableRows.join(""))
 
     }
