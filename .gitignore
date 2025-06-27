@@ -1,5 +1,8 @@
-db_password.txt
-annotations/
+*.vcf*
+*.txt*
+*.tsv*
+*.json*
+
 service.backup_copy.yaml
 
 .pgpass
