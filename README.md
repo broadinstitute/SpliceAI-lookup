@@ -7,9 +7,7 @@ This repo contains:
 #### SpliceAI, Pangolin APIs
 
 
-<b>NOTE:</b> These APIs are intended for interactive use only, and do not support more than several requests per user per minute.
-To process many variants in batch, please install and run the underlying models directly on your local infrastructure.
-Their source code is available @ [https://github.com/bw2/SpliceAI](https://github.com/bw2/SpliceAI) and [https://github.com/bw2/Pangolin](https://github.com/bw2/Pangolin). <br />
+<b>NOTE:</b> These APIs are intended for interactive use only, and do not support more than several requests per user per minute. More frequent queries will trigger a "rate limit" error in the response. To process large batches of variants, please set up and query your own local instance of the API server. This is easy to do using the publicly available docker images (see below for details). Alternatively, you can intall and run the underlying SpliceAI and/or Pangolin models directly on your local infrastructure. Their source code is available @ [https://github.com/bw2/SpliceAI](https://github.com/bw2/SpliceAI) and [https://github.com/bw2/Pangolin](https://github.com/bw2/Pangolin). <br />
 <br />
 
 The SpliceAI and Pangolin APIs have different base urls for different genome versions:
@@ -25,7 +23,7 @@ For example, to get SpliceAI scores for `chr8-140300616-T-G`:<br>
 
 *[https://spliceai-38-xwkwwwxdwq-uc.a.run.app/spliceai/?hg=38&variant=chr8-140300616-T-G](https://spliceai-38-xwkwwwxdwq-uc.a.run.app/spliceai/?hg=38&variant=chr8-140300616-T-G)*
   
-To get Pangolin scores while also setting the `distance` and `mask` parameters:<br>
+or to get Pangolin scores while also setting the `distance` and `mask` parameters:<br>
 
 *[https://pangolin-38-xwkwwwxdwq-uc.a.run.app/pangolin/?hg=38&variant=chr8-140300616-T-G&distance=1000&mask=1](https://pangolin-38-xwkwwwxdwq-uc.a.run.app/pangolin/?hg=38&variant=chr8-140300616-T-G&distance=1000&mask=1)*
 
@@ -42,27 +40,33 @@ strengthening unannotated splice sites. When this parameter is = 1 (masked), the
 
 
 ---
-#### Local Install
+#### Running Your Own Local API Server
 
-The steps below describe how to install the API server on your local infrastructure.
-The details will vary depending on your OS, etc. If you run into issues, please submit them
-to the [issue tracker](https://github.com/broadinstitute/SpliceAI-lookup/issues).
-
-1. Install pytorch as described in the [Pangolin installation docs](https://github.com/tkzeng/Pangolin#installation)
-1. Install the modified versions of SpliceAI and Pangolin from [https://github.com/bw2/SpliceAI](https://github.com/bw2/SpliceAI) and [https://github.com/bw2/Pangolin](https://github.com/bw2/Pangolin)
-1. Install and start a [redis](https://redis.io/) server. It's used to cache previously computed API server responses so that they don't have to be computed again.
-1. Download reference fasta files: [hg19.fa](https://storage.cloud.google.com/gcp-public-data--broad-references/hg19/v0/Homo_sapiens_assembly19.fasta) and [hg38.fa](https://storage.cloud.google.com/gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta)
-1. Generate annotation files using the steps in the [annotations README](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/annotations/README.md).
-1. Start the API server on localhost port 8080. To modify server options, edit the `start_local_server.sh` script:
+If you have [docker](https://docs.docker.com/engine/install/) installed, you can easily start your own SpliceAI-lookup API server by running one of these commands (depending on which model and genome version you want to query):
 
 ```
-$ git clone git@github.com:broadinstitute/SpliceAI-lookup.git  # clone this repo  
-$ cd SpliceAI-lookup  
-$ python3 -m pip install -r requirements.txt  # install python dependencies  
-$ ./start_local_server.sh  
+docker run -p 8080:8080 us-central1-docker.pkg.dev/spliceai-lookup-412920/docker/spliceai-38:latest
+docker run -p 8080:8080 us-central1-docker.pkg.dev/spliceai-lookup-412920/docker/spliceai-37:latest
+docker run -p 8080:8080 us-central1-docker.pkg.dev/spliceai-lookup-412920/docker/pangolin-38:latest
+docker run -p 8080:8080 us-central1-docker.pkg.dev/spliceai-lookup-412920/docker/pangolin-37:latest
+```
+When it starts, it will print:  
+```
+ * Serving Flask app 'server'
+ * Debug mode: on
 ```
 
-The server uses ~1.5 Gb RAM per server thread.
+Let's say you ran the `spliceai-38` instance. You should then be able to query it by, for example, opening http://localhost:8080/spliceai/?hg=38&variant=chr8-140300616-T-G in your browser.
+The docker container will initially print:   
+```
+ERROR: Unable to connect to SQL database...
+WARNING:absl:No training configuration found...
+WARNING:tensorflow:...
+```
+but these messages can be ignored, and subsequent queries will run faster.
+
+
+If you would like to run your own API instance on Google Cloud instead of locally, see the [build_and_deploy.py](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/google_cloud_run_services/build_and_deploy.py#L224-L238) script which we use to deploy and update the SpliceAI-lookup API on [Google Cloud Run](https://cloud.google.com/run?hl=en), and submit a GitHub issue if you have questions.
 
 ---
 #### For Developers
