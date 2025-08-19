@@ -54,7 +54,7 @@ When it starts, it will print:
 ```
  * Serving Flask app 'server'
  * Debug mode: on
-```
+```   
 
 Let's say you ran the `spliceai-38` instance. You should then be able to query it by, for example, opening http://localhost:8080/spliceai/?hg=38&variant=chr8-140300616-T-G in your browser.
 The docker container will initially print:   
@@ -66,7 +66,7 @@ WARNING:tensorflow:...
 but these messages can be ignored, and subsequent queries will run faster.
 
 
-If you would like to run your own API instance on Google Cloud instead of locally, see the [build_and_deploy.py](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/google_cloud_run_services/build_and_deploy.py#L224-L238) script which we use to deploy and update the SpliceAI-lookup API on [Google Cloud Run](https://cloud.google.com/run?hl=en), and submit a GitHub issue if you have questions.
+If you would like to run your own API instance on Google Cloud instead of locally, see the [build_and_deploy.py](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/google_cloud_run_services/build_and_deploy.py#L224-L238) script which we use to deploy and update the SpliceAI-lookup API on [Google Cloud Run](https://cloud.google.com/run?hl=en). Submit a GitHub issue if you have any questions.
 
 ---
 #### For Developers
