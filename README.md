@@ -45,10 +45,10 @@ strengthening unannotated splice sites. When this parameter is = 1 (masked), the
 If you have [docker](https://docs.docker.com/engine/install/) installed, you can easily start your own SpliceAI-lookup API server by running one of these commands (depending on which model and genome version you want to query):
 
 ```
-docker run -p 8080:8080 us-central1-docker.pkg.dev/spliceai-lookup-412920/docker/spliceai-38:latest
-docker run -p 8080:8080 us-central1-docker.pkg.dev/spliceai-lookup-412920/docker/spliceai-37:latest
-docker run -p 8080:8080 us-central1-docker.pkg.dev/spliceai-lookup-412920/docker/pangolin-38:latest
-docker run -p 8080:8080 us-central1-docker.pkg.dev/spliceai-lookup-412920/docker/pangolin-37:latest
+docker run -p 8080:8080 docker.io/weisburd/spliceai-38:latest
+docker run -p 8080:8080 docker.io/weisburd/spliceai-37:latest
+docker run -p 8080:8080 docker.io/weisburd/pangolin-38:latest
+docker run -p 8080:8080 docker.io/weisburd/pangolin-37:latest
 ```
 When it starts, it will print:  
 ```
