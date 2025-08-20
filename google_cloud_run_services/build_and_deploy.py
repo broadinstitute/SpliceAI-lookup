@@ -11,12 +11,18 @@ VALID_COMMANDS = {
 }
 
 GCLOUD_PROJECT = "spliceai-lookup-412920"
+DOCKERHUB_REPO = "docker.io/weisburd"
 
 def get_service_name(tool, genome_version):
     return f"{tool}-{genome_version}"
 
-def get_tag(tool, genome_version):
-    return f"us-central1-docker.pkg.dev/spliceai-lookup-412920/docker/{get_service_name(tool, genome_version)}"
+def get_tag(tool, genome_version, repo_name="gcr.io"):
+    if repo_name == "gcr.io":
+        return f"us-central1-docker.pkg.dev/spliceai-lookup-412920/docker/{get_service_name(tool, genome_version)}"
+    elif repo_name == "dockerhub":
+        return f"{DOCKERHUB_REPO}/{get_service_name(tool, genome_version)}"
+    else:
+        raise ValueError(f"Invalid repo_name arg: {repo_name}")
 
 def run(c):
     logging.info(c)
@@ -209,13 +215,15 @@ def main():
         for genome_version in genome_versions:
             for tool in tools:
                 tag = get_tag(tool, genome_version)
+                dockerhub_tag = get_tag(tool, genome_version, repo_name="dockerhub")
                 service = get_service_name(tool, genome_version)
                 concurrency = 6    # if genome_version == '37' else 2
                 min_instances = 0  # if tool == 'pangolin' else 2
                 max_instances = 3
                 if not args.command or args.command == "build":
-                    run(f"{args.docker_command} build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest .")
+                    run(f"{args.docker_command} build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest -t {dockerhub_tag}:latest .")
                     run(f"{args.docker_command} push {tag}:latest 2>&1 | grep digest: | cut -d ' ' -f 3 > docker/{tool}/sha256.txt")
+                    run(f"{args.docker_command} push {dockerhub_tag}:latest")
 
                 if not args.command or args.command == "deploy":
                     with open(f"docker/{tool}/sha256.txt") as f:
