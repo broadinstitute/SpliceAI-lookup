@@ -312,19 +312,24 @@
                 <div>
                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website<br />
                     <br/>
-                    <b>June 27, 2025</b>
+                    <b>September 22, 2025</b>
                     <br />
-                    - added PromoterAI scores for promoters of all protein-coding transcripts in Gencode v39 (not just the canonical transcripts)<br/>
-                    - added PromoterAI scores for hg19<br/> 
-                    <br />
-                    <b>December 5, 2024</b>
-                    <br />
-                    - added <a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10187174/" target="_blank">PrimateAI-3D</a>, <a href="https://www.science.org/doi/10.1126/science.ads7373">PromoterAI</a>, <a href="https://www.science.org/doi/10.1126/science.adg7492" target="_blank">AlphaMissense</a> and other scores<br/>
-                    - provided a table with detailed SpliceAI scores for insertion variants whenever donor or acceptor gain is predicted to occurs within the inserted sequence itself. This addresses <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/84" target="_blank">issue #84</a>.<br/>
+                    - updated to Gencode v49 (was previously on v47)<br/>
+                    - added a new optional visualization track called<br/><b>"genes used for precomputed scores"</b>. It shows the Gencode v24 transcript models originally used by the SpliceAI authors to generate the precomputed SpliceAI score tables available from Illumina. This track can help explain some of the differences in scores between SpliceAI-lookup and these precomputed tables.<br/>
                     <br />
                     <a id="more-details3-button" href="#"
                        onclick="$('#more-details3').show();$('#more-details3-button').hide();">[show older updates]</a>
                     <div id="more-details3" style="display:none">
+                        <b>June 27, 2025</b>
+                        <br />
+                        - added PromoterAI scores for promoters of all protein-coding transcripts in Gencode v39 (not just the canonical transcripts)<br/>
+                        - added PromoterAI scores for hg19<br/>
+                        <br />
+                        <b>December 5, 2024</b>
+                        <br />
+                        - added <a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10187174/" target="_blank">PrimateAI-3D</a>, <a href="https://www.science.org/doi/10.1126/science.ads7373">PromoterAI</a>, <a href="https://www.science.org/doi/10.1126/science.adg7492" target="_blank">AlphaMissense</a> and other scores<br/>
+                        - provided a table with detailed SpliceAI scores for insertion variants whenever donor or acceptor gain is predicted to occurs within the inserted sequence itself. This addresses <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/84" target="_blank">issue #84</a>.<br/>
+                        <br />
                         <b style="color:#880000">MAJOR BUG FIX:</b> Between April and November of 2024, <b>Pangolin</b> scores were incorrectly computed for ~28% of hg38 variants and ~5% of hg19 variants due to a bug related to multiple requests being processed in parallel. This issue has now been fixed.<br/>SpliceAI scores were fine and were not affected by this bug.<br/>
                         </br>
                         <b>November 3, 2024</b><br />
@@ -531,7 +536,7 @@
                             </th>
                             <th class="table-header"><span style="white-space: nowrap">SpliceAI: precomputed scores
                                 <i class="question circle outline icon" data-position="right center"
-                                   data-content="These tracks summarize the original precomputed SpliceAI score tables made available by Illumina. They are only available for hg38."></i>
+                                   data-content="The 'gain' and 'loss' tracks visualize the original precomputed SpliceAI score tables made available by Illumina. Each precomputed score is shown as an arrow pointing from the genomic position of the variant to the position of the maximum delta score caused by that variant in each of the 4 categories (AG/DG/AL/DL). Clicking on the arrow shows a popup with additional details. The 'gain' tracks represent donor or acceptor gain scores above a certain threshold (0.5 or 0.2), while 'loss' tracks represent donor or acceptor loss scores. These tracks are only available for hg38. The 'precomputed score genes' track visualizes the Gencode v24 gene annotations used by Illumina when generating the precomputed score tables. Specifically, these gene models determined the transcript start and end coordinates as well as the transcript strand which are used to compute the pre-mRNA nucleotide sequence that is fed in to the neural net so it can make its predictions."></i>
                                 </span>
                             </th>
                             <th class="table-header"><span style="white-space: nowrap">Reference
@@ -567,6 +572,8 @@
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-precomputed-loss-0.5"><label>loss ≥ 0.5</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-precomputed-gain-0.2"><label>gain ≥ 0.2</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-precomputed-loss-0.2"><label>loss ≥ 0.2</label></div>
+                                <br />
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-precomputed-score-genes"><label>genes used for precomputed scores</label></div>
                             </td>
                             <td>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gencode-genes"><label>gencode <span id="gencode-version"></span> genes</label></div>
@@ -593,7 +600,7 @@
 </div>
 
 <script>
-    const GENCODE_VERSION = "v47"
+	const GENCODE_VERSION = "v47"
 
     const VARIANT_RE = new RegExp(
         "^[\\s]*" +
@@ -1650,6 +1657,9 @@
                     tracksToShow[name] = $(`input[name='${name}']`).prop("checked")
                 }
             }
+
+            tracksToShow[`igv-spliceai-precomputed-score-genes`] = $(`input[name='igv-spliceai-precomputed-score-genes']`).prop("checked")
+
             for (const tissue of ["blood", "fibroblasts", "muscle", "lymphocytes", "brain-cortex"]) {
                 // these tracks are not available for hg19
                 $(`input[name='igv-gtex-${tissue}']`).prop("checked", $(`input[name='igv-gtex-${tissue}']`).prop("checked") && genomeVersion != "37")
@@ -1826,9 +1836,26 @@
                 color: 'rgb(76,171,225)',
             })
         }
+        if (tracksToShow["igv-spliceai-precomputed-score-genes"]) {
+            const precomputedScoresGeneTrackPath = `gs://tgg-viewer/ref/GRCh${genomeVersion}/gencode_v24/gencode_v24_annotations.grch${genomeVersion}.bed.gz`
+
+            tracks.push({
+                name: `Genes used for precomputed scores`,
+                //format: 'bed',
+                url: `${precomputedScoresGeneTrackPath}?`,
+                indexURL: `${precomputedScoresGeneTrackPath}.tbi?`,
+                indexed: true,
+                searchable: true,
+                height: 350,
+                visibilityWindow: -1,
+                displayMode: 'EXPANDED',
+                color: 'rgb(76,171,225)',
+            })
+        }
+
 
         if (genomeVersion == "38") {
-            for (const minScore of [0.5, 0.2]) {   //0.2,  hide the >= 0.2 tracks for now
+            for (const minScore of [0.5, 0.2]) {
                 for (const splicePredictionType of ["loss", "gain"]) {
                     if (tracksToShow[`igv-spliceai-precomputed-${splicePredictionType}-${minScore}`]) {
                         tracks.push(
