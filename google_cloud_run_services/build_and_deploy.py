@@ -35,7 +35,7 @@ def main():
     parser.add_argument("-d", "--docker-command", choices=["docker", "podman"], default="docker", help="Whether to use docker or podman to build the image")
     g = parser.add_mutually_exclusive_group()
     g.add_argument("--gencode-version",
-                   help="The gencode version to use for the 'update_annotations' command (example: 'v46'). Either this "
+                   help="The gencode version to use for the 'update_annotations' command (example: 'v49'). Either this "
                         "or --gencode-gtf must be specified for the 'update_annotations' command")
     g.add_argument("--gencode-gtf",
                    help="Path of the newest 'basic' Gencode GTF file that was downloaded from "
@@ -221,12 +221,18 @@ def main():
                 min_instances = 0  # if tool == 'pangolin' else 2
                 max_instances = 3
                 if not args.command or args.command == "build":
-                    run(f"{args.docker_command} build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest -t {dockerhub_tag}:latest .")
-                    run(f"{args.docker_command} push {tag}:latest 2>&1 | grep digest: | cut -d ' ' -f 3 > docker/{tool}/sha256.txt")
-                    run(f"{args.docker_command} push {dockerhub_tag}:latest")
+                    if args.docker_command == "podman":
+                        run(f"gcloud --project {GCLOUD_PROJECT} auth print-access-token | podman login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev")
+
+                    #run(f"{args.docker_command} build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest -t {dockerhub_tag}:latest .")
+                    #run(f"{args.docker_command} push {tag}:latest")
+                    #run(f"{args.docker_command} push {dockerhub_tag}:latest")
+
+                    #run(f"{args.docker_command} pull {tag}:latest")
+                    run(f"{args.docker_command} inspect --format='{{{{index .RepoDigests 0}}}}' {tag}:latest | cut -f 2 -d @ > docker/{tool}/sha256_grch{genome_version}.txt")  # record the image's sha256
 
                 if not args.command or args.command == "deploy":
-                    with open(f"docker/{tool}/sha256.txt") as f:
+                    with open(f"docker/{tool}/sha256_grch{genome_version}.txt") as f:
                         sha256 = f.read().strip()
 
                     run(f"""gcloud \
