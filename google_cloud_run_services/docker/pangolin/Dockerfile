@@ -11,7 +11,7 @@ RUN apt update && apt-get install --no-install-recommends -y \
     liblzma-dev \
     zlib1g-dev
 
-RUN python3 -m pip install torch==2.2.1+cpu -f https://download.pytorch.org/whl/torch_stable.html
+RUN python3 -m pip install torch==2.2.1 -f https://download.pytorch.org/whl/torch_stable.html
 
 RUN apt update && apt-get install --no-install-recommends -y build-essential libpq-dev
 
