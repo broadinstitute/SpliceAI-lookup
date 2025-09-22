@@ -18,7 +18,7 @@ from bw2_annotation_utils.gtf_utils import parse_gtf
 
 # to get the latest database name, run:
 #    mysql -h useastdb.ensembl.org -u anonymous -e "show databases;" | grep homo_sapiens_core
-DEFAULT_ENSEMBL_DATABASE = "homo_sapiens_core_112_38"
+DEFAULT_ENSEMBL_DATABASE = "homo_sapiens_core_115_38"
 
 # this is used to get the list of MANE select and MANE plus clinical ENST transcript ids.
 DEFAULT_MANE_URL_BASE = "https://ftp.ncbi.nlm.nih.gov/refseq/MANE/MANE_human/release_1.3"
