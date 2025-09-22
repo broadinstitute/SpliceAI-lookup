@@ -15,5 +15,5 @@ psycopg2==2.9.9
 # Pangolin dependencies
 numpy==1.26.4
 pandas==2.2.2
-torch==2.2.1+cpu
+torch==2.2.1
 
