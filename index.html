@@ -971,7 +971,7 @@
             ref = matchedRegExp[4].toUpperCase()
             alt = matchedRegExp[5].toUpperCase()
 
-            result = {
+            const result = {
                 'variant': `${chrom}-${pos}-${ref}-${alt}`,
                 'consequence': variantConsequence,
             }
@@ -1997,7 +1997,7 @@
         updateVisualizationCheckboxes(false, genomeVersion)
 
         //start processing submit
-        $("#submit-button").addClass(["loading", "disabled"])
+        $("#submit-button").addClass("loading disabled")
         $("#response-box, #spliceai-table, #pangolin-table, #transcript-button-table, #error-box").hide()
         $("#error-box").html("")
 
@@ -2011,7 +2011,7 @@
             const variantConsequence = normalizedVariantAndConsequence.consequence
 
 
-            let [spliceaiResponseJson, pangolinResponseJson, otherPreditorsResponseJson] = await Promise.all([
+            let [spliceaiResponseJson, pangolinResponseJson, otherPredictorsResponseJson] = await Promise.all([
                 generateSplicingResultsTable(normalizedVariant, variantConsequence, "SpliceAI", variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltColumns),
                 generateSplicingResultsTable(normalizedVariant, variantConsequence, "Pangolin", variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltColumns),
                 generateOtherPredictorsTable(normalizedVariant, variantConsequence, variant, genomeVersion),
@@ -2069,7 +2069,7 @@
         }
 
         //done processing submit
-        $("#submit-button").removeClass(["loading", "disabled"])
+        $("#submit-button").removeClass("loading disabled")
     }
 
     const applyUrlSettingsToFormElements = () => {
