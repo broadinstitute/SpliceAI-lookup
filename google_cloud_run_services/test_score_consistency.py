@@ -6,9 +6,49 @@ import json
 import os
 import pandas as pd
 import psycopg2
+import re
 import requests
 import tqdm
 import time
+
+from contextlib import contextmanager
+
+@contextmanager
+def get_db_connection():
+    """Get a database connection"""
+    #conn = DATABASE_CONNECTION_POOL.getconn()
+    conn = psycopg2.connect(
+        dbname="spliceai-lookup-db",
+        user="postgres",
+        password=os.environ.get("DB_PASSWORD"),
+        host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
+        port="5432",
+        connect_timeout=5,
+    )
+
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+@contextmanager        
+def get_db_cursor(conn):
+    """Get a database cursor"""
+    cursor = conn.cursor()
+    try:
+        yield cursor
+        conn.commit()
+    finally:
+        cursor.close()
+
+def run_sql(conn, sql_query, *params):
+    with get_db_cursor(conn) as cursor:
+        cursor.execute(sql_query, *params)
+        try:
+            results = cursor.fetchall()
+        except:
+            results = []
+    return results
 
 p = configargparse.ArgParser(default_config_files=["~/.spliceai_lookup_db_config"])
 p.add_argument("--ip", required=True)
@@ -19,10 +59,16 @@ p.add_argument("-n", type=int, help="number of rows to query", default=1000)
 p.add_argument("-p", "--show-progress-bar", action="store_true")
 args, _ = p.parse_known_args()
 
-days_ago = 3
+myip = requests.get("http://checkip.dyndns.com").text
+myip_match = re.search(r'Address: (\d+\.\d+\.\d+\.\d+)', myip)
+if myip_match:
+    myip_match = myip_match.group(1)
+
+days_ago = 30
 conn = psycopg2.connect(f"dbname='{args.db}' user='{args.user}' host='{args.ip}' password='{args.password}'")
 #query = f"SELECT key, value, accessed FROM cache WHERE accessed < now() - INTERVAL '{days_ago} days' ORDER BY accessed ASC"
-query = f"SELECT key, value, accessed FROM cache WHERE key LIKE 'pangolin%hg38%' AND accessed > now() - INTERVAL '{days_ago} months' ORDER BY accessed ASC"
+#query = f"SELECT key, value, accessed FROM cache WHERE key LIKE 'pangolin%hg38%' AND accessed > now() - INTERVAL '{days_ago} days' ORDER BY accessed ASC"
+query = f"SELECT key, value, accessed FROM cache WHERE key LIKE 'pangolin%hg38%' ORDER BY accessed ASC"
 df = pd.read_sql_query(query, conn)
 print(f"Retrieved {len(df):,d} records from cache that were last accessed less than {days_ago} days ago.")
 if args.n:
@@ -67,6 +113,11 @@ for i, (cache_key, cache_value, last_accessed) in enumerate(iterator):
         print(f"ERROR: {url} response doesn't contain scores: {response_json}. Skipping...")
         continue
 
+    if myip_match:
+        print(f"Deleting logs for ip {myip_match}")
+        run_sql(conn, f"DELETE FROM log WHERE ip='{myip_match}'")
+
+    
     elapsed_time = time.time() - start_time
     response_json["scores"] = list(sorted(response_json["scores"], key=lambda s: s.get("t_id")))
     response_scores = response_json["scores"][0]
@@ -115,6 +166,7 @@ for i, (cache_key, cache_value, last_accessed) in enumerate(iterator):
         print(f"ERROR: {cache_key} which was last accessed on {last_accessed} is missing keys: {missing_keys}. Response: {json.dumps(response_json, indent=1)}")
 
     if mismatched_values:
+        counter["ERROR: mismatched_values"] += 1
         print(f"ERROR: {cache_key} which was last accessed on {last_accessed} has mismatched values for keys: "
               f"{', '.join(sorted([t[0] for t in mismatched_values]))} "
               f"with max delta_score_diff="
