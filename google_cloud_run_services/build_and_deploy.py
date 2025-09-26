@@ -1,6 +1,8 @@
 import argparse
 import logging
 import os
+import time
+
 import pandas as pd
 import re
 
@@ -212,6 +214,11 @@ def main():
         return
 
     if not args.command or args.command in {"build", "deploy"}:
+        if args.docker_command == "podman":
+            print("WARNING: Google Cloud Run doesn't appear to work with images built using podman. "
+                  "Containers may fail to deploy to Google Cloud Run unless they are built using docker.")
+            time.sleep(10)
+
         for genome_version in genome_versions:
             for tool in tools:
                 tag = get_tag(tool, genome_version)
