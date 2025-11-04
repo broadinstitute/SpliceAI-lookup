@@ -8,7 +8,7 @@ import os
 import pandas as pd
 import re
 
-from bw2_annotation_utils.gtf_utils import parse_gtf
+from annotation_utils.gtf_utils import parse_gtf
 
 
 def main():
