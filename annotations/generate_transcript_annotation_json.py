@@ -10,10 +10,10 @@ import json
 import os
 import re
 
-from bw2_annotation_utils.get_ensembl_db_info import get_gene_id_to_canonical_transcript_id, \
+from annotation_utils.get_ensembl_db_info import get_gene_id_to_canonical_transcript_id, \
     get_ensembl_ENST_to_RefSeq_ids
-from bw2_annotation_utils.get_MANE_table import get_MANE_ensembl_transcript_table
-from bw2_annotation_utils.gtf_utils import parse_gtf
+from annotation_utils.get_MANE_table import get_MANE_ensembl_transcript_table
+from annotation_utils.gtf_utils import parse_gtf
 
 
 # to get the latest database name, run:
