@@ -541,14 +541,14 @@
                             </th>
                             <th class="table-header"><span style="white-space: nowrap">Reference
                                 <i class="question circle outline icon" data-position="right center"
-                                   data-content="Miscellaneous reference tracks."></i>
+                                   data-content="Miscellaneous reference tracks"></i>
                                 </span>
                             </th>
                         </tr>
                         </thead>
                         <tr>
                             <td>
-                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-variant" checked><label>variant track</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-variant" checked><label>variant track</label></div><br />
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-ref-alt" checked><label>SpliceAI REF &amp; ALT scores</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-spliceai-delta-scores" checked><label>SpliceAI &#916;&nbsp; scores</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-pangolin-delta-scores" checked><label>Pangolin &#916;&nbsp; scores</label></div>
@@ -558,6 +558,7 @@
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-fibroblasts"><label>fibroblasts</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-muscle"><label>muscle</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-lymphocytes"><label>LCLs</label></div>
+                                <br />
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-brain-cortex"><label>brain cortex</label></div>
                             </td>
                             <td>
@@ -565,6 +566,7 @@
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-fibroblasts-all"><label>fibroblasts</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-muscle-all"><label>muscle</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-lymphocytes-all"><label>LCLs</label></div>
+                                <br />
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gtex-brain-cortex-all"><label>brain cortex</label></div>
                             </td>
                             <td>
@@ -577,6 +579,7 @@
                             </td>
                             <td>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-gencode-genes"><label>gencode <span id="gencode-version"></span> genes</label></div>
+                                <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-mane-genes"><label>MANE v1.4 genes</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-100-mer-mappability"><label>100-mer mappability</label></div>
                                 <div class="ui checkbox igv-track-checkbox"><input type="checkbox" name="igv-segdups"><label>segmental duplications</label></div>
                             </td>
@@ -1639,8 +1642,8 @@
             for (const name of ["igv-variant", "igv-spliceai-ref-alt", "igv-spliceai-delta-scores", "igv-pangolin-delta-scores", "igv-gencode-genes"]) {
                 tracksToShow[name] = $(`input[name='${name}']`).prop("checked")
             }
-            for (const name of ["igv-100-mer-mappability", "igv-segdups"]) {
-                // these tracks are not available for hg38
+            for (const name of ["igv-100-mer-mappability", "igv-segdups", "igv-mane-genes"]) {
+                // these tracks are not available for hg37
                 $(`input[name='${name}']`).prop("checked", $(`input[name='${name}']`).prop("checked") && genomeVersion != "37")
                 $(`input[name='${name}']`).prop("disabled", genomeVersion == "37")
 
@@ -1836,6 +1839,17 @@
                 color: 'rgb(76,171,225)',
             })
         }
+
+        if (tracksToShow["igv-mane-genes"]) {
+            tracks.push({
+                name: "MANE v1.4",
+                format: "gtf",
+                url: "gs://tgg-viewer/ref/GRCh38/MANE_v1_4/MANE.GRCh38.v1.4.ensembl_genomic.sorted.gtf.gz",
+                indexURL: "gs://tgg-viewer/ref/GRCh38/MANE_v1_4/MANE.GRCh38.v1.4.ensembl_genomic.sorted.gtf.gz.tbi",
+                height: 100,
+            })
+        }
+
         if (tracksToShow["igv-spliceai-precomputed-score-genes"]) {
             const precomputedScoresGeneTrackPath = `gs://tgg-viewer/ref/GRCh${genomeVersion}/gencode_v24/gencode_v24_annotations.grch${genomeVersion}.bed.gz`
 
