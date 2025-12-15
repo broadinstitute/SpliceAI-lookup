@@ -21,9 +21,8 @@ from annotation_utils.gtf_utils import parse_gtf
 DEFAULT_ENSEMBL_DATABASE = "homo_sapiens_core_115_38"
 
 # this is used to get the list of MANE select and MANE plus clinical ENST transcript ids.
-DEFAULT_MANE_URL_BASE = "https://ftp.ncbi.nlm.nih.gov/refseq/MANE/MANE_human/release_1.3"
-DEFAULT_MANE_SUMMARY_TABLE_FILENAME = "MANE.GRCh38.v1.3.summary.txt.gz"
-
+DEFAULT_MANE_URL_BASE = "https://ftp.ncbi.nlm.nih.gov/refseq/MANE/MANE_human/release_1.4"
+DEFAULT_MANE_SUMMARY_TABLE_FILENAME = "MANE.GRCh38.v1.4.summary.txt.gz"
 
 def main():
     p = argparse.ArgumentParser(description="""This script takes a Gencode .gtf.gz file
