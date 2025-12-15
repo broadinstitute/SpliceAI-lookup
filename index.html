@@ -312,6 +312,10 @@
                 <div>
                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website<br />
                     <br/>
+                    <b>December 14, 2025</b>
+                    <br />
+                    - In the 'Other scores' section, only populate the 'Points' column for missense variants since the calibration was only done for missense<br/>
+                    <br />
                     <b>September 22, 2025</b>
                     <br />
                     - updated to Gencode v49 (was previously on v47)<br/>
@@ -803,7 +807,7 @@
         const points = predictorScoreToPoints[predictor](record)
         const label = predictorPointsToLabel[points]
         const predictorLabel = nameMapForPredictorScores[predictor] || predictor
-        let helpText = `The ${record.score} ${nameMapForPredictorScores[predictor] || predictor} score is in the ${label} range and would count for ${points} points based on thresholds and points established in <a href='https://www.biorxiv.org/content/10.1101/2024.09.17.611902v1.full' target='_blank'>Bergquist et al. 2024</a> and <a href='https://pmc.ncbi.nlm.nih.gov/articles/PMC9748256/' target='_blank'>Pejaver et al. 2022</a>`
+        let helpText = `The ${record.score} ${nameMapForPredictorScores[predictor] || predictor} score is in the ${label} range and would count for ${points} points based on thresholds and points established for missense variants in <a href='https://www.biorxiv.org/content/10.1101/2024.09.17.611902v1.full' target='_blank'>Bergquist et al. 2024</a> and <a href='https://pmc.ncbi.nlm.nih.gov/articles/PMC9748256/' target='_blank'>Pejaver et al. 2022</a>`
         // generate a color legend as an html table:
         helpText += `<br /><br /><b>Legend:</b><br /><br />`
         helpText += `<table style='border: 1px !important; border-collapse: collapse;'>`
@@ -1456,7 +1460,7 @@
                           const predictorName = predictor.id
                           const score = parseFloat(parseFloat(predictor.value).toFixed(3))
                           if (otherPredictorScores[predictorName] && Math.abs(otherPredictorScores[predictorName].score - score) > 0.001) {
-                              console.error(`Mismatch between gnomAD and myvariant.info scores for ${predictorName}: ${score} vs ${otherPredictorScores[predictorName].score}`)
+                              console.warn(`Mismatch between gnomAD and myvariant.info scores for ${predictorName}: ${score} vs ${otherPredictorScores[predictorName].score}`)
                           }
                           otherPredictorScores[predictorName] = {
                               'score': score,
@@ -1573,10 +1577,14 @@
                 }
             } else if (otherPredictorName in predictorScoreToPoints) {
                 if (otherPredictor) {
-                    row +=`<td class="three wide column" style="vertical-align: top; white-space: nowrap; background-color: ${bgColor}">${otherPredictor.score}</td>
-                        <td class="one wide column" style="vertical-align: top; text-align: right; white-space: nowrap; background-color: ${bgColor}">
-                            ${predictorScoreToPoints[otherPredictorName](otherPredictor)}&nbsp;${helpIcon}
-                        </td></tr>`
+                    row += `<td class="three wide column" style="vertical-align: top; white-space: nowrap; background-color: ${bgColor}">${otherPredictor.score}</td>`
+                    if (variantConsequence && variantConsequence.toLowerCase().includes("missense")) {
+                        row += `<td class="one wide column" style="vertical-align: top; text-align: right; white-space: nowrap; background-color: ${bgColor}">
+                                ${predictorScoreToPoints[otherPredictorName](otherPredictor)}&nbsp;${helpIcon}
+                            </td></tr>`
+                    } else {
+                        row += `<td class="one wide column" style="background-color: ${bgColor}"></td>`
+                    }
                     tableRows.push(row)
                     firstColumn = ""
                 } else {
