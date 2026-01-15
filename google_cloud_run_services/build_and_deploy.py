@@ -415,7 +415,7 @@ def main():
                     run(f"{args.docker_command} push {dockerhub_tag}:latest")
 
                     run(f"{args.docker_command} pull {tag}:latest")
-                    run(f"{args.docker_command} inspect --format='{{{{index .RepoDigests 0}}}}' {tag}:latest | cut -f 2 -d @ > docker/{tool}/sha256_grch{genome_version}.txt")  # record the image's sha256
+                    run(f"{args.docker_command} inspect --format='{{{{range .RepoDigests}}}}{{{{println .}}}}{{{{end}}}}' {tag}:latest | grep 'us-central1-docker.pkg.dev' | cut -f 2 -d @ > docker/{tool}/sha256_grch{genome_version}.txt")  # record the image's sha256
 
                 if not args.command or args.command == "deploy":
                     with open(f"docker/{tool}/sha256_grch{genome_version}.txt") as f:
