@@ -18,6 +18,9 @@ from flask import Flask, g, request, Response, send_from_directory
 from flask_cors import CORS
 from flask_talisman import Talisman
 
+# SAI-10k style predictions for splice consequences
+from sai10k_predictions import sai10k_get_transcript_predictions
+
 app = Flask(__name__)
 
 CORS(app)
@@ -231,6 +234,70 @@ def run_sql(conn, sql_query, *params):
     return results
 
 
+def get_transcript_structure(conn, transcript_id, genome_version):
+    """Retrieve transcript structure from the database.
+
+    Args:
+        conn: Database connection
+        transcript_id: Transcript ID (with or without version, e.g., "ENST00000123456" or "ENST00000123456.5")
+        genome_version: "37" or "38"
+
+    Returns:
+        dict with transcript structure fields, or None if not found:
+            - EXON_STARTS: list of 1-based exon start positions
+            - EXON_ENDS: list of 1-based exon end positions
+            - CDS_START: 1-based CDS start position (or None if non-coding)
+            - CDS_END: 1-based CDS end position (or None if non-coding)
+            - EXON_FRAMES: list of frame values for each exon (or None)
+            - STRAND: '+' or '-'
+    """
+    if conn is None:
+        return None
+
+    # Remove version suffix if present
+    transcript_id_without_version = transcript_id.split(".")[0]
+
+    table_name = f"transcripts_hg{genome_version}"
+    rows = run_sql(
+        conn,
+        f"""SELECT strand, cds_start, cds_end, exon_starts, exon_ends, exon_frames
+           FROM {table_name} WHERE transcript_id = %s""",
+        (transcript_id_without_version,)
+    )
+
+    if not rows:
+        return None
+
+    strand, cds_start, cds_end, exon_starts_str, exon_ends_str, exon_frames_str = rows[0]
+
+    # Parse comma-separated values and convert from 0-based to 1-based coordinates
+    # genePred format uses 0-based start and 0-based half-open end
+    exon_starts_0based = [int(s) for s in exon_starts_str.rstrip(",").split(",") if s]
+    exon_ends_0based = [int(s) for s in exon_ends_str.rstrip(",").split(",") if s]
+
+    # Convert to 1-based coordinates (start +1, end stays same since half-open becomes closed)
+    exon_starts_1based = [s + 1 for s in exon_starts_0based]
+    exon_ends_1based = exon_ends_0based  # Already correct for 1-based closed interval
+
+    # Convert CDS coordinates (0-based half-open to 1-based closed)
+    cds_start_1based = cds_start + 1 if cds_start is not None else None
+    cds_end_1based = cds_end if cds_end is not None else None
+
+    # Parse exon frames
+    exon_frames = None
+    if exon_frames_str:
+        exon_frames = [int(f) for f in exon_frames_str.rstrip(",").split(",") if f]
+
+    return {
+        "EXON_STARTS": exon_starts_1based,
+        "EXON_ENDS": exon_ends_1based,
+        "CDS_START": cds_start_1based,
+        "CDS_END": cds_end_1based,
+        "EXON_FRAMES": exon_frames,
+        "STRAND": strand,
+    }
+
+
 #def does_table_exist(table_name):
 #    results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename=%s)", (table_name,))
 #    does_table_already_exist = results[0][0]
@@ -349,7 +416,7 @@ def add_splicing_scores_to_cache(conn, tool_name, variant, genome_version, dista
         print(f"Cache error: {e}", flush=True)
 
 
-def get_spliceai_scores(variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param):
+def get_spliceai_scores(conn, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param):
     try:
         chrom, pos, ref, alt = parse_variant(variant)
     except ValueError as e:
@@ -386,12 +453,13 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
 
     #scores = [s[s.index("|")+1:] for s in scores]  # drop allele field
 
-    # to reduce the response size, return all non-zero scores only for the canonial transcript (or the 1st transcript)
+    # to reduce the response size, return all non-zero scores only for the canonical transcript (or the 1st transcript)
     all_non_zero_scores = None
     all_non_zero_scores_strand = None
     all_non_zero_scores_transcript_id = None
     all_non_zero_scores_transcript_priority = -1
     max_delta_score_sum = 0
+    selected_transcript = None
     for i, transcript_scores in enumerate(scores):
         if "ALL_NON_ZERO_SCORES" not in transcript_scores:
             continue
@@ -406,6 +474,11 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
         # add the extra transcript annotations from the json file to the transcript scores dict
         transcript_scores.update(transcript_annotations)
 
+        # add transcript structure from the database for heuristic predictions
+        transcript_structure = get_transcript_structure(conn, transcript_id_without_version, genome_version)
+        if transcript_structure:
+            transcript_scores.update(transcript_structure)
+
         # decide whether to use ALL_NON_ZERO_SCORES from this transcript
         current_transcript_priority = TRANSCRIPT_PRIORITY_ORDER[transcript_annotations["t_priority"]]
         current_delta_score_sum = sum(abs(float(transcript_scores[key])) for key in ("DS_AG", "DS_AL", "DS_DG", "DS_DL"))
@@ -415,6 +488,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
             all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
             all_non_zero_scores_strand = transcript_scores["t_strand"]
             all_non_zero_scores_transcript_id = transcript_scores["t_id"]
+            selected_transcript = transcript_scores
 
         elif current_transcript_priority == all_non_zero_scores_transcript_priority and current_delta_score_sum > max_delta_score_sum:
             # select the one with the highest delta score sum
@@ -422,9 +496,19 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
             all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
             all_non_zero_scores_strand = transcript_scores["t_strand"]
             all_non_zero_scores_transcript_id = transcript_scores["t_id"]
+            selected_transcript = transcript_scores
 
         for redundant_key in "ALLELE", "NAME", "STRAND", "ALL_NON_ZERO_SCORES":
             del transcript_scores[redundant_key]
+
+    # Compute heuristic predictions for the selected transcript
+    heuristic_predictions = None
+    if selected_transcript:
+        try:
+            heuristic_predictions = sai10k_get_transcript_predictions(selected_transcript, pos)
+        except Exception as e:
+            print(f"WARNING: Error computing heuristic predictions for {variant}: {e}")
+            traceback.print_exc()
 
     return {
         "variant": variant,
@@ -440,6 +524,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
         "allNonZeroScores": all_non_zero_scores,
         "allNonZeroScoresStrand": all_non_zero_scores_strand,
         "allNonZeroScoresTranscriptId": all_non_zero_scores_transcript_id,
+        "heuristicPredictions": heuristic_predictions,
     }
 
 
@@ -655,7 +740,7 @@ def run_splice_prediction_tool(conn, tool_name):
 
         try:
             if tool_name == "spliceai":
-                results = get_spliceai_scores(variant, genome_version, distance_param, int(mask_param), basic_or_comprehensive_param)
+                results = get_spliceai_scores(conn, variant, genome_version, distance_param, int(mask_param), basic_or_comprehensive_param)
             elif tool_name == "pangolin":
                 pangolin_mask_param = "True" if mask_param == "1" else "False"
                 results = get_pangolin_scores(variant, genome_version, distance_param, pangolin_mask_param, basic_or_comprehensive_param)

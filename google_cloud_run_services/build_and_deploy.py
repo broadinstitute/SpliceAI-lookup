@@ -3,17 +3,189 @@ import logging
 import os
 import time
 
+from dotenv import load_dotenv
 import pandas as pd
+import psycopg2
+from psycopg2.extras import execute_values
 import re
+from tqdm import tqdm
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s: %(message)s")
 
 VALID_COMMANDS = {
-    "update_annotations", "build", "deploy", "test", "test2", "run",
+    "update_annotations", "update_transcript_tables", "build", "deploy", "test", "test2", "run",
 }
 
 GCLOUD_PROJECT = "spliceai-lookup-412920"
 DOCKERHUB_REPO = "docker.io/weisburd"
+
+DB_HOST = os.environ.get("SPLICEAI_LOOKUP_DB_HOST")
+if not DB_HOST:
+    raise ValueError("SPLICEAI_LOOKUP_DB_HOST not set. Please add it to .env file.")
+DB_NAME = "spliceai-lookup-db"
+DB_USER = "postgres"
+
+
+def get_db_connection():
+    """Get a database connection using password from .pgpass file."""
+    pgpass_path = os.path.join(os.path.dirname(__file__), ".pgpass")
+    if not os.path.exists(pgpass_path):
+        raise FileNotFoundError(f"Database password file not found: {pgpass_path}")
+
+    with open(pgpass_path, "r") as f:
+        password = f.read().strip()
+
+    return psycopg2.connect(
+        host=DB_HOST,
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=password,
+    )
+
+
+def update_transcript_tables(genome_versions, gencode_version):
+    """Populate the transcripts table in the database from genePred files.
+
+    Args:
+        genome_versions: List of genome versions to process (e.g., ["37", "38"])
+        gencode_version: The gencode version string (e.g., "v49")
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Process each genome version
+    total_records = 0
+    for genome_version in genome_versions:
+        table_name = f"transcripts_hg{genome_version}"
+        temp_table_name = f"{table_name}_reloading"
+
+        # Create the temporary table for this genome version
+        logging.info(f"Creating {temp_table_name} table...")
+        cursor.execute(f"DROP TABLE IF EXISTS {temp_table_name}")
+        cursor.execute(f"""
+            CREATE TABLE {temp_table_name} (
+                transcript_id VARCHAR(50) PRIMARY KEY,
+                chrom VARCHAR(25) NOT NULL,
+                strand VARCHAR(1) NOT NULL,
+                tx_start INTEGER NOT NULL,
+                tx_end INTEGER NOT NULL,
+                cds_start INTEGER,
+                cds_end INTEGER,
+                exon_count INTEGER NOT NULL,
+                exon_starts TEXT NOT NULL,
+                exon_ends TEXT NOT NULL,
+                exon_frames TEXT
+            )
+        """)
+        conn.commit()
+        # Look for genePred files in the annotations directory
+        gene_pred_path = f"./docker/ref/GRCh{genome_version}/gencode.{gencode_version}.GRCh{genome_version}.sorted.txt.gz"
+
+        if not os.path.exists(gene_pred_path):
+            # Try alternate path patterns
+            alt_path = f"gencode.{gencode_version}.GRCh{genome_version}.sorted.txt.gz"
+            if os.path.exists(alt_path):
+                gene_pred_path = alt_path
+            else:
+                logging.warning(f"GenePred file not found: {gene_pred_path}")
+                continue
+
+        logging.info(f"Reading genePred file: {gene_pred_path}")
+
+        # genePred extended format columns
+        column_names = [
+            "name",        # transcript ID
+            "chrom",
+            "strand",
+            "txStart",     # 0-based
+            "txEnd",
+            "cdsStart",    # 0-based
+            "cdsEnd",
+            "exonCount",
+            "exonStarts",  # comma-separated, 0-based
+            "exonEnds",    # comma-separated
+            "score",
+            "name2",       # gene name
+            "cdsStartStat",
+            "cdsEndStat",
+            "exonFrames",  # comma-separated
+        ]
+
+        # The sorted file has an additional index column at the start
+        df = pd.read_table(gene_pred_path, names=["i"] + column_names)
+
+        # Prepare all rows for bulk insert
+        rows = []
+        for _, row in tqdm(df.iterrows(), total=len(df), desc=f"GRCh{genome_version}"):
+            transcript_id = row["name"].split(".")[0]  # Remove version suffix
+            cds_start = int(row["cdsStart"]) if pd.notna(row["cdsStart"]) else None
+            cds_end = int(row["cdsEnd"]) if pd.notna(row["cdsEnd"]) else None
+
+            # Check if CDS start equals CDS end (non-coding transcript)
+            if cds_start is not None and cds_end is not None and cds_start == cds_end:
+                cds_start = None
+                cds_end = None
+
+            rows.append((
+                transcript_id,
+                row["chrom"],
+                row["strand"],
+                int(row["txStart"]),
+                int(row["txEnd"]),
+                cds_start,
+                cds_end,
+                int(row["exonCount"]),
+                row["exonStarts"],
+                row["exonEnds"],
+                row["exonFrames"] if pd.notna(row["exonFrames"]) else None,
+            ))
+
+        # Bulk insert using execute_values (much faster than individual inserts)
+        batch_size = 1000
+        insert_sql = f"""INSERT INTO {temp_table_name}
+               (transcript_id, chrom, strand, tx_start, tx_end,
+                cds_start, cds_end, exon_count, exon_starts, exon_ends, exon_frames)
+               VALUES %s
+               ON CONFLICT (transcript_id) DO UPDATE SET
+                   chrom = EXCLUDED.chrom,
+                   strand = EXCLUDED.strand,
+                   tx_start = EXCLUDED.tx_start,
+                   tx_end = EXCLUDED.tx_end,
+                   cds_start = EXCLUDED.cds_start,
+                   cds_end = EXCLUDED.cds_end,
+                   exon_count = EXCLUDED.exon_count,
+                   exon_starts = EXCLUDED.exon_starts,
+                   exon_ends = EXCLUDED.exon_ends,
+                   exon_frames = EXCLUDED.exon_frames"""
+
+        for i in tqdm(range(0, len(rows), batch_size), desc=f"Inserting GRCh{genome_version}"):
+            batch = rows[i:i + batch_size]
+            execute_values(cursor, insert_sql, batch)
+
+        conn.commit()
+
+        # Create index on transcript_id for fast lookups
+        logging.info(f"Creating index on {temp_table_name}...")
+        cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{temp_table_name}_tid ON {temp_table_name} (transcript_id)")
+        conn.commit()
+
+        # Replace the old table with the new one
+        logging.info(f"Replacing {table_name} with new data...")
+        cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+        cursor.execute(f"ALTER TABLE {temp_table_name} RENAME TO {table_name}")
+        cursor.execute(f"ALTER INDEX IF EXISTS idx_{temp_table_name}_tid RENAME TO idx_{table_name}_tid")
+        conn.commit()
+
+        logging.info(f"Inserted {len(rows):,d} records into {table_name}")
+        total_records += len(rows)
+
+    cursor.close()
+    conn.close()
+
+    logging.info(f"Done! Inserted {total_records:,d} total transcript records into the database.")
+
 
 def get_service_name(tool, genome_version):
     return f"{tool}-{genome_version}"
@@ -191,6 +363,13 @@ def main():
             if not updated_line:
                 print("WARNING: Unable to find GENCODE_VERSION line in index.html")
 
+        return
+
+    if args.command == "update_transcript_tables":
+        if not args.gencode_version:
+            parser.error("--gencode-version is required for the update_transcript_tables command")
+
+        update_transcript_tables(genome_versions, args.gencode_version)
         return
 
     if args.command == "test2":
