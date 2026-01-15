@@ -501,13 +501,13 @@ def get_spliceai_scores(conn, variant, genome_version, distance_param, mask_para
         for redundant_key in "ALLELE", "NAME", "STRAND", "ALL_NON_ZERO_SCORES":
             del transcript_scores[redundant_key]
 
-    # Compute heuristic predictions for the selected transcript
-    heuristic_predictions = None
+    # Compute SAI-10k predictions for the selected transcript
+    sai10k_predictions = None
     if selected_transcript:
         try:
-            heuristic_predictions = sai10k_get_transcript_predictions(selected_transcript, pos)
+            sai10k_predictions = sai10k_get_transcript_predictions(selected_transcript, pos)
         except Exception as e:
-            print(f"WARNING: Error computing heuristic predictions for {variant}: {e}")
+            print(f"WARNING: Error computing SAI-10k predictions for {variant}: {e}")
             traceback.print_exc()
 
     return {
@@ -524,7 +524,7 @@ def get_spliceai_scores(conn, variant, genome_version, distance_param, mask_para
         "allNonZeroScores": all_non_zero_scores,
         "allNonZeroScoresStrand": all_non_zero_scores_strand,
         "allNonZeroScoresTranscriptId": all_non_zero_scores_transcript_id,
-        "heuristicPredictions": heuristic_predictions,
+        "sai10kPredictions": sai10k_predictions,
     }
 
 
