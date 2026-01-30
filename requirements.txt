@@ -16,3 +16,4 @@ biopython
 pyfastx
 PyVCF3>=1.0.3
 pangolin @ git+https://github.com/bw2/Pangolin     # if the latest version isn't being installed, clone the repo and install from the local directory by running python3 setup.py install
+torch
