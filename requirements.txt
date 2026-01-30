@@ -1,3 +1,4 @@
+annotation-utils @ git+https://github.com/bw2/annotation-utils
 tensorflow==2.16.1
 keras>=3.0.0
 spliceai @ git+https://github.com/bw2/SpliceAI   # if the latest version isn't being installed, clone the repo and install from the local directory by running python3 setup.py install
