@@ -74,7 +74,7 @@ HG19_FASTA_PATH = os.path.expanduser("~/hg19.fa")
 HG38_FASTA_PATH = os.path.expanduser("~/hg38.fa")
 T2T_FASTA_PATH = os.path.expanduser("~/chm13v2.0.fa")
 
-GENCODE_VERSION = "v44"
+GENCODE_VERSION = "v49"
 SPLICEAI_GRCH37_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}lift37.basic.annotation.txt.gz"
 SPLICEAI_GRCH38_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}.basic.annotation.txt.gz"
 PANGOLIN_GRCH37_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}lift37.basic.annotation.without_chr_prefix.db"
