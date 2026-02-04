@@ -1,5 +1,6 @@
 # Use a slim Python image for a smaller footprint
 FROM python:3.11-slim
+ARG HTTPS_PROXY
 
 # Install redis-tools if you absolutely need redis-cli inside the container
 RUN apt-get update && apt-get install -y redis-tools && rm -rf /var/lib/apt/lists/*
