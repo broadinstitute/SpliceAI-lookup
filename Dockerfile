@@ -13,12 +13,9 @@ RUN apt-get update && apt-get install -y redis-tools git && rm -rf /var/lib/apt/
 
 WORKDIR /app
 
-# Copy requirements first to leverage Docker cache
-COPY olis_requirements.txt .
+# Install requirements
 RUN pip install --no-cache-dir --use-deprecated=legacy-resolver -r olis_requirements.txt
 
-# Copy the rest of the app
-COPY . .
 
 # Set environment variables (can be overridden in docker-compose)
 ENV NUM_THREADS=4
