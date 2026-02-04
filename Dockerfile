@@ -1,6 +1,12 @@
 # Use a slim Python image for a smaller footprint
-FROM python:3.11-slim
+FROM python:3.11-slim.bookworm
+
+# Import proxy settings from build arguments
 ARG HTTPS_PROXY
+
+# Set environment variables for proxy -> persistent in the container
+ENV http_proxy=${HTTPS_PROXY}
+ENV https_proxy=${HTTPS_PROXY}
 
 # Install redis-tools if you absolutely need redis-cli inside the container
 RUN apt-get update && apt-get install -y redis-tools && rm -rf /var/lib/apt/lists/*
@@ -9,7 +15,7 @@ WORKDIR /app
 
 # Copy requirements first to leverage Docker cache
 COPY olis_requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r olis_requirements.txt
 
 # Copy the rest of the app
 COPY . .
