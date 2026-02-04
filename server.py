@@ -70,9 +70,9 @@ RATE_LIMIT_OUTLIER_IPS = get_rate_limit_outlier_ips()
 DISABLE_LOGGING_FOR_IPS = {f"63.143.42.{i}" for i in range(0, 256)}  # ignore uptimerobot.com IPs
 
 
-HG19_FASTA_PATH = os.path.expanduser("~/hg19.fa")
-HG38_FASTA_PATH = os.path.expanduser("~/hg38.fa")
-T2T_FASTA_PATH = os.path.expanduser("~/chm13v2.0.fa")
+HG19_FASTA_PATH = os.path.expanduser("./annotations/GRCh37.primary_assembly.genome.fa")
+HG38_FASTA_PATH = os.path.expanduser("./annotations/GRCh38.primary_assembly.genome.fa")
+T2T_FASTA_PATH = os.path.expanduser("./annotations/chm13v2.0.fa")
 
 GENCODE_VERSION = "v49"
 SPLICEAI_GRCH37_ANNOTATIONS = f"./annotations/gencode.{GENCODE_VERSION}lift37.basic.annotation.txt.gz"
