@@ -1,5 +1,5 @@
 # Use a slim Python image for a smaller footprint
-FROM python:3.11-slim.bookworm
+FROM python:3.11-slim-bookworm
 
 # Import proxy settings from build arguments
 ARG HTTPS_PROXY
