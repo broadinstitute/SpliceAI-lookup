@@ -9,7 +9,7 @@ ENV http_proxy=${HTTPS_PROXY}
 ENV https_proxy=${HTTPS_PROXY}
 
 # Install redis-tools if you absolutely need redis-cli inside the container
-RUN apt-get update && apt-get install -y redis-tools && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y redis-tools git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
