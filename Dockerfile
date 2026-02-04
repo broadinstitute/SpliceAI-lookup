@@ -15,7 +15,7 @@ WORKDIR /app
 
 # Copy requirements first to leverage Docker cache
 COPY olis_requirements.txt .
-RUN pip install --no-cache-dir -r --use-deprecated=legacy-resolver olis_requirements.txt
+RUN pip install --no-cache-dir --use-deprecated=legacy-resolver -r olis_requirements.txt
 
 # Copy the rest of the app
 COPY . .
