@@ -182,6 +182,34 @@
                         <div style="padding:25px 0px">
                             <div class="no-print">
                                 <h1>--- IMGH SpliceAI Lookup ---</h1>
+                                <div id="multi-variant-upload" style="margin:2em 0;">
+                                    <h3>Batch Variant Upload</h3>
+                                    <label>Upload VCF or text file:</label>
+                                    <input type="file" id="variantFile" accept=".vcf,.txt">
+                                    <br>
+                                    <label>Or paste variants (one per line):</label><br>
+                                    <textarea id="variantTextarea" rows="4" cols="60" placeholder="chr8-140300616-T-G&#10;chr1-123456-A-T"></textarea>
+                                    <br>
+                                    <button class="ui button primary" onclick="handleVariantsUpload()">Submit Variants</button>
+                                    <table id="variantTable" class="ui celled table" style="margin-top:1em; display:none;">
+                                        <thead>
+                                        <tr>
+                                            <th>Variant</th>
+                                            <th>Status</th>
+                                            <th>Action</th>
+                                        </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                    </div>
+                                    <div id="variantResultModal" style="display:none; position:fixed; top:10%; left:10%; width:80%; background:#fff; border:2px solid #333; padding:1em; z-index:1000; max-height:80vh; overflow:auto;">
+                                    <button onclick="closeResultModal()" style="float:right;">Close</button>
+                                    <h4>Variant Result</h4>
+                                    <pre id="variantResultContent"></pre>
+                                </div>
+                                <br />
+
+
                                 <div style="display:inline-block; ">Enter a variant below to see its &nbsp;
                                     <span style="white-space: nowrap;"><a href="https://pubmed.ncbi.nlm.nih.gov/30661751" target="_blank">SpliceAI</a>  <a href='https://github.com/Illumina/SpliceAI' target='_blank'><i class='github icon'></i></a></span>, 
                                     <span style="white-space: nowrap;"><a href="https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4" target="_blank">Pangolin</a>  <a href='https://github.com/tkzeng/Pangolin' target='_blank'><i class='github icon'></i></a></span>, 
@@ -2156,6 +2184,116 @@
         const results = new RegExp('[\?&#]?' + name + '=([^&#]*)').exec(window.location.hash);
         return (results !== null) ? decodeURIComponent(results[1]) || 0 : false;
     }
+
+    // Olis functions...
+    function parseVariantsFromText(text) {
+    return text.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+    }
+
+    function parseVariantsFromVCF(content) {
+        const lines = content.split(/\r?\n/);
+        const variants = [];
+        for (const line of lines) {
+            if (line.startsWith('#') || !line.trim()) continue;
+            const cols = line.split(/\s+/);
+            if (cols.length >= 5) {
+                variants.push(`${cols[0]}-${cols[1]}-${cols[3]}-${cols[4]}`);
+            }
+        }
+        return variants;
+    }
+
+    function handleVariantsUpload() {
+        const fileInput = document.getElementById('variantFile');
+        const textarea = document.getElementById('variantTextarea');
+        let variants = [];
+
+        if (fileInput.files.length > 0) {
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const content = e.target.result;
+                if (file.name.endsWith('.vcf')) {
+                    variants = parseVariantsFromVCF(content);
+                } else {
+                    variants = parseVariantsFromText(content);
+                }
+                startVariantProcessing(variants);
+            };
+            reader.readAsText(file);
+        } else {
+            variants = parseVariantsFromText(textarea.value);
+            startVariantProcessing(variants);
+        }
+    }
+
+    function startVariantProcessing(variants) {
+        if (!variants.length) {
+            alert('No variants found.');
+            return;
+        }
+        const table = document.getElementById('variantTable');
+        const tbody = table.querySelector('tbody');
+        tbody.innerHTML = '';
+        table.style.display = '';
+
+        window.variantResults = {};
+
+        variants.forEach((variant, idx) => {
+            const row = document.createElement('tr');
+            row.id = `variant-row-${idx}`;
+            row.innerHTML = `
+                <td>${variant}</td>
+                <td class="pending" id="status-${idx}">Pending</td>
+                <td><button id="show-btn-${idx}" onclick="showVariantResult(${idx})" disabled>Show Results</button></td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        variants.forEach((variant, idx) => {
+            processVariant(variant, idx);
+        });
+    }
+
+    function processVariant(variant, idx) {
+        // You may want to let user select genome version and params; here we use defaults
+        const params = new URLSearchParams({
+            variant: variant,
+            hg: '38', // or '37'
+            distance: 500,
+            mask: 0
+        });
+        const statusCell = document.getElementById(`status-${idx}`);
+        statusCell.textContent = 'Processing...';
+        statusCell.className = 'processing';
+
+        fetch('/spliceai/?' + params.toString())
+            .then(resp => resp.json())
+            .then(data => {
+                window.variantResults[idx] = data;
+                statusCell.textContent = 'Done';
+                statusCell.className = 'done';
+                document.getElementById(`show-btn-${idx}`).disabled = false;
+            })
+            .catch(err => {
+                statusCell.textContent = 'Error';
+                statusCell.className = 'error';
+                window.variantResults[idx] = { error: err.toString() };
+            });
+    }
+
+    function showVariantResult(idx) {
+        const modal = document.getElementById('variantResultModal');
+        const content = document.getElementById('variantResultContent');
+        const result = window.variantResults[idx];
+        content.textContent = JSON.stringify(result, null, 2);
+        modal.style.display = '';
+    }
+
+    function closeResultModal() {
+        document.getElementById('variantResultModal').style.display = 'none';
+    }
+
 
     $(document).ready(() => {
         $("#gencode-version").text(GENCODE_VERSION)
