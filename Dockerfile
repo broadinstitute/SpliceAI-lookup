@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y redis-tools git && rm -rf /var/lib/apt/
 WORKDIR /app
 
 # Install requirements
+COPY olis_requirements.txt .
 RUN pip install --no-cache-dir --use-deprecated=legacy-resolver -r olis_requirements.txt
 
 
