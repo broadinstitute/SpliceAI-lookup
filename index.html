@@ -1831,7 +1831,7 @@
         }
 
         if (tracksToShow["igv-gencode-genes"]) {
-            const gencodeTrackPath = `gs://tgg-viewer/ref/GRCh${genomeVersion}/gencode_${GENCODE_VERSION}/gencode.${GENCODE_VERSION}.GRCh${genomeVersion}.sorted.txt.gz`
+            const gencodeTrackPath = `https://storage.googleapis.com/tgg-viewer/ref/GRCh${genomeVersion}/gencode_${GENCODE_VERSION}/gencode.${GENCODE_VERSION}.GRCh${genomeVersion}.sorted.txt.gz`
 
             tracks.push({
                 name: `Gencode ${GENCODE_VERSION}`,
@@ -1852,14 +1852,14 @@
             tracks.push({
                 name: "MANE v1.4",
                 format: "gtf",
-                url: "gs://tgg-viewer/ref/GRCh38/MANE_v1_4/MANE.GRCh38.v1.4.ensembl_genomic.sorted.gtf.gz",
-                indexURL: "gs://tgg-viewer/ref/GRCh38/MANE_v1_4/MANE.GRCh38.v1.4.ensembl_genomic.sorted.gtf.gz.tbi",
+                url: "https://storage.googleapis.com/tgg-viewer/ref/GRCh38/MANE_v1_4/MANE.GRCh38.v1.4.ensembl_genomic.sorted.gtf.gz",
+                indexURL: "https://storage.googleapis.com/tgg-viewer/ref/GRCh38/MANE_v1_4/MANE.GRCh38.v1.4.ensembl_genomic.sorted.gtf.gz.tbi",
                 height: 100,
             })
         }
 
         if (tracksToShow["igv-spliceai-precomputed-score-genes"]) {
-            const precomputedScoresGeneTrackPath = `gs://tgg-viewer/ref/GRCh${genomeVersion}/gencode_v24/gencode_v24_annotations.grch${genomeVersion}.bed.gz`
+            const precomputedScoresGeneTrackPath = `https://storage.googleapis.com/tgg-viewer/ref/GRCh${genomeVersion}/gencode_v24/gencode_v24_annotations.grch${genomeVersion}.bed.gz`
 
             tracks.push({
                 name: `Genes used for precomputed scores`,
@@ -1889,8 +1889,8 @@
                                      Clicking on the arrow displays additional details.`,
                                 type: "spliceJunctions",
                                 height: 100,
-                                url: `gs://tgg-viewer/ref/GRCh38/spliceai/spliceai_scores.raw.snps_and_indels.hg38.filtered.sorted.score_${minScore}.splice_${splicePredictionType}.bed.gz`,
-                                indexURL: `gs://tgg-viewer/ref/GRCh38/spliceai/spliceai_scores.raw.snps_and_indels.hg38.filtered.sorted.score_${minScore}.splice_${splicePredictionType}.bed.gz.tbi`,
+                                url: `https://storage.googleapis.com/tgg-viewer/ref/GRCh38/spliceai/spliceai_scores.raw.snps_and_indels.hg38.filtered.sorted.score_${minScore}.splice_${splicePredictionType}.bed.gz`,
+                                indexURL: `https://storage.googleapis.com/tgg-viewer/ref/GRCh38/spliceai/spliceai_scores.raw.snps_and_indels.hg38.filtered.sorted.score_${minScore}.splice_${splicePredictionType}.bed.gz.tbi`,
                             }
                         )
                     }
@@ -1922,15 +1922,15 @@
                         tracks: [{
                             type: "wig",
                             format: "bigwig",
-                            url: `gs://tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.bigWig`,
+                            url: `https://storage.googleapis.com/tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.bigWig`,
                         }, {
                             type: 'spliceJunctions',
                             format: 'bed',
                             minJunctionEndsVisible: 1,
                             colorBy: 'strand',
                             minTotalReads: 3,
-                            url: `gs://tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.junctions.bed.gz`,
-                            indexURL: `gs://tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.junctions.bed.gz.tbi`,
+                            url: `https://storage.googleapis.com/tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.junctions.bed.gz`,
+                            indexURL: `https://storage.googleapis.com/tgg-viewer/ref/GRCh38/gtex_v8/${filenamePrefix}${filenameSuffix}.junctions.bed.gz.tbi`,
                         }],
                     })
                 }
@@ -1942,7 +1942,7 @@
                     description: "100bp k-mer mappability track from UCSC. Lower values indicate regions that are not unique",
                     type: "wig",
                     format: "bigwig",
-                    url: "gs://tgg-viewer/ref/GRCh38/mappability/GRCh38_no_alt_analysis_set_GCA_000001405.15-k100_m2.bw",
+                    url: "https://storage.googleapis.com/tgg-viewer/ref/GRCh38/mappability/GRCh38_no_alt_analysis_set_GCA_000001405.15-k100_m2.bw",
                     height: 100,
                 })
             }
@@ -1952,8 +1952,8 @@
                     name: "SegDups",
                     description: "Segmental duplications track from UCSC",
                     format: "gtf",
-                    url: "gs://tgg-viewer/ref/GRCh38/segdups/segdups.gtf.gz",
-                    indexURL: "gs://tgg-viewer/ref/GRCh38/segdups/segdups.gtf.gz.tbi",
+                    url: "https://storage.googleapis.com/tgg-viewer/ref/GRCh38/segdups/segdups.gtf.gz",
+                    indexURL: "https://storage.googleapis.com/tgg-viewer/ref/GRCh38/segdups/segdups.gtf.gz.tbi",
                     height: 100,
                 })
             }
