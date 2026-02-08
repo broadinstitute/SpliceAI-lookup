@@ -25,7 +25,7 @@
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/semantic-ui@2.4.2/dist/semantic.min.js"></script>
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/underscore@1.12.0/underscore-min.js"></script>
     <script type="text/javascript" src="https://unpkg.com/@gmod/tabix@1.6.1/dist/tabix-bundle.js"></script>
-    <script type="text/javascript" src="https://storage.googleapis.com/tgg-viewer/igv.js-bw2/dist/igv.min.js?version=2024-08-06"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/gh/broadinstitute/SpliceAI-lookup-dev@main/igv.min.js"></script>
     <!-- script type="text/javascript" src="igv.min.js"></script -->
 
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-483HVKZCL1"></script>
@@ -183,7 +183,7 @@
                                     <span style="white-space: nowrap;"><a href="https://pubmed.ncbi.nlm.nih.gov/30661751" target="_blank">SpliceAI</a>  <a href='https://github.com/Illumina/SpliceAI' target='_blank'><i class='github icon'></i></a></span>, 
                                     <span style="white-space: nowrap;"><a href="https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02664-4" target="_blank">Pangolin</a>  <a href='https://github.com/tkzeng/Pangolin' target='_blank'><i class='github icon'></i></a></span>, 
                                     <span style="white-space: nowrap;"><a href="https://www.science.org/doi/10.1126/science.ads7373" target="_blank">PromoterAI</a>  <a href='https://github.com/Illumina/PromoterAI' target='_blank'><i class='github icon'></i></a></span>,
-                                    <span style="white-space: nowrap;"><a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10187174/" target="_blank">PrimateAI-3D</a>  <a href='https://github.com/Illumina/PrimateAI-3D' target='_blank'><i class='github icon'></i></a></span>,</span><br />
+                                    <span style="white-space: nowrap;"><a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10187174/" target="_blank">PrimateAI-3D</a>  <a href='https://github.com/Illumina/PrimateAI-3D' target='_blank'><i class='github icon'></i></a></span>,
                                     <span style="white-space: nowrap;"><a href="https://www.science.org/doi/10.1126/science.adg7492" target="_blank">AlphaMissense</a>  <a href='https://github.com/google-deepmind/alphamissense' target='_blank'><i class='github icon'></i></a></span>
                                     and other scores:
                                 </div>
@@ -335,7 +335,7 @@
                         - provided a table with detailed SpliceAI scores for insertion variants whenever donor or acceptor gain is predicted to occurs within the inserted sequence itself. This addresses <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues/84" target="_blank">issue #84</a>.<br/>
                         <br />
                         <b style="color:#880000">MAJOR BUG FIX:</b> Between April and November of 2024, <b>Pangolin</b> scores were incorrectly computed for ~28% of hg38 variants and ~5% of hg19 variants due to a bug related to multiple requests being processed in parallel. This issue has now been fixed.<br/>SpliceAI scores were fine and were not affected by this bug.<br/>
-                        </br>
+                        <br/>
                         <b>November 3, 2024</b><br />
                         - added choice of Gencode <a href="https://genome.ucsc.edu/FAQ/FAQgenes.html#gencode" target="_blank">basic or comprehensive</a> transcripts<br />
                         - updated to Gencode v47 <br />
@@ -841,6 +841,34 @@
         return Math.abs(parseFloat(score)).toFixed(2)
     }
 
+    const truncateAllele = (allele, maxLength = 30) => {
+        if (allele.length <= maxLength) {
+            return allele
+        }
+        return `${allele.substring(0, maxLength)}...(${allele.length.toLocaleString()}bp)`
+    }
+
+    const formatVariantDisplay = (chrom, pos, ref, alt, maxLength = 30) => {
+        return `${chrom}:${pos} ${truncateAllele(ref, maxLength)} > ${truncateAllele(alt, maxLength)}`
+    }
+
+    const truncateVariantString = (variantStr, maxAlleleLength = 30) => {
+        // Try to parse and truncate variant in common formats
+        const patterns = [
+            /^(chr)?(\d+|[XYxy]|MT?)-(\d+)-([ACGTacgt]+)-([ACGTacgt]+)$/,  // chr1-12345-A-T
+            /^(chr)?(\d+|[XYxy]|MT?):(\d+)[: ]([ACGTacgt]+)[>\/]([ACGTacgt]+)$/,  // chr1:12345 A>T or chr1:12345:A:T
+        ]
+        for (const pattern of patterns) {
+            const match = variantStr.match(pattern)
+            if (match) {
+                const [, chrPrefix, chromNum, pos, ref, alt] = match
+                const chrom = (chrPrefix || '') + chromNum
+                return formatVariantDisplay(chrom, pos, ref, alt, maxAlleleLength)
+            }
+        }
+        return variantStr
+    }
+
     const getScoreStyle = (score) => {
         score = parseFloat(score)
 
@@ -894,22 +922,26 @@
         $("#error-box").show()
     }
 
+    const ENSEMBL_TIMEOUT_MS = 45000  // 45 second timeout for Ensembl API calls
+
     const normalizeVariant = async (variant, genomeVersion) => {
         /* Convert the given variant to a standardized "{chrom}-{pos}-{ref}-{alt}" string using a regular expression, or
          * if that fails, assume the variant is in HGVS notation and try using the Ensembl hgvs API to convert it.
+         * If the Ensembl API fails or times out and we have a locally-parsed variant, fall back to using that.
          *
          * Args:
          *  variant (string): user input text
          *  genomeVersion (string): "37" or "38"
          *
          * Return:
-         *  string: the input variant reformatted as a "{chrom}-{pos}-{ref}-{alt}" string
+         *  object: {variant, consequence, usedFallback, fallbackReason}
          */
 
         const ensemblApiPrefix = `https://${genomeVersion == '37' ? 'grch37.' : ''}rest.ensembl.org/vep/human/hgvs/`
 
         let chrom, pos, ref, alt, variantConsequence
         let matchedRegExp = variant.match(VARIANT_RE)
+        const hasLocalParse = Boolean(matchedRegExp)  // remember if we could parse locally
         let ensemblApiUrl, ensemblApiResponse, ensemblApiResponseJson
         if (matchedRegExp) {
             // was able to parse the user input using a simple reg-exp
@@ -938,10 +970,25 @@
         // try calling the Ensembl API on the user input
         try {
             try {
-                ensemblApiResponse = await makeRequest(ensemblApiUrl + "?content-type=application/json&vcf_string=1")
+                ensemblApiResponse = await makeRequest(ensemblApiUrl + "?content-type=application/json&vcf_string=1", ENSEMBL_TIMEOUT_MS)
             } catch (e) {
                 console.error(e)
-                throw Error(`Ensembl API call failed: Unable to reach server`)
+                const errorMessage = e.message || e.toString()
+                // If we have a local parse, use it as fallback
+                if (hasLocalParse) {
+                    console.warn(`Ensembl API failed, using local parse as fallback: ${chrom}-${pos}-${ref}-${alt}`)
+                    return {
+                        'variant': `${chrom}-${pos}-${ref}-${alt}`,
+                        'consequence': null,
+                        'usedFallback': true,
+                        'fallbackReason': errorMessage.includes('timed out') ? 'Ensembl API timed out' : 'Ensembl API unavailable'
+                    }
+                }
+                // HGVS notation requires Ensembl - provide helpful error message
+                if (errorMessage.includes('timed out')) {
+                    throw Error(`Ensembl API timed out. Please enter the variant in "chrom:pos ref > alt" format to work around this issue.`)
+                }
+                throw Error(`Ensembl API call failed: ${errorMessage}`)
             }
 
             ensemblApiResponseJson = await ensemblApiResponse
@@ -988,6 +1035,16 @@
 
         } catch (e) {
             console.error(e)
+            // If we have a local parse and the error is from Ensembl response (not network), use fallback
+            if (hasLocalParse) {
+                console.warn(`Ensembl API error, using local parse as fallback: ${chrom}-${pos}-${ref}-${alt}`)
+                return {
+                    'variant': `${chrom}-${pos}-${ref}-${alt}`,
+                    'consequence': null,
+                    'usedFallback': true,
+                    'fallbackReason': `Ensembl API error: ${e.message || e}`
+                }
+            }
             throw new Error(e)
         }
 
@@ -1022,12 +1079,22 @@
         */
     }
 
-    const makeRequest = (url) => {
+    const makeRequest = (url, timeoutMs = null) => {
         const method = "GET"
-        return new Promise(async (resolve, reject) => {
+        return new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest()
+            let timeoutId = null
+
+            if (timeoutMs) {
+                timeoutId = setTimeout(() => {
+                    xhr.abort()
+                    reject(new Error(`Request timed out after ${timeoutMs / 1000} seconds`))
+                }, timeoutMs)
+            }
+
             xhr.open(method, url)
             xhr.addEventListener("load", () => {
+                if (timeoutId) clearTimeout(timeoutId)
                 console.log("GET", url, xhr.status, xhr.statusText)
                 let response = {}
                 try {
@@ -1042,11 +1109,16 @@
                 resolve(response)
             })
             xhr.addEventListener("error", () => {
+                if (timeoutId) clearTimeout(timeoutId)
                 if (xhr.status == 0) {
                     reject("Unable to reach server")
                 } else {
                     reject(`${xhr.status}  ${xhr.statusText}`)
                 }
+            })
+            xhr.addEventListener("abort", () => {
+                if (timeoutId) clearTimeout(timeoutId)
+                // reject is already called by the timeout handler
             })
             //console.log('Sending request', method, url)
             xhr.send()
@@ -1174,7 +1246,7 @@
 
         variantConsequence = variantConsequence || ""
         const variantConsequenceDiv = variantConsequence ? `
-            <div display: inline-block>
+            <div style="display: inline-block">
                 <a href="https://www.ensembl.org/info/genome/variation/prediction/predicted_data.html" class="small-link" target="_blank">
                 ${variantConsequence.replace(/_/g, ' ')}
                 </a>
@@ -1200,7 +1272,7 @@
         const normalizedVariantDiv = noDifferenceDueToNormalization ? "" :
             `<br class="only-large-screen"/>
              <div style="margin-left:5px;margin-right:10px; display: inline-block; color:#333333">
-                <i>⇒ ${chrom}:${pos} ${ref}&gt;${alt}</i>
+                <i>⇒ ${chrom}:${pos} ${truncateAllele(ref)} &gt; ${truncateAllele(alt)}</i>
              </div>
              <br class="only-large-screen"/>`
 
@@ -1234,7 +1306,7 @@
             $(`#${tool.toLowerCase()}-header`).nextAll().remove()
             let row = `<tr class="${resultRowClasses.join(' ')}">
                 <td rowspan="${subRowCount}" style="vertical-align: top">
-                    <div style="margin-right:10px; display: inline-block">${variant}</div><br class="only-large-screen"/>
+                    <div style="margin-right:10px; display: inline-block">${truncateVariantString(variant)}</div><br class="only-large-screen"/>
                     ${normalizedVariantDiv}
                     <br class="only-large-screen"/>
                     ${variantConsequenceDiv}
@@ -1414,7 +1486,7 @@
 
         const queryGnomAD = async () => {
             console.log("Querying gnomAD")
-            query = `{
+            const query = `{
               variant(variantId: "${chrom.replace("chr", "")}-${pos}-${ref}-${alt}", dataset: ${getGnomadDataVersion(genomeVersion)}) {
                 in_silico_predictors {
                   id,
@@ -1501,7 +1573,7 @@
                         if (responseJson.dbnsfp[key1] && responseJson.dbnsfp[key1][key2] != null) {
                             let score = responseJson.dbnsfp[key1][key2]
                             if (Array.isArray(score)) {
-                                score = score[0]  // if its an array, get the first elegment
+                                score = score[0]  // if its an array, get the first element
                             }
                             const otherPredictorName = key1.replace("revel", "revel_max").replace("sift", "sift_max")
                             if (otherPredictorScores[otherPredictorName]) {
@@ -1527,7 +1599,7 @@
         const normalizedVariantDiv = noDifferenceDueToNormalization ? "" :
             `<br class="only-large-screen"/>
              <div style="margin-left:5px;margin-right:10px; display: inline-block; color:#333333">
-                <i>⇒ ${chrom}:${pos} ${ref}&gt;${alt}</i>
+                <i>⇒ ${chrom}:${pos} ${truncateAllele(ref)} &gt; ${truncateAllele(alt)}</i>
              </div>
              <br class="only-large-screen"/>`
 
@@ -1544,7 +1616,7 @@
         $(`#other-predictors-header`).nextAll().remove()
         let firstColumn = `
             <td class="eight wide column" style="vertical-align: top" rowSpan="${Object.keys(otherPredictorScores).length}">
-                <div style="margin-right:10px; display: inline-block">${variant}</div><br class="only-large-screen"/>
+                <div style="margin-right:10px; display: inline-block">${truncateVariantString(variant)}</div><br class="only-large-screen"/>
                 ${normalizedVariantDiv}
             </td>`
 
@@ -1746,6 +1818,9 @@
         })
 
         if (tracksToShow["igv-variant"]) {
+            // For deletions, skip the anchor base by adding 1 to start
+            const isDeletion = variantRef.length > variantAlt.length
+            const variantStart = isDeletion ? variantPos : variantPos - 1
             tracks.push({
                 name: "Variant",
                 type: "vcf",
@@ -1755,7 +1830,7 @@
                     {
                         chr: chrom,   //see createVCFVariant function in the igv.js repo for the allowed fields
                         pos: variantPos,
-                        start: variantPos - 1,
+                        start: variantStart,
                         end: variantPos + variantRef.length - 1,
                         referenceAllele: variantRef,
                         alternateBases: variantAlt,
@@ -2010,6 +2085,10 @@
         // get user inputs from form elements
         const variant = $("#search-box").val().trim()
         if (!variant) return
+        if (variant.length > 10000) {
+            showError("Input cannot be larger than 10,000 characters")
+            return
+        }
         const genomeVersion = $("input[name='hg']:checked").val().trim()
         const basicOrComprehensive = $("input[name='gencode-gene-set']:checked").val().trim()
         const maxDistance = $("#max-distance-input").val().trim()
@@ -2026,12 +2105,23 @@
         $(".ref-score-column, .alt-score-column").toggle(showRefAltColumns == "1")
 
 
+        // Check for internet connectivity before making API calls
+        if (!navigator.onLine) {
+            showError("No internet connection. Please check your network and try again.")
+            $("#submit-button").removeClass("loading disabled")
+            return
+        }
+
         // make API calls
         try {
             const normalizedVariantAndConsequence = await normalizeVariant(variant, genomeVersion)
             const normalizedVariant = normalizedVariantAndConsequence.variant
             const variantConsequence = normalizedVariantAndConsequence.consequence
 
+            // Show warning if Ensembl API fallback was used
+            if (normalizedVariantAndConsequence.usedFallback) {
+                showError(`Note: ${normalizedVariantAndConsequence.fallbackReason}. VEP consequence is unavailable.`)
+            }
 
             let [spliceaiResponseJson, pangolinResponseJson, otherPredictorsResponseJson] = await Promise.all([
                 generateSplicingResultsTable(normalizedVariant, variantConsequence, "SpliceAI", variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltColumns),
