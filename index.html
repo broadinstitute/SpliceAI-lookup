@@ -922,7 +922,7 @@
         $("#error-box").show()
     }
 
-    const ENSEMBL_TIMEOUT_MS = 45000  // 45 second timeout for Ensembl API calls
+    const ENSEMBL_TIMEOUT_MS = 90000  // 90 second timeout for Ensembl API calls
 
     const normalizeVariant = async (variant, genomeVersion) => {
         /* Convert the given variant to a standardized "{chrom}-{pos}-{ref}-{alt}" string using a regular expression, or
