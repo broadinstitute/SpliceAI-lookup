@@ -548,6 +548,12 @@ const fetchSplicingToolJson = async (normalizedVariant, variantConsequence, tool
 const renderSplicingResultsFromApiJson = (apiResponseJson, normalizedVariant, variantConsequence, tool, variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltScoreColumns) => {
     /* Render SpliceAI or Pangolin table from an API response JSON (used for single lookups and batch navigation). */
 
+    const variantTokens = (normalizedVariant || "---").split("-")
+    const chrom = variantTokens[0]
+    const pos = variantTokens[1]
+    const ref = variantTokens[2]
+    const alt = variantTokens[3]
+
     variantConsequence = variantConsequence || ""
     const variantConsequenceDiv = variantConsequence ? `
         <div display: inline-block>
