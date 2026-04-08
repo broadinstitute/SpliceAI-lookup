@@ -126,15 +126,12 @@
                         
                         <!--- variant input field --->
                         <div class="ui form" style="width:100%">
-                            <!--- variant input field --->
-                            <div class="ui input" style="padding-bottom:12px; padding-right:8px; width:100%">
-                                <input id="search-box" type="text" style="width: 100%; padding: 7px 10px" placeholder="Enter a single variant…">
-                            </div>
                             <div class="no-print" style="padding-bottom:8px; color: #555;">
-                                For several variants: use the box below (one variant per line) or upload a plain-text <code>.vcf</code>. Submit runs up to 50 variants per batch.
+                                Enter one or more variants (one per line; same formats as the examples below), or upload a plain-text <code>.vcf</code>. Up to 50 variants per submit.
+                                <span class="only-large-screen"> Ctrl+Enter (⌘+Enter on Mac) submits from the text box.</span>
                             </div>
                             <div class="ui input" style="padding-bottom:14px; padding-right:8px; width:100%">
-                                <textarea id="batch-variants-textarea" rows="5" style="width: 100%; padding: 7px 10px; font-family: inherit;" placeholder="Optional: multiple variants, one per line (same formats as examples). If this field or a VCF file is used, the single-variant field above is ignored."></textarea>
+                                <textarea id="variants-textarea" rows="6" style="width: 100%; padding: 7px 10px; font-family: inherit;" placeholder="e.g. chr8-140300616-T-G or NM_000249.4(MLH1):c.116G>A — or paste several lines"></textarea>
                             </div>
                             <div class="field" style="padding-bottom:24px;">
                                 <label for="batch-vcf-file" style="margin-right: 10px;">VCF file</label>

@@ -564,13 +564,12 @@ const renderSplicingResultsFromApiJson = (apiResponseJson, normalizedVariant, va
             <br class="only-large-screen"/>
             ` : ""
 
-    //sort transcripts
-    apiResponseJson.scores = _(apiResponseJson.scores).sortBy((s) => (  //compute sort key
+    // Sort transcripts (use a new array; do not replace apiResponseJson.scores — cached JSON is reused when switching batch variants)
+    const scoresSorted = _.sortBy(apiResponseJson.scores, (s) => (
             100*(s['t_priority'].startsWith("M") ? 0 : 1) +
             10* (s['t_type'] == "protein_coding" ? 0 : 1) +
             -1*  TRANSCRIPT_PRIORITY[s['t_priority']]
-    )).values()
-
+    ))
 
     const TRANSCRIPT_PRIORITY_VIEW_LOOKUP = {
         "MS": `<a href="https://www.ncbi.nlm.nih.gov/refseq/MANE" target="_blank">MANE Select transcript</a>`,
@@ -594,7 +593,7 @@ const renderSplicingResultsFromApiJson = (apiResponseJson, normalizedVariant, va
 
     $(`#${tool.toLowerCase()}-header`).nextAll().remove()
 
-    for (const scores of apiResponseJson.scores) {
+    for (const scores of scoresSorted) {
         const isPangolin = tool.toLowerCase() == "pangolin"
         const subRowCount = isPangolin ? 2 : 4
         const strand = scores['t_strand'] == "-" ? "minus" : "plus"
@@ -1421,13 +1420,12 @@ const resolveVariantListFromInputs = async () => {
         }
         return parseVariantsFromText(text)
     }
-    const batchText = $("#batch-variants-textarea").val().trim()
-    if (batchText) {
-        const lines = parseVariantsFromText(batchText)
+    const text = $("#variants-textarea").val().trim()
+    if (text) {
+        const lines = parseVariantsFromText(text)
         if (lines.length) return lines
     }
-    const single = $("#search-box").val().trim()
-    return single ? [single] : []
+    return []
 }
 
 const initResultTablePopups = () => {
@@ -1680,7 +1678,7 @@ const handleSubmit = async () => {
     }
 
     if (!variants.length) {
-        showError("No variants to analyze. Enter a variant in the top field, paste one or more lines in the batch box, or upload a plain-text .vcf file.")
+        showError("No variants to analyze. Enter one or more variants in the text box (one per line) or upload a plain-text .vcf file.")
         $("#submit-button").removeClass("loading disabled")
         return
     }
@@ -1740,7 +1738,7 @@ const applyUrlSettingsToFormElements = () => {
     //update the variant input box last and trigger a search
     const variantFromUrl = $.urlParam('variant')
     if (variantFromUrl) {
-        $("#search-box").val(variantFromUrl)
+        $("#variants-textarea").val(variantFromUrl)
         $("#submit-button").click()
     }
 }
@@ -1773,7 +1771,7 @@ $(document).ready(() => {
     $(".ui.checkbox").checkbox()
     $(".question, .exclamation, .score-table").popup({"on": "click"})
     $(".question, .exclamation, .score-table").css("cursor", "pointer")
-    $("#search-box").focus()
+    $("#variants-textarea").focus()
     $("#response-box").hide()
 
     // init event handlers
@@ -1785,7 +1783,13 @@ $(document).ready(() => {
         void displayBatchVariantAtIndex(parseInt($(this).val(), 10))
     })
 
-    $("#search-box, #max-distance-input").keydown((event) => {
+    $("#variants-textarea").keydown((event) => {
+        if ((event.keyCode || event.which) !== 13) return
+        if (!event.ctrlKey && !event.metaKey) return
+        event.preventDefault()
+        $("#submit-button").click()
+    })
+    $("#max-distance-input").keydown((event) => {
         if ((event.keyCode || event.which) == 13) {
             $("#submit-button").click()
         }
