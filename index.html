@@ -303,6 +303,14 @@
         <div class="one wide column only-large-screen"></div>
         <div class="fourteen wide column">
             <div class="results-div">
+                <!-- Outside #response-box so progress stays visible while results panel is hidden during batch load -->
+                <div id="batch-analysis-progress-wrap" class="batch-analysis-progress-wrap" style="display: none">
+                    <div class="batch-analysis-progress-heading">Batch analysis progress</div>
+                    <div id="batch-analysis-progress-label" class="batch-analysis-progress-label"></div>
+                    <div class="batch-analysis-progress-track">
+                        <div id="batch-analysis-progress-fill" class="batch-analysis-progress-fill"></div>
+                    </div>
+                </div>
                 <div id="response-box" style="display: none">
                     <div id="batch-nav" class="batch-variant-nav" style="display: none">
                         <button type="button" id="batch-prev-btn" class="ui button" aria-label="Previous variant">← Prev</button>
@@ -310,12 +318,6 @@
                         <button type="button" id="batch-next-btn" class="ui button" aria-label="Next variant">Next →</button>
                         <span id="batch-counter" style="margin-left: 12px; white-space: nowrap;"></span>
                         <span id="batch-progress" style="margin-left: 12px; color: #666;"></span>
-                    </div>
-                    <div id="batch-analysis-progress-wrap" class="batch-analysis-progress-wrap" style="display: none">
-                        <div id="batch-analysis-progress-label" class="batch-analysis-progress-label"></div>
-                        <div class="batch-analysis-progress-track">
-                            <div id="batch-analysis-progress-fill" class="batch-analysis-progress-fill"></div>
-                        </div>
                     </div>
                     <table id="transcript-button-table" class="ui stackable table" style="border: none !important">
                         <tbody>

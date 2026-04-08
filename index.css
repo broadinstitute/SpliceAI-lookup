@@ -147,8 +147,19 @@ th div {
 }
 
 .batch-analysis-progress-wrap {
-    margin: 0 0 14px 0;
+    margin: 0 0 16px 0;
     max-width: 560px;
+    padding: 12px 14px;
+    background: #f4f9fc;
+    border: 1px solid rgba(34, 36, 38, 0.18);
+    border-radius: 4px;
+}
+
+.batch-analysis-progress-heading {
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 8px;
+    font-size: 0.98em;
 }
 
 .batch-analysis-progress-label {

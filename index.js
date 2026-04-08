@@ -1538,7 +1538,6 @@ const updateBatchAnalysisProgressUi = (indexZeroBased, total, rawVariant) => {
 const runBatchVariantSubmit = async (variants, formOptions) => {
     lastBatchFormOptions = formOptions
     batchVariantResults = []
-    $("#batch-nav").show()
     $("#batch-progress").text("")
     $("#batch-analysis-progress-wrap").show()
     $("#batch-analysis-progress-fill").css("width", "0%")
@@ -1599,6 +1598,7 @@ const runBatchVariantSubmit = async (variants, formOptions) => {
     $("#batch-analysis-progress-fill").css("width", "0%")
     $("#batch-analysis-progress-label").empty()
     $("#batch-progress").text("")
+    $("#batch-nav").show()
     const $sel = $("#batch-variant-select").empty()
     batchVariantResults.forEach((e, i) => {
         const short = e.rawVariant.length > 72 ? `${e.rawVariant.slice(0, 69)}…` : e.rawVariant
