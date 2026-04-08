@@ -311,6 +311,29 @@
                         <span id="batch-counter" style="margin-left: 12px; white-space: nowrap;"></span>
                         <span id="batch-progress" style="margin-left: 12px; color: #666;"></span>
                     </div>
+                    <div id="batch-analysis-progress-wrap" class="batch-analysis-progress-wrap" style="display: none">
+                        <div id="batch-analysis-progress-label" class="batch-analysis-progress-label"></div>
+                        <div class="batch-analysis-progress-track">
+                            <div id="batch-analysis-progress-fill" class="batch-analysis-progress-fill"></div>
+                        </div>
+                    </div>
+                    <table id="transcript-button-table" class="ui stackable table" style="border: none !important">
+                        <tbody>
+                        <tr>
+                            <td style="padding: 10px 0px 10px 0px">
+                                <div class="ui buttons">
+                                    <button id="main-transcript-button" class="ui button" onclick="updateTranscriptButtons('main')">
+                                        <span class="main-transcript-label">MANE Select</span> Transcript
+                                    </button>
+                                    <div class="or"></div>
+                                    <button id="all-transcript-button" class="ui button" onclick="updateTranscriptButtons('all')">
+                                        All Transcripts
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
                     <table id="spliceai-table" class="ui stackable table">
                         <thead id="spliceai-header">
                         <tr>
@@ -350,24 +373,6 @@
                         </thead>
                     </table>
 
-                    <!---- transcripts table... -->
-                    <table id="transcript-button-table" class="ui stackable table" style="border: none !important">
-                        <tbody>
-                        <tr>
-                            <td style="padding: 10px 0px 10px 0px">
-                                <div class="ui buttons">
-                                    <button id="main-transcript-button" class="ui button" onclick="updateTranscriptButtons('main')">
-                                        <span class="main-transcript-label">MANE Select</span> Transcript
-                                    </button>
-                                    <div class="or"></div>
-                                    <button id="all-transcript-button" class="ui button" onclick="updateTranscriptButtons('all')">
-                                        All Transcripts
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                        </tbody>
-                    </table>
                     <!---- pangolin table... -->
                     <table id="pangolin-table" class="ui stackable table">
                         <thead id="pangolin-header">

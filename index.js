@@ -1514,15 +1514,40 @@ const displayBatchVariantAtIndex = async (idx) => {
     })
 }
 
+const updateBatchAnalysisProgressUi = (indexZeroBased, total, rawVariant) => {
+    const n = total
+    const i = indexZeroBased
+    const shortPreview =
+        rawVariant.length > 80 ? `${rawVariant.slice(0, 77)}…` : rawVariant
+    const $label = $("#batch-analysis-progress-label").empty()
+    $label.append(document.createTextNode("Analyzing variant "))
+    $label.append($("<strong>").text(`${i + 1}`))
+    $label.append(document.createTextNode(" of "))
+    $label.append($("<strong>").text(`${n}`))
+    $label.append(document.createTextNode(" — "))
+    $label.append($("<strong>").text(`${i}`))
+    $label.append(document.createTextNode(` of ${n} already analyzed`))
+    $label.append(
+        $("<div>")
+            .addClass("batch-analysis-variant-preview")
+            .css({ fontSize: "0.9em", color: "#666", marginTop: "5px" })
+            .text(shortPreview)
+    )
+}
+
 const runBatchVariantSubmit = async (variants, formOptions) => {
     lastBatchFormOptions = formOptions
     batchVariantResults = []
     $("#batch-nav").show()
     $("#batch-progress").text("")
+    $("#batch-analysis-progress-wrap").show()
+    $("#batch-analysis-progress-fill").css("width", "0%")
 
-    for (let i = 0; i < variants.length; i++) {
-        $("#batch-progress").text(`Loading variant ${i + 1} of ${variants.length}…`)
+    const n = variants.length
+
+    for (let i = 0; i < n; i++) {
         const rawVariant = variants[i]
+        updateBatchAnalysisProgressUi(i, n, rawVariant)
         const entry = {
             rawVariant,
             normalizedVariant: null,
@@ -1540,6 +1565,10 @@ const runBatchVariantSubmit = async (variants, formOptions) => {
         } catch (e) {
             entry.normalizeError = e.message
             batchVariantResults.push(entry)
+            $("#batch-analysis-progress-fill").css("width", `${((i + 1) / n) * 100}%`)
+            $("#batch-analysis-progress-label").html(
+                `Recorded variant <strong>${i + 1}</strong> of <strong>${n}</strong> (normalization failed) — <strong>${i + 1}</strong> of ${n} processed`
+            )
             continue
         }
 
@@ -1560,8 +1589,15 @@ const runBatchVariantSubmit = async (variants, formOptions) => {
         }
 
         batchVariantResults.push(entry)
+        $("#batch-analysis-progress-fill").css("width", `${((i + 1) / n) * 100}%`)
+        $("#batch-analysis-progress-label").html(
+            `Analyzed <strong>${i + 1}</strong> of <strong>${n}</strong> variants`
+        )
     }
 
+    $("#batch-analysis-progress-wrap").hide()
+    $("#batch-analysis-progress-fill").css("width", "0%")
+    $("#batch-analysis-progress-label").empty()
     $("#batch-progress").text("")
     const $sel = $("#batch-variant-select").empty()
     batchVariantResults.forEach((e, i) => {
@@ -1665,6 +1701,7 @@ const handleSubmit = async () => {
     updateVisualizationCheckboxes(false, genomeVersion)
 
     $("#submit-button").addClass("loading disabled")
+    $("#batch-analysis-progress-wrap").hide()
     $("#response-box, #spliceai-table, #pangolin-table, #transcript-button-table, #error-box").hide()
     $("#error-box").html("")
 
