@@ -5,6 +5,9 @@ let currentBatchIndex = 0
 let lastBatchFormOptions = null
 const BATCH_VARIANT_MAX = 50
 
+/** "main" = MANE Select (etc.) rows only; "all" = all transcripts — persists while switching batch variants */
+let transcriptFilterPreference = "main"
+
 // Define constants 
 const GENCODE_VERSION = "v49"
 
@@ -714,7 +717,7 @@ const renderSplicingResultsFromApiJson = (apiResponseJson, normalizedVariant, va
         })
     }
     $("#transcript-button-table").show()
-    updateTranscriptButtons(Object.keys(transcriptCategories).length > 1 ? "main" : "all")
+    applyTranscriptFilterView(transcriptFilterPreference)
 }
 
 const generateSplicingResultsTable = async (normalizedVariant, variantConsequence, tool, variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltScoreColumns) => {
@@ -990,7 +993,7 @@ const generateOtherPredictorsTable = async (normalizedVariant, variantConsequenc
     $("#other-predictors-header").after(tableRows.join(""))
 }
 
-const updateTranscriptButtons = (category) => {
+const applyTranscriptFilterView = (category) => {
     $("#main-transcript-button, #all-transcript-button").removeClass("primary")
     $(`#${category}-transcript-button`).addClass("primary")
 
@@ -1000,6 +1003,11 @@ const updateTranscriptButtons = (category) => {
     } else if (category == "all") {
         $(".spliceai-result-row").show()
     }
+}
+
+const updateTranscriptButtons = (category) => {
+    transcriptFilterPreference = category
+    applyTranscriptFilterView(category)
 }
 
 const updateVisualizationCheckboxes = (readFromLocalStorage, genomeVersion) => {
@@ -1699,6 +1707,8 @@ const handleSubmit = async () => {
     const genomeVersion = formOptions.genomeVersion
 
     updateVisualizationCheckboxes(false, genomeVersion)
+
+    transcriptFilterPreference = "main"
 
     $("#submit-button").addClass("loading disabled")
     $("#batch-analysis-progress-wrap").hide()
