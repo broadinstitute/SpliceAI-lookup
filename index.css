@@ -1,0 +1,147 @@
+:root {
+    --MAIN_TRANSCRIPT_BACKGROUND_COLOR: #eaf3ff;
+    --CODING_TRANSCRIPT_BACKGROUND_COLOR: white;
+    --NON_CODING_TRANSCRIPT_BACKGROUND_COLOR: #e5e5e5;
+}
+
+.coding-transcript {
+    background-color: var(--CODING_TRANSCRIPT_BACKGROUND_COLOR);
+}
+
+.non-coding-transcript {
+    background-color: var(--NON_CODING_TRANSCRIPT_BACKGROUND_COLOR);
+}
+
+.main-transcript {
+    background-color: var(--MAIN_TRANSCRIPT_BACKGROUND_COLOR);
+}
+
+body {
+    overflow-x: scroll;
+}
+
+body, .ui.form, label {
+    font-size: 11pt !important;
+}
+
+td {
+    padding: 5px 15px;
+}
+
+.form-checkbox {
+    margin-left: 15px;
+    margin-bottom: 10px;
+}
+
+.igv-track-checkbox {
+    margin-right: 15px;
+    margin-bottom: 10px;
+}
+
+#pangolin-header th {
+    border-top: 1px solid rgba(34, 36, 38, .15);
+}
+
+table {
+    font-size: 11pt !important;
+    border-collapse: collapse !important;
+    border-left: 0px !important;
+    border-right: 0px !important;
+    width: 100%;
+}
+
+.table-header {
+    color: #666666 !important;
+}
+
+th div {
+    font-weight: normal;
+}
+
+.small-link {
+    font-size: 10pt;
+    margin-left: 5px;
+    margin-top: 3px;
+    display: inline-block;
+}
+
+.only-large-screen {
+    display: none !important;
+}
+
+.transcript-color-legend {
+    border-style: solid;
+    min-width: 23px;
+    display: inline-block;
+    margin-left: 20px;
+}
+
+@media screen and (min-width: 770px) {
+    .only-large-screen {
+        display: block !important;
+    }
+}
+
+.results-div {
+    width: 100%;
+    position: static;
+}
+
+@media screen and (max-width: 1400px) {
+    .results-div {
+        width: 85vw;
+        position: relative;
+    }
+}
+
+@media print {
+    /* Ensure background colors and images show */
+    * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+
+    @page { 
+        size: landscape;
+    }
+
+    /* Avoid font changes */
+    body {
+        font-family: inherit !important;
+        font-size: inherit !important;
+    }
+
+    /* Prevent layout shifts */
+    html, body {
+        width: 100%;
+        height: auto;
+        overflow: visible;
+    }
+
+    /* Keep elements from breaking awkwardly */
+    .no-break {
+        break-inside: avoid !important;
+        page-break-inside: avoid !important;
+    }
+
+    /* Optional: Hide elements not needed in print */
+    .no-print {
+        display: none !important;
+    }   
+}
+
+.batch-variant-nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 10px 12px;
+    background: #f8f9fa;
+    border: 1px solid rgba(34, 36, 38, .15);
+    border-radius: 4px;
+}
+
+#batch-variant-select {
+    font-size: inherit;
+}
