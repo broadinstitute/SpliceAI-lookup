@@ -145,3 +145,29 @@ th div {
 #batch-variant-select {
     font-size: inherit;
 }
+
+.batch-analysis-progress-wrap {
+    margin: 0 0 14px 0;
+    max-width: 560px;
+}
+
+.batch-analysis-progress-label {
+    margin-bottom: 8px;
+    font-size: 0.95em;
+    color: #444;
+    line-height: 1.45;
+}
+
+.batch-analysis-progress-track {
+    height: 8px;
+    background: #e8e8e8;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.batch-analysis-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: #2185d0;
+    transition: width 0.25s ease;
+}
