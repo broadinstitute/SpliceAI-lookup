@@ -17,6 +17,9 @@ WORKDIR /app
 COPY olis_requirements.txt .
 RUN pip install --no-cache-dir --use-deprecated=legacy-resolver -r olis_requirements.txt
 
+# Static UI assets (app also works with a bind-mounted /app in compose)
+COPY index.html index.js index.css ./
+
 
 # Set environment variables (can be overridden in docker-compose)
 ENV NUM_THREADS=4
