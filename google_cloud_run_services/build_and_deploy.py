@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import platform
 import time
 
 from dotenv import load_dotenv
@@ -254,7 +255,8 @@ def main():
                         parser.error(f"Invalid genome version: {genome_version}")
 
                     run(f"wget -nc {gencode_gtf_url}")
-                    run(f"wget -nc https://hgdownload.soe.ucsc.edu/admin/exe/macOSX.x86_64/gtfToGenePred")
+                    gtf_to_gene_pred_os_dir = "macOSX.x86_64" if platform.system() == "Darwin" else "linux.x86_64"
+                    run(f"wget -nc https://hgdownload.soe.ucsc.edu/admin/exe/{gtf_to_gene_pred_os_dir}/gtfToGenePred")
                     run(f"chmod 777 gtfToGenePred")
                     gencode_gtf_paths[(genome_version, basic_or_comprehensive)] = os.path.basename(gencode_gtf_url)
         else:
