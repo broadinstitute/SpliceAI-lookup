@@ -27,6 +27,7 @@ ARG GENOME_VERSION="unknown"
 COPY docker/ref/GRCh${GENOME_VERSION} /
 COPY docker/spliceai/annotations/GRCh${GENOME_VERSION} /
 COPY server.py /
+COPY sai10k_predictions.py /
 
 ENV TF_CPP_MIN_LOG_LEVEL=3
 
