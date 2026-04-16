@@ -327,7 +327,7 @@ def main():
 
             if genome_version == "37":
                 gencode_gtf_path_without_chr_prefix = gencode_gtf_path.replace(".gtf.gz", ".without_chr_prefix.gtf.gz")
-                run(f"gzcat {gencode_gtf_path} | sed 's/chr//g' | bgzip > {gencode_gtf_path_without_chr_prefix}")
+                run(f"gunzip -c {gencode_gtf_path} | sed 's/chr//g' | bgzip > {gencode_gtf_path_without_chr_prefix}")
                 gencode_gtf_path = gencode_gtf_path_without_chr_prefix
 
             # generate Pangolin annotation files
