@@ -5,7 +5,7 @@ import gffutils
 
 parser = argparse.ArgumentParser()
 parser.add_argument("annotation_file", help="GTF file containing gene annotations. For example, from https://www.gencodegenes.org/")
-parser.add_argument("--filter", default="Ensembl_canonical", help="Only keep GTF features with the specified tags. Format: tag1,tag2,... or None to keep all features. Default: Ensembl_canonical")
+parser.add_argument("--filter", default="Ensembl_canonical,MANE_Select,MANE_Plus_Clinical", help="Only keep GTF features with the specified tags. Format: tag1,tag2,... or None to keep all features. Default: Ensembl_canonical,MANE_Select,MANE_Plus_Clinical")
 args = parser.parse_args()
 
 gtf = args.annotation_file

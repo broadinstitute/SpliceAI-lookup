@@ -1,366 +1,823 @@
 """
-SAI-10k predictions module for predicting splice consequences.
+SAI-10k-calc predictions module.
 
-This module implements heuristics from SAI-10k-calc to predict
-the likely biological consequences of splice-altering variants based
-on SpliceAI delta scores and transcript structure.
+Implements the SAI-10k-calc algorithm (Canson et al. 2023, Bioinformatics 39(4),
+btad179) to classify splicing aberrations from SpliceAI outputs. Terminal paper
+classes produced by this module:
+
+    - exon_skipping
+    - whole_intron_retention
+    - pseudoexon (pseudoexon activation)
+    - increased_exon_inclusion
+    - partial_exon_deletion
+    - partial_intron_retention
+
+When a variant doesn't match any paper terminal class, an empty aberrations
+list is returned (equivalent to Any_splicing_aberration=NO in the reference
+parser). Non-paper placeholder labels (donor_shift, *_loss, *_gain, unknown)
+are no longer emitted.
+
+The flowchart's three branches evaluate independently so a single variant can
+produce combinations (e.g. exon_skipping + partial_intron_retention per
+Canson Figure 1 D/E).
 """
 
 
-# Minimum delta score to consider significant
+# Reference-parser defaults (spliceai_parser.py: --DS_ALDL_MIN_T,
+# --DS_ALDL_MAX_T, --DS_AGDG_MIN_T, --DS_AGDG_MAX_T, all default 0.02 / 0.2).
+#
+# NOTE: paper main text (btad179 §2) and Supplementary File 1 state the
+# DS_AGDG_MAX default as 0.05 for pseudoexon gain. The reference Python/R
+# implementation instead defaults both MAX thresholds to 0.2. This module
+# follows the reference implementation so users see the same calls they'd
+# get running SAI-10k-calc locally. To match the paper text, change
+# DS_AGDG_MAX to 0.05.
+TRANSCRIPT_PRIORITY_ORDER = {
+    "MS": 3,  # MANE select transcript
+    "MP": 2,  # MANE plus clinical transcript
+    "C": 1,   # canonical transcript
+    "N": 0,
+}
+
+# Loss pair (exon skipping / whole intron retention):
+DS_ALDL_MIN = 0.02
+DS_ALDL_MAX = 0.2
+# Gain pair (pseudoexon activation / increased exon inclusion):
+DS_AGDG_MIN = 0.02
+DS_AGDG_MAX = 0.2
+
+# Single-score threshold used in the cryptic acceptor/donor subflow.
 MIN_DELTA_SCORE = 0.2
+# Raw alt-allele score threshold used by the cryptic subflow's conditions.
+ALT_SCORE_STRONG = 0.9
+# Loss-partner score threshold used in the cryptic subflow's conditions.
+LOSS_PARTNER_MIN = 0.1
+# Delta between ALT-allele scores required for cryptic activation.
+ALT_DIFF_HIGH = 0.2
+ALT_DIFF_LOW = -0.2
 
-# Score thresholds for different confidence levels
-SCORE_THRESHOLD_HIGH = 0.8
-SCORE_THRESHOLD_MEDIUM = 0.5
-SCORE_THRESHOLD_LOW = 0.2
+# Size constraints on predicted gained exons (pseudoexon).
+GEX_SIZE_MIN = 25
+GEX_SIZE_MAX = 500
+
+# d_50bp in Canson et al.: loss-branch aberrations require the variant to be
+# within 50 bp of an exon-intron junction (exonic variants trivially qualify).
+# Pseudoexon activation requires the variant to be > 50 bp into an intron.
+DISTANCE_EXON_MAX_LOSS = 50
+DISTANCE_NATIVE_SITE_MIN_PSEUDOEXON = 50
+# Partial intron retention requires both the variant and the retained segment
+# to be within 250 bp of an exon-intron junction.
+DISTANCE_PARTIAL_RETENTION_MAX = 250
 
 
-def sai10k_find_affected_region(variant_pos, exon_starts, exon_ends):
+
+def _coerce_float(value):
+    if value is None or value == '':
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _coerce_int(value):
+    if value is None or value == '':
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return 0
+
+
+def sai10k_find_affected_region(variant_pos, exon_starts, exon_ends, strand='+'):
     """
-    Determine which exon or intron contains the variant.
+    Locate the variant in an exon or intron, with biological (transcript-order)
+    numbering on reverse-strand genes.
 
-    Args:
-        variant_pos: 1-based genomic position of the variant
-        exon_starts: List of 1-based exon start positions
-        exon_ends: List of 1-based exon end positions
-
-    Returns:
-        dict with keys:
-            'region_type': 'exon' or 'intron'
-            'region_number': 1-based exon or intron number
-            'distance_to_boundary': Distance to nearest exon boundary
-            'nearest_boundary': 'donor' or 'acceptor'
+    Returns dict with:
+        region_type: 'exon' or 'intron'
+        region_number: 1-based biological exon/intron number
+        _genomic_index: 0-based index into exon_starts/exon_ends (internal use)
+        distance_to_boundary: bp to nearest exon-intron junction
+                              (0 for exonic variants)
+        nearest_boundary: 'donor' or 'acceptor' in transcript semantics
     """
     if not exon_starts or not exon_ends:
         return None
 
     num_exons = len(exon_starts)
+    is_reverse = strand == '-'
 
-    # Check each exon
     for i in range(num_exons):
         e_start = exon_starts[i]
         e_end = exon_ends[i]
-
         if e_start <= variant_pos <= e_end:
-            # Variant is in this exon
             dist_to_start = variant_pos - e_start
             dist_to_end = e_end - variant_pos
-
+            exon_num = num_exons - i if is_reverse else i + 1
+            if is_reverse:
+                nearest = 'donor' if dist_to_start < dist_to_end else 'acceptor'
+            else:
+                nearest = 'acceptor' if dist_to_start < dist_to_end else 'donor'
             return {
                 'region_type': 'exon',
-                'region_number': i + 1,
-                'distance_to_boundary': min(dist_to_start, dist_to_end),
-                'nearest_boundary': 'acceptor' if dist_to_start < dist_to_end else 'donor',
+                'region_number': exon_num,
+                '_genomic_index': i,
+                'distance_to_boundary': 0,  # variant is IN the exon
+                'nearest_boundary': nearest,
             }
 
-    # Check each intron (between exons)
     for i in range(num_exons - 1):
         intron_start = exon_ends[i] + 1
         intron_end = exon_starts[i + 1] - 1
-
         if intron_start <= variant_pos <= intron_end:
-            dist_to_donor = variant_pos - intron_start
-            dist_to_acceptor = intron_end - variant_pos
-
+            # Distance to nearest EXON boundary (not intron boundary).
+            # Reference parser (R:857-871) computes d_from_exon as
+            # POS - eEnd / eStart - POS. Using exon_ends[i] and
+            # exon_starts[i+1] directly avoids the off-by-one that
+            # measuring from intron_start (= exon_ends[i]+1) introduces.
+            dist_to_upstream_exon = variant_pos - exon_ends[i]
+            dist_to_downstream_exon = exon_starts[i + 1] - variant_pos
+            intron_num = num_exons - 1 - i if is_reverse else i + 1
+            if is_reverse:
+                nearest = 'acceptor' if dist_to_upstream_exon < dist_to_downstream_exon else 'donor'
+            else:
+                nearest = 'donor' if dist_to_upstream_exon < dist_to_downstream_exon else 'acceptor'
             return {
                 'region_type': 'intron',
-                'region_number': i + 1,
-                'distance_to_boundary': min(dist_to_donor, dist_to_acceptor),
-                'nearest_boundary': 'donor' if dist_to_donor < dist_to_acceptor else 'acceptor',
+                'region_number': intron_num,
+                '_genomic_index': i,
+                'distance_to_boundary': min(dist_to_upstream_exon, dist_to_downstream_exon),
+                'nearest_boundary': nearest,
             }
 
     return None
 
 
-def sai10k_determine_aberration_type(ds_ag, ds_al, ds_dg, ds_dl, dp_ag, dp_al, dp_dg, dp_dl,
-                                     variant_pos, exon_starts, exon_ends, strand):
+def _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_ends, strand):
     """
-    Determine the likely splice aberration type based on delta scores.
+    Return the native splice-site genomic positions and their delta-positions
+    (offset from the variant) for the exon "associated" with the variant.
 
-    Args:
-        ds_ag, ds_al, ds_dg, ds_dl: Delta scores for acceptor/donor gain/loss
-        dp_ag, dp_al, dp_dg, dp_dl: Delta positions for acceptor/donor gain/loss
-        variant_pos: 1-based genomic position
-        exon_starts, exon_ends: Lists of exon boundaries
-        strand: '+' or '-'
+    For an exonic variant, the associated exon is the containing exon.
+    For an intronic variant, the associated exon is the CLOSEST flanking exon
+    (smaller distance_to_boundary). The reference parser iterates per-exon and
+    checks each; this simplification picks one exon per variant.
 
-    Returns:
-        dict with predicted aberration info
+    Both acceptor and donor come from the SAME exon, so the increased_exon_inclusion
+    condition (DP_AG == DP_NA AND DP_DG == DP_ND) is geometrically satisfiable.
+
+    Also returns the adjacent exons' boundaries (prev_eend, prev_estart,
+    next_estart, next_eend) in genomic order, used by the cryptic subflow's
+    orientation checks.
+
+    Returns dict with:
+        geo_na, geo_nd: 1-based genomic positions of native acceptor / donor
+                        of the associated exon
+        dp_na, dp_nd:   offsets from variant_pos
+        native_exon_size: size of the associated native exon (bp)
+        assoc_idx:      0-based genomic index of the associated exon
+        prev_eend, prev_estart, next_estart, next_eend: adjacent exon
+                        boundaries (genomic order), or None at the transcript ends
     """
-    # Convert scores to float
-    ds_ag = float(ds_ag) if ds_ag else 0
-    ds_al = float(ds_al) if ds_al else 0
-    ds_dg = float(ds_dg) if ds_dg else 0
-    ds_dl = float(ds_dl) if ds_dl else 0
+    if not affected_region or not exon_starts:
+        return None
 
-    # Find max delta score
+    idx = affected_region['_genomic_index']
+    is_reverse = strand == '-'
+    num_exons = len(exon_starts)
+
+    if affected_region['region_type'] == 'exon':
+        assoc_idx = idx
+    else:
+        # Intronic: pick the closer flanking exon.
+        # Intron `idx` lies between genomic exons `idx` and `idx + 1`.
+        intron_start = exon_ends[idx] + 1
+        intron_end = exon_starts[idx + 1] - 1
+        dist_to_upstream = variant_pos - intron_start   # from exon idx's 3' end
+        dist_to_downstream = intron_end - variant_pos   # from exon idx+1's 5' end
+        assoc_idx = idx if dist_to_upstream <= dist_to_downstream else idx + 1
+
+    exon_start = exon_starts[assoc_idx]
+    exon_end = exon_ends[assoc_idx]
+    # On '+' strand: acceptor at exon_start (5' end of exon), donor at exon_end (3' end).
+    # On '-' strand: roles flip (biological 5' end is at exon_end, 3' end at exon_start).
+    if is_reverse:
+        geo_na = exon_end
+        geo_nd = exon_start
+    else:
+        geo_na = exon_start
+        geo_nd = exon_end
+
+    prev_estart = exon_starts[assoc_idx - 1] if assoc_idx > 0 else None
+    prev_eend = exon_ends[assoc_idx - 1] if assoc_idx > 0 else None
+    next_estart = exon_starts[assoc_idx + 1] if assoc_idx + 1 < num_exons else None
+    next_eend = exon_ends[assoc_idx + 1] if assoc_idx + 1 < num_exons else None
+
+    return {
+        'geo_na': geo_na,
+        'geo_nd': geo_nd,
+        'dp_na': geo_na - variant_pos,
+        'dp_nd': geo_nd - variant_pos,
+        'native_exon_size': exon_end - exon_start + 1,
+        'assoc_idx': assoc_idx,
+        'prev_estart': prev_estart,
+        'prev_eend': prev_eend,
+        'next_estart': next_estart,
+        'next_eend': next_eend,
+    }
+
+
+def _find_exons_between_loss_positions(geo_al, geo_dl, strand, exon_starts, exon_ends):
+    """
+    Given the predicted acceptor-loss and donor-loss genomic positions, find
+    the exon(s) whose native splice sites they match, and compute the total
+    lost exon size + biological exon numbers for display.
+
+    The reference parser's `find_exon_lost_gain()` matches GEO_AL to an
+    exon_start (on '+' strand) or exon_end (on '-' strand), and GEO_DL to the
+    opposite boundary. For multi-exon skipping, GEO_AL is at a more-5' exon's
+    acceptor and GEO_DL is at a more-3' exon's donor (in transcript order).
+
+    Returns dict with:
+        genomic_indices: list of 0-based genomic exon indices bracketed by the
+                         losses, or [] if no match could be made
+        biological_numbers: list of 1-based biological exon numbers (sorted in
+                            transcript order) for display
+        total_size: sum of exon sizes (bp)
+        match: True if at least one exon was identified
+    """
+    if not exon_starts or not exon_ends:
+        return {'genomic_indices': [], 'biological_numbers': [], 'total_size': 0, 'match': False}
+
+    num_exons = len(exon_starts)
+    is_reverse = strand == '-'
+    # Exact match (reference parser behavior). SpliceAI returns splice-site
+    # positions exactly at exon boundaries; a wider tolerance risks matching
+    # the wrong exon in compact gene structures.
+    tolerance = 0
+
+    # On '+' strand: acceptor_loss is at exon_start (1-based closed), donor_loss
+    # at exon_end. On '-' strand: acceptor_loss is at exon_end, donor_loss at
+    # exon_start.
+    acceptor_candidates = []
+    donor_candidates = []
+    for i in range(num_exons):
+        if is_reverse:
+            acceptor_pos = exon_ends[i]
+            donor_pos = exon_starts[i]
+        else:
+            acceptor_pos = exon_starts[i]
+            donor_pos = exon_ends[i]
+        if abs(acceptor_pos - geo_al) <= tolerance:
+            acceptor_candidates.append(i)
+        if abs(donor_pos - geo_dl) <= tolerance:
+            donor_candidates.append(i)
+
+    if not acceptor_candidates or not donor_candidates:
+        return {'genomic_indices': [], 'biological_numbers': [], 'total_size': 0, 'match': False}
+
+    # Pick the pair that makes biological sense. In transcript order, the
+    # acceptor should bound the 5' end of the skipped block and the donor
+    # should bound the 3' end; single-exon skipping has acceptor_idx == donor_idx.
+    # Try to find the tightest bracket.
+    best = None
+    for a_idx in acceptor_candidates:
+        for d_idx in donor_candidates:
+            lo = min(a_idx, d_idx)
+            hi = max(a_idx, d_idx)
+            span = hi - lo
+            if best is None or span < best[0]:
+                best = (span, lo, hi)
+
+    if best is None:
+        return {'genomic_indices': [], 'biological_numbers': [], 'total_size': 0, 'match': False}
+
+    _, lo, hi = best
+    genomic_indices = list(range(lo, hi + 1))
+    biological_numbers = [num_exons - i if is_reverse else i + 1 for i in genomic_indices]
+    biological_numbers.sort()
+    total_size = sum(exon_ends[i] - exon_starts[i] + 1 for i in genomic_indices)
+
+    return {
+        'genomic_indices': genomic_indices,
+        'biological_numbers': biological_numbers,
+        'total_size': total_size,
+        'match': True,
+    }
+
+
+def sai10k_determine_aberrations(
+        ds_ag, ds_al, ds_dg, ds_dl,
+        dp_ag, dp_al, dp_dg, dp_dl,
+        ds_ag_alt, ds_al_alt, ds_dg_alt, ds_dl_alt,
+        variant_pos, exon_starts, exon_ends, strand,
+):
+    """
+    Classify splice aberration(s) per Canson et al. 2023 flowchart v1.1.
+
+    Returns a list of aberration dicts (possibly empty). Each dict contains:
+        aberration_type: one of the six paper terminal classes
+            (exon_skipping, whole_intron_retention, pseudoexon,
+             increased_exon_inclusion, partial_exon_deletion,
+             partial_intron_retention).
+        description: short human-readable description.
+        max_delta_score: driving delta score.
+        affected_region: dict from sai10k_find_affected_region, or None.
+        geo_ag, geo_al, geo_dg, geo_dl: 1-based genomic positions of predicted
+            acceptor-gain, acceptor-loss, donor-gain, donor-loss sites.
+        _branch: internal tag ('loss', 'gain_A', 'gain_B_acceptor', 'gain_B_donor')
+        _native: dict with geo_na/geo_nd/dp_na/dp_nd/native_exon_size (or None)
+
+    The paper flowchart's three branches (LOSS, GAIN Subflow A, GAIN Subflow B)
+    evaluate INDEPENDENTLY; a single variant can produce up to one aberration
+    from each.
+    """
+    ds_ag = _coerce_float(ds_ag)
+    ds_al = _coerce_float(ds_al)
+    ds_dg = _coerce_float(ds_dg)
+    ds_dl = _coerce_float(ds_dl)
+    ds_ag_alt = _coerce_float(ds_ag_alt)
+    ds_al_alt = _coerce_float(ds_al_alt)
+    ds_dg_alt = _coerce_float(ds_dg_alt)
+    ds_dl_alt = _coerce_float(ds_dl_alt)
+    dp_ag = _coerce_int(dp_ag)
+    dp_al = _coerce_int(dp_al)
+    dp_dg = _coerce_int(dp_dg)
+    dp_dl = _coerce_int(dp_dl)
+
     max_score = max(ds_ag, ds_al, ds_dg, ds_dl)
-    if max_score < MIN_DELTA_SCORE:
-        return {
-            'aberration_type': 'none',
-            'confidence': 'low',
-            'description': 'No significant splice effect predicted',
-        }
+    # Short-circuit only when every score is below the lowest paper threshold
+    # (loss/gain paired MIN = 0.02). Below that, no paper branch can fire.
+    if max_score < DS_ALDL_MIN:
+        return []
 
-    # Determine dominant effect
-    affected_region = sai10k_find_affected_region(variant_pos, exon_starts, exon_ends)
+    affected_region = sai10k_find_affected_region(variant_pos, exon_starts, exon_ends, strand)
+    native = _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_ends, strand)
 
-    # Calculate genomic positions of predicted splice changes
-    geo_ag = variant_pos + dp_ag if dp_ag else None
-    geo_al = variant_pos + dp_al if dp_al else None
-    geo_dg = variant_pos + dp_dg if dp_dg else None
-    geo_dl = variant_pos + dp_dl if dp_dl else None
+    geo_ag = variant_pos + dp_ag
+    geo_al = variant_pos + dp_al
+    geo_dg = variant_pos + dp_dg
+    geo_dl = variant_pos + dp_dl
 
-    result = {
-        'max_delta_score': max_score,
-        'affected_region': affected_region,
-        'geo_ag': geo_ag,
-        'geo_al': geo_al,
-        'geo_dg': geo_dg,
-        'geo_dl': geo_dl,
-    }
+    strand_sign = -1 if strand == '-' else 1
 
-    # Determine confidence level
-    if max_score >= SCORE_THRESHOLD_HIGH:
-        result['confidence'] = 'high'
-    elif max_score >= SCORE_THRESHOLD_MEDIUM:
-        result['confidence'] = 'medium'
+    # d_from_exon: variant's distance from nearest exon-intron junction. 0 for
+    # exonic variants; positive inside an intron.
+    if affected_region and affected_region['region_type'] == 'exon':
+        d_from_exon = 0
+    elif affected_region:
+        d_from_exon = affected_region['distance_to_boundary']
     else:
-        result['confidence'] = 'low'
+        d_from_exon = None  # couldn't locate variant
 
-    # Classify aberration type based on score patterns
-    if ds_dl >= MIN_DELTA_SCORE and ds_al >= MIN_DELTA_SCORE:
-        # Donor loss + Acceptor loss = likely exon skipping
-        result['aberration_type'] = 'exon_skipping'
-        result['description'] = 'Predicted exon skipping (donor and acceptor loss)'
+    def make(ab_type, description, driving_score, branch):
+        return {
+            'aberration_type': ab_type,
+            'description': description,
+            'max_delta_score': driving_score,
+            'affected_region': affected_region,
+            'geo_ag': geo_ag,
+            'geo_al': geo_al,
+            'geo_dg': geo_dg,
+            'geo_dl': geo_dl,
+            '_branch': branch,
+            '_native': native,
+            '_strand': strand,
+        }
 
-    elif ds_dg >= MIN_DELTA_SCORE and ds_ag >= MIN_DELTA_SCORE:
-        # Donor gain + Acceptor gain = likely pseudoexon activation
-        if affected_region and affected_region['region_type'] == 'intron':
-            result['aberration_type'] = 'pseudoexon'
-            result['description'] = 'Predicted pseudoexon activation (new splice sites in intron)'
+    aberrations = []
+
+    # -------------------------------------------------------------------
+    # LOSS branch: exon_skipping / whole_intron_retention
+    # Gated by paired min/max thresholds AND d_50bp (variant within 50 bp of
+    # an exon-intron junction). The d_50bp gate suppresses deep-intronic
+    # calls, consistent with spliceai_parser.py:1416-1421.
+    # -------------------------------------------------------------------
+    loss_paired_pass = (
+        min(ds_dl, ds_al) >= DS_ALDL_MIN
+        and max(ds_dl, ds_al) >= DS_ALDL_MAX
+    )
+    loss_d50_pass = d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS
+
+    if loss_paired_pass and loss_d50_pass:
+        driving = max(ds_dl, ds_al)
+        # Canson orientation gate:
+        #   DP_AL*Strand < DP_DL*Strand  -> exon skipping
+        #   else                          -> whole intron retention
+        if dp_al * strand_sign < dp_dl * strand_sign:
+            aberrations.append(make(
+                'exon_skipping',
+                'Predicted exon skipping (donor and acceptor loss)',
+                driving, 'loss'))
         else:
-            result['aberration_type'] = 'cryptic_splice_site'
-            result['description'] = 'Predicted cryptic splice site activation'
+            aberrations.append(make(
+                'whole_intron_retention',
+                'Predicted whole intron retention (donor and acceptor loss)',
+                driving, 'loss'))
 
-    elif ds_dl >= MIN_DELTA_SCORE and ds_dg >= MIN_DELTA_SCORE:
-        # Donor loss + Donor gain = donor site shift
-        result['aberration_type'] = 'donor_shift'
-        if geo_dg and geo_dl:
-            shift = geo_dg - geo_dl
-            if shift > 0:
-                result['description'] = f'Predicted donor site shift ({abs(shift)}bp downstream)'
-            else:
-                result['description'] = f'Predicted donor site shift ({abs(shift)}bp upstream)'
+    # -------------------------------------------------------------------
+    # GAIN Subflow A: pseudoexon / increased_exon_inclusion
+    # -------------------------------------------------------------------
+    gain_paired_pass = (
+        min(ds_dg, ds_ag) >= DS_AGDG_MIN
+        and max(ds_dg, ds_ag) >= DS_AGDG_MAX
+    )
+    orientation_pass = dp_ag * strand_sign < dp_dg * strand_sign
+
+    if gain_paired_pass and orientation_pass:
+        gex_size = (dp_dg - dp_ag) * strand_sign + 1
+        driving = max(ds_dg, ds_ag)
+
+        # Identify which intron AG and DG fall into (same-intron check).
+        def intron_of(position):
+            for i in range(len(exon_starts) - 1):
+                if exon_ends[i] < position < exon_starts[i + 1]:
+                    return i
+            return None
+
+        ag_intron = intron_of(geo_ag)
+        dg_intron = intron_of(geo_dg)
+
+        # Distances from AG and DG to the boundaries of their host intron.
+        # The reference parser checks distance from the intron boundaries
+        # (i.e. the flanking exon edges), not from all splice sites in the
+        # transcript. Using only the host intron avoids false negatives in
+        # compact gene structures where a non-flanking exon boundary
+        # happens to be within 50 bp.
+        if ag_intron is not None:
+            ag_dist_to_native = min(
+                abs(geo_ag - exon_ends[ag_intron]),
+                abs(geo_ag - exon_starts[ag_intron + 1]),
+            )
         else:
-            result['description'] = 'Predicted donor site shift'
-
-    elif ds_al >= MIN_DELTA_SCORE and ds_ag >= MIN_DELTA_SCORE:
-        # Acceptor loss + Acceptor gain = acceptor site shift
-        result['aberration_type'] = 'acceptor_shift'
-        if geo_ag and geo_al:
-            shift = geo_ag - geo_al
-            if shift > 0:
-                result['description'] = f'Predicted acceptor site shift ({abs(shift)}bp downstream)'
-            else:
-                result['description'] = f'Predicted acceptor site shift ({abs(shift)}bp upstream)'
+            ag_dist_to_native = None
+        if dg_intron is not None:
+            dg_dist_to_native = min(
+                abs(geo_dg - exon_ends[dg_intron]),
+                abs(geo_dg - exon_starts[dg_intron + 1]),
+            )
         else:
-            result['description'] = 'Predicted acceptor site shift'
+            dg_dist_to_native = None
 
-    elif ds_dl >= MIN_DELTA_SCORE:
-        # Donor loss only - could be intron retention or exon skipping
-        result['aberration_type'] = 'donor_loss'
-        result['description'] = 'Predicted donor site loss (may cause intron retention or exon skipping)'
+        pseudoexon_conditions = (
+            GEX_SIZE_MIN <= gex_size <= GEX_SIZE_MAX
+            and d_from_exon is not None
+            and d_from_exon > DISTANCE_NATIVE_SITE_MIN_PSEUDOEXON
+            and ag_dist_to_native is not None
+            and ag_dist_to_native > DISTANCE_NATIVE_SITE_MIN_PSEUDOEXON
+            and dg_dist_to_native is not None
+            and dg_dist_to_native > DISTANCE_NATIVE_SITE_MIN_PSEUDOEXON
+            and ag_intron is not None
+            and dg_intron is not None
+            and ag_intron == dg_intron
+        )
 
-    elif ds_al >= MIN_DELTA_SCORE:
-        # Acceptor loss only
-        result['aberration_type'] = 'acceptor_loss'
-        result['description'] = 'Predicted acceptor site loss (may cause intron retention or exon skipping)'
+        if pseudoexon_conditions:
+            aberrations.append(make(
+                'pseudoexon',
+                'Predicted pseudoexon activation',
+                driving, 'gain_A'))
+        elif native and native['native_exon_size'] and gex_size == native['native_exon_size']:
+            # Increased exon inclusion: the gained exon exactly matches a
+            # native exon AND the gain positions coincide with native sites.
+            if dp_ag == native['dp_na'] and dp_dg == native['dp_nd']:
+                aberrations.append(make(
+                    'increased_exon_inclusion',
+                    'Predicted increased exon inclusion',
+                    driving, 'gain_A'))
 
-    elif ds_dg >= MIN_DELTA_SCORE:
-        # Donor gain only
-        result['aberration_type'] = 'donor_gain'
-        result['description'] = 'Predicted cryptic donor site activation'
+    # -------------------------------------------------------------------
+    # GAIN Subflow B: cryptic acceptor / donor activation
+    # Produces partial_exon_deletion or partial_intron_retention.
+    # Uses raw alt-allele site scores (DS_*_ALT) per flowchart conditions.
+    # Evaluates INDEPENDENTLY of Subflow A (flowchart: parallel subflows);
+    # the reference parser likewise emits pseudoexon and partial calls
+    # independently (spliceai_parser.py:1392-1463).
+    # -------------------------------------------------------------------
+    # Top-level entry gate from the reference parser: DS_AGDG_MAX > AGDG_T
+    # (default AGDG_T = 0). Require at least one gain score to be positive.
+    if max(ds_ag, ds_dg) > 0 and native is not None:
+        # "Match" checks: does the predicted gain position exactly coincide
+        # with the associated exon's native splice site? Reference parser
+        # names these DG_native_match (donor-at-native-donor) and
+        # DG_acceptor_match (acceptor-at-native-acceptor).
+        dg_native_match = geo_dg == native['geo_nd']
+        dg_acceptor_match = geo_ag == native['geo_na']
 
-    elif ds_ag >= MIN_DELTA_SCORE:
-        # Acceptor gain only
-        result['aberration_type'] = 'acceptor_gain'
-        result['description'] = 'Predicted cryptic acceptor site activation'
+        acceptor_diff = ds_ag_alt - ds_al_alt
+        donor_diff = ds_dg_alt - ds_dl_alt
 
+        # ALT-score conditions — two-branch OR, one for "cryptic overwhelms a
+        # weak native" and one for "strong delta with no native suppression".
+        cryptic_acceptor_check = (
+            (ds_ag < MIN_DELTA_SCORE and ds_al > LOSS_PARTNER_MIN
+             and ds_ag_alt >= ALT_SCORE_STRONG and acceptor_diff >= ALT_DIFF_HIGH)
+            or
+            (ds_ag >= MIN_DELTA_SCORE and acceptor_diff > ALT_DIFF_LOW)
+        )
+        cryptic_donor_check = (
+            (ds_dg < MIN_DELTA_SCORE and ds_dl > LOSS_PARTNER_MIN
+             and ds_dg_alt >= ALT_SCORE_STRONG and donor_diff >= ALT_DIFF_HIGH)
+            or
+            (ds_dg >= MIN_DELTA_SCORE and donor_diff > ALT_DIFF_LOW)
+        )
+
+        # Reference parser's side-selection logic (spliceai_parser.py:1312-1328):
+        #   Cryptic acceptor fires iff:
+        #       (DG_native_match=PASS AND DG_acceptor_match=FAIL)            # donor at native, acceptor is cryptic
+        #     OR (DG_native_match=FAIL AND DG_acceptor_match=FAIL AND DS_AG > DS_DG)
+        #   Cryptic donor fires iff:
+        #       (DG_native_match=FAIL AND DG_acceptor_match=PASS)            # acceptor at native, donor is cryptic
+        #     OR (DG_native_match=FAIL AND DG_acceptor_match=FAIL AND DS_AG < DS_DG)
+        #   Neither fires when both positions match native (=,=) or when DS_AG == DS_DG at (≠,≠).
+        activate_acceptor = cryptic_acceptor_check and (
+            (dg_native_match and not dg_acceptor_match)
+            or (not dg_native_match and not dg_acceptor_match and ds_ag > ds_dg)
+        )
+        activate_donor = cryptic_donor_check and (
+            (not dg_native_match and dg_acceptor_match)
+            or (not dg_native_match and not dg_acceptor_match and ds_ag < ds_dg)
+        )
+
+        dp_na = native['dp_na']
+        dp_nd = native['dp_nd']
+
+        if activate_acceptor and _cryptic_acceptor_orientation_ok(geo_ag, native, is_reverse=strand == '-'):
+            # partial_size = (DP_AG*Strand) - (DP_NA*Strand)
+            partial_size = (dp_ag - dp_na) * strand_sign
+            driving = ds_ag  # use delta score, not raw ALT score
+            if (partial_size > 0 and partial_size < native['native_exon_size']
+                    and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
+                aberrations.append(make(
+                    'partial_exon_deletion',
+                    "5' partial exon deletion (cryptic acceptor)",
+                    driving, 'gain_B_acceptor'))
+                aberrations[-1]['_partial_size'] = partial_size
+            elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
+                  and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
+                aberrations.append(make(
+                    'partial_intron_retention',
+                    "5' partial intron retention (cryptic acceptor)",
+                    driving, 'gain_B_acceptor'))
+                # Store signed partial_size (negative = retention); formatters take abs() for display.
+                aberrations[-1]['_partial_size'] = partial_size
+
+        if activate_donor and _cryptic_donor_orientation_ok(geo_dg, native, is_reverse=strand == '-'):
+            # partial_size = (DP_ND*Strand) - (DP_DG*Strand)
+            partial_size = (dp_nd - dp_dg) * strand_sign
+            driving = ds_dg  # use delta score, not raw ALT score
+            if (partial_size > 0 and partial_size < native['native_exon_size']
+                    and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
+                aberrations.append(make(
+                    'partial_exon_deletion',
+                    "3' partial exon deletion (cryptic donor)",
+                    driving, 'gain_B_donor'))
+                aberrations[-1]['_partial_size'] = partial_size
+            elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
+                  and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
+                aberrations.append(make(
+                    'partial_intron_retention',
+                    "3' partial intron retention (cryptic donor)",
+                    driving, 'gain_B_donor'))
+                aberrations[-1]['_partial_size'] = partial_size
+
+    return aberrations
+
+
+def _cryptic_acceptor_orientation_ok(geo_ag, native, is_reverse):
+    """
+    Reference R parser (spliceAI_parser.R:953):
+        + strand: prev_eEnd - GEO_AG < 0      (GEO_AG past prev exon's donor)
+        - strand: GEO_AG - prev_eStart < 0     (in R biological order)
+
+    The R parser sorts '-' strand exons in descending genomic order, so its
+    `prev_` / `next_` follow transcript (biological) order. Our `native` dict
+    stores adjacent exon coords in ASCENDING GENOMIC order. Therefore on '-'
+    strand we must swap: use `next_*` (genomically next = biologically previous).
+    """
+    if native is None:
+        return True
+    if is_reverse:
+        # Biologically "prev" = genomically "next" for - strand.
+        bio_prev_estart = native.get('next_estart')
+        if bio_prev_estart is None:
+            return True
+        return geo_ag - bio_prev_estart < 0
     else:
-        result['aberration_type'] = 'unknown'
-        result['description'] = 'Splice effect predicted but type unclear'
+        prev_eend = native.get('prev_eend')
+        if prev_eend is None:
+            return True
+        return prev_eend - geo_ag < 0
 
-    return result
 
-
-def sai10k_predict_frameshift(aberration_type, aberration_info, cds_start, cds_end,
-                              exon_starts, exon_ends, exon_frames):
+def _cryptic_donor_orientation_ok(geo_dg, native, is_reverse):
     """
-    Predict whether the splice aberration causes a frameshift.
+    Reference R parser (spliceAI_parser.R:954):
+        + strand: GEO_DG - next_eStart < 0    (GEO_DG before next exon's acceptor)
+        - strand: next_eEnd - GEO_DG < 0       (in R biological order)
 
-    Args:
-        aberration_type: Type of aberration from determine_aberration_type()
-        aberration_info: Full info dict from determine_aberration_type()
-        cds_start, cds_end: CDS boundaries (1-based)
-        exon_starts, exon_ends: Exon boundaries (1-based)
-        exon_frames: Frame values for each exon (-1 for non-coding)
-
-    Returns:
-        dict with frameshift prediction
+    Same prev/next swap as _cryptic_acceptor_orientation_ok.
     """
-    if not cds_start or not cds_end:
-        return {
-            'affects_coding': False,
-            'frameshift': None,
-            'description': 'Non-coding transcript',
-        }
+    if native is None:
+        return True
+    if is_reverse:
+        # Biologically "next" = genomically "prev" for - strand.
+        bio_next_eend = native.get('prev_eend')
+        if bio_next_eend is None:
+            return True
+        return bio_next_eend - geo_dg < 0
+    else:
+        next_estart = native.get('next_estart')
+        if next_estart is None:
+            return True
+        return geo_dg - next_estart < 0
 
-    if not exon_frames:
-        return {
-            'affects_coding': None,
-            'frameshift': None,
-            'description': 'Exon frame information not available',
-        }
 
-    affected_region = aberration_info.get('affected_region')
-    if not affected_region:
-        return {
-            'affects_coding': None,
-            'frameshift': None,
-            'description': 'Could not determine affected region',
-        }
+def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon_ends):
+    """
+    Mutate `aberration` in place with size / frameshift / coding fields.
 
-    # Check if the affected region overlaps with CDS
-    region_type = affected_region['region_type']
-    region_num = affected_region['region_number']
+    Adds:
+        affects_coding: True | False | None
+        frameshift: True | False | None
+        size: integer bp when determinable
+        size_type: 'exon' | 'intron' | 'pseudoexon' | 'partial'
+        frameshift_description: formatted string for display
+        exon_numbers: list of biological exon numbers (for exon_skipping)
+    """
+    # Treat cds_start==cds_end as non-coding (genePred encodes non-coding
+    # transcripts with coincident cds start/end; after 0-based-to-1-based
+    # conversion the range collapses or inverts).
+    is_coding_transcript = (
+        cds_start is not None and cds_end is not None and cds_start < cds_end
+    )
 
-    if region_type == 'exon':
-        exon_idx = region_num - 1
-        if exon_idx < len(exon_starts):
-            exon_start = exon_starts[exon_idx]
-            exon_end = exon_ends[exon_idx]
+    aberration_type = aberration['aberration_type']
 
-            # Check if exon overlaps CDS
-            if exon_end < cds_start or exon_start > cds_end:
-                return {
-                    'affects_coding': False,
-                    'frameshift': None,
-                    'description': 'Affected exon is outside coding region',
-                }
+    geo_al = aberration.get('geo_al')
+    geo_dl = aberration.get('geo_dl')
+    geo_ag = aberration.get('geo_ag')
+    geo_dg = aberration.get('geo_dg')
+    affected_region = aberration.get('affected_region')
 
-    elif region_type == 'intron':
-        intron_idx = region_num - 1
-        if intron_idx < len(exon_starts) - 1:
-            intron_start = exon_ends[intron_idx] + 1
-            intron_end = exon_starts[intron_idx + 1] - 1
-
-            # Check if intron is within CDS region
-            if intron_end < cds_start or intron_start > cds_end:
-                return {
-                    'affects_coding': False,
-                    'frameshift': None,
-                    'description': 'Affected intron is outside coding region',
-                }
-
-    # Predict frameshift based on aberration type
-    result = {
-        'affects_coding': True,
-    }
+    # Helper: does a closed segment [a, b] overlap the CDS?
+    # Returns False for non-coding transcripts (so affects_coding lands at False).
+    def in_cds(a, b):
+        if not is_coding_transcript:
+            return False
+        if a is None or b is None:
+            return None
+        lo = min(a, b)
+        hi = max(a, b)
+        return not (hi < cds_start or lo > cds_end)
 
     if aberration_type == 'exon_skipping':
-        # Calculate size of potentially skipped exon(s)
-        if region_type == 'exon':
-            exon_idx = region_num - 1
-            if exon_idx < len(exon_starts):
-                exon_size = exon_ends[exon_idx] - exon_starts[exon_idx] + 1
-                frameshift = exon_size % 3 != 0
-                result['frameshift'] = frameshift
-                result['exon_size'] = exon_size
-                result['description'] = f'Exon {region_num} skipping ({exon_size}bp) - {"frameshift" if frameshift else "in-frame"}'
+        strand = aberration.get('_strand', '+')
+        result = _find_exons_between_loss_positions(geo_al, geo_dl, strand, exon_starts, exon_ends)
+        if result['match']:
+            total_size = result['total_size']
+            frameshift = total_size % 3 != 0
+            segment_in_cds = any(
+                in_cds(exon_starts[i], exon_ends[i])
+                for i in result['genomic_indices']
+            )
+            aberration['affects_coding'] = bool(segment_in_cds)
+            aberration['frameshift'] = frameshift if segment_in_cds else None
+            aberration['size'] = total_size
+            aberration['size_type'] = 'exon'
+            aberration['exon_numbers'] = result['biological_numbers']
+            label = 'Exon' if len(result['biological_numbers']) == 1 else 'Exons'
+            nums = ', '.join(str(n) for n in result['biological_numbers'])
+            aberration['frameshift_description'] = (
+                f'{label} {nums} skipping ({total_size}bp) - '
+                f'{"frameshift" if frameshift and segment_in_cds else "in-frame" if segment_in_cds else "non-coding"}')
         else:
-            result['frameshift'] = None
-            result['description'] = 'Exon skipping predicted but affected exon unclear'
+            aberration['affects_coding'] = None
+            aberration['frameshift'] = None
+            aberration['frameshift_description'] = 'Exon skipping predicted but skipped exon(s) could not be mapped'
+        return
 
-    elif aberration_type == 'donor_loss' or aberration_type == 'acceptor_loss':
-        # Could be intron retention
-        if region_type == 'intron' or (region_type == 'exon' and aberration_type == 'donor_loss'):
-            intron_idx = region_num - 1 if region_type == 'intron' else region_num - 1
-            if intron_idx < len(exon_starts) - 1 and intron_idx >= 0:
-                intron_size = exon_starts[intron_idx + 1] - exon_ends[intron_idx] - 1
-                frameshift = intron_size % 3 != 0
-                result['frameshift'] = frameshift
-                result['intron_size'] = intron_size
-                result['description'] = f'Potential intron {intron_idx + 1} retention ({intron_size}bp) - {"frameshift" if frameshift else "in-frame"}'
+    if aberration_type == 'whole_intron_retention':
+        if geo_al is not None and geo_dl is not None:
+            intron_size = abs(geo_al - geo_dl) - 1
+            # Segment = retained intron: from min(geo_al, geo_dl)+1 to max(...)-1
+            seg_lo = min(geo_al, geo_dl) + 1
+            seg_hi = max(geo_al, geo_dl) - 1
+            segment_in_cds = in_cds(seg_lo, seg_hi)
+            frameshift = intron_size % 3 != 0
+            aberration['affects_coding'] = bool(segment_in_cds) if segment_in_cds is not None else None
+            aberration['frameshift'] = frameshift if segment_in_cds else None
+            aberration['size'] = intron_size
+            aberration['size_type'] = 'intron'
+            aberration['frameshift_description'] = (
+                f'Whole intron retention ({intron_size}bp) - '
+                f'{"frameshift" if frameshift and segment_in_cds else "in-frame" if segment_in_cds else "non-coding"}')
+        else:
+            aberration['affects_coding'] = None
+            aberration['frameshift'] = None
+            aberration['frameshift_description'] = 'Whole intron retention - size unclear'
+        return
+
+    if aberration_type == 'pseudoexon':
+        if geo_ag is not None and geo_dg is not None:
+            # GEX_size formula: (DP_DG*Strand) - (DP_AG*Strand) + 1. Orientation
+            # was verified before firing this branch, so abs() is equivalent.
+            gex_size = abs(geo_dg - geo_ag) + 1
+            seg_lo = min(geo_ag, geo_dg)
+            seg_hi = max(geo_ag, geo_dg)
+            segment_in_cds = in_cds(seg_lo, seg_hi)
+            frameshift = gex_size % 3 != 0
+            aberration['affects_coding'] = bool(segment_in_cds) if segment_in_cds is not None else None
+            aberration['frameshift'] = frameshift if segment_in_cds else None
+            aberration['size'] = gex_size
+            aberration['size_type'] = 'pseudoexon'
+            aberration['frameshift_description'] = (
+                f'Pseudoexon activation ({gex_size}bp) - '
+                f'{"frameshift" if frameshift and segment_in_cds else "in-frame" if segment_in_cds else "non-coding"}')
+        else:
+            aberration['affects_coding'] = None
+            aberration['frameshift'] = None
+            aberration['frameshift_description'] = 'Pseudoexon activation - size unclear'
+        return
+
+    if aberration_type == 'increased_exon_inclusion':
+        native = aberration.get('_native') or {}
+        native_exon_size = native.get('native_exon_size')
+        if native_exon_size is not None:
+            aberration['size'] = native_exon_size
+            aberration['size_type'] = 'exon'
+            aberration['frameshift'] = None  # same exon, no frame change
+            # Check coding by the native exon coords (use the associated exon index,
+            # not the intron index, since for intronic variants these can differ).
+            idx = native.get('assoc_idx')
+            if idx is not None and 0 <= idx < len(exon_starts):
+                segment_in_cds = in_cds(exon_starts[idx], exon_ends[idx])
             else:
-                result['frameshift'] = None
-                result['description'] = 'Splice site loss - frameshift status unclear'
+                segment_in_cds = None
+            aberration['affects_coding'] = bool(segment_in_cds) if segment_in_cds is not None else None
+            aberration['frameshift_description'] = (
+                f'Increased exon inclusion ({native_exon_size}bp) - '
+                f'{"coding" if segment_in_cds else "non-coding" if segment_in_cds is False else "unknown"}')
         else:
-            result['frameshift'] = None
-            result['description'] = 'Splice site loss - frameshift status unclear'
+            aberration['affects_coding'] = None
+            aberration['frameshift'] = None
+            aberration['frameshift_description'] = 'Increased exon inclusion - size unclear'
+        return
 
-    elif aberration_type in ('donor_shift', 'acceptor_shift'):
-        # Calculate shift size
-        if aberration_type == 'donor_shift':
-            geo_new = aberration_info.get('geo_dg')
-            geo_old = aberration_info.get('geo_dl')
+    if aberration_type in ('partial_exon_deletion', 'partial_intron_retention'):
+        partial_size = aberration.get('_partial_size')  # signed: +ve deletion, -ve retention
+        if partial_size is None:
+            aberration['affects_coding'] = None
+            aberration['frameshift'] = None
+            aberration['frameshift_description'] = f'{aberration_type.replace("_", " ")} - size unclear'
+            return
+        display_size = abs(partial_size)
+        frameshift = display_size % 3 != 0
+        # Segment = range between native site and predicted cryptic site.
+        native = aberration.get('_native') or {}
+        branch = aberration.get('_branch', '')
+        if branch == 'gain_B_acceptor':
+            seg_a = native.get('geo_na')
+            seg_b = geo_ag
         else:
-            geo_new = aberration_info.get('geo_ag')
-            geo_old = aberration_info.get('geo_al')
+            seg_a = native.get('geo_nd')
+            seg_b = geo_dg
+        segment_in_cds = in_cds(seg_a, seg_b) if seg_a is not None and seg_b is not None else None
+        aberration['affects_coding'] = bool(segment_in_cds) if segment_in_cds is not None else None
+        aberration['frameshift'] = frameshift if segment_in_cds else None
+        aberration['size'] = display_size
+        aberration['size_type'] = 'partial'
+        label = aberration_type.replace('_', ' ').capitalize()
+        aberration['frameshift_description'] = (
+            f'{label} ({display_size}bp) - '
+            f'{"frameshift" if frameshift and segment_in_cds else "in-frame" if segment_in_cds else "non-coding"}')
+        return
 
-        if geo_new and geo_old:
-            shift_size = abs(geo_new - geo_old)
-            frameshift = shift_size % 3 != 0
-            result['frameshift'] = frameshift
-            result['shift_size'] = shift_size
-            result['description'] = f'Splice site shift ({shift_size}bp) - {"frameshift" if frameshift else "in-frame"}'
-        else:
-            result['frameshift'] = None
-            result['description'] = 'Splice site shift - size unclear'
-
-    elif aberration_type == 'pseudoexon':
-        # Pseudoexon size from gain positions
-        geo_ag = aberration_info.get('geo_ag')
-        geo_dg = aberration_info.get('geo_dg')
-        if geo_ag and geo_dg:
-            pseudo_size = abs(geo_dg - geo_ag)
-            frameshift = pseudo_size % 3 != 0
-            result['frameshift'] = frameshift
-            result['pseudoexon_size'] = pseudo_size
-            result['description'] = f'Pseudoexon activation ({pseudo_size}bp) - {"frameshift" if frameshift else "in-frame"}'
-        else:
-            result['frameshift'] = None
-            result['description'] = 'Pseudoexon activation - size unclear'
-
-    else:
-        result['frameshift'] = None
-        result['description'] = f'{aberration_type} - frameshift status unclear'
-
-    return result
+    # Unknown aberration type — leave blank (should not happen with current paper-only emission).
+    aberration['affects_coding'] = None
+    aberration['frameshift'] = None
+    aberration['frameshift_description'] = f'{aberration_type} - frameshift status unclear'
 
 
 def sai10k_compute_predictions(transcript_scores, variant_pos):
     """
-    Compute heuristic predictions for a single transcript.
-
-    This is the main entry point for computing splice heuristics.
+    Compute splice aberration predictions for a single transcript.
 
     Args:
-        transcript_scores: Dict containing SpliceAI scores and transcript info:
-            - DS_AG, DS_AL, DS_DG, DS_DL: Delta scores
-            - DP_AG, DP_AL, DP_DG, DP_DL: Delta positions
-            - TX_START, TX_END: Transcript boundaries
-            - CDS_START, CDS_END: CDS boundaries (optional)
-            - EXON_STARTS, EXON_ENDS: Exon boundaries
-            - EXON_FRAMES: Exon frames (optional)
-            - STRAND or t_strand: Strand
-        variant_pos: 1-based genomic position of the variant
+        transcript_scores: dict with SpliceAI delta scores, delta positions,
+            raw alt-allele site scores, and transcript structure.
+        variant_pos: 1-based genomic position of the variant.
 
     Returns:
-        dict with heuristic predictions
+        dict {
+            'aberrations': [list of aberration dicts, possibly empty],
+            'transcript_info': {...}
+        }
     """
-    # Extract scores
     ds_ag = transcript_scores.get('DS_AG', 0)
     ds_al = transcript_scores.get('DS_AL', 0)
     ds_dg = transcript_scores.get('DS_DG', 0)
@@ -371,32 +828,45 @@ def sai10k_compute_predictions(transcript_scores, variant_pos):
     dp_dg = transcript_scores.get('DP_DG', 0)
     dp_dl = transcript_scores.get('DP_DL', 0)
 
-    # Extract transcript structure
+    ds_ag_alt = transcript_scores.get('DS_AG_ALT', 0)
+    ds_al_alt = transcript_scores.get('DS_AL_ALT', 0)
+    ds_dg_alt = transcript_scores.get('DS_DG_ALT', 0)
+    ds_dl_alt = transcript_scores.get('DS_DL_ALT', 0)
+
     exon_starts = transcript_scores.get('EXON_STARTS', [])
     exon_ends = transcript_scores.get('EXON_ENDS', [])
     cds_start = transcript_scores.get('CDS_START')
     cds_end = transcript_scores.get('CDS_END')
-    exon_frames = transcript_scores.get('EXON_FRAMES')
     strand = transcript_scores.get('STRAND') or transcript_scores.get('t_strand', '+')
 
-    # Determine aberration type
-    aberration_info = sai10k_determine_aberration_type(
+    aberrations = sai10k_determine_aberrations(
         ds_ag, ds_al, ds_dg, ds_dl,
         dp_ag, dp_al, dp_dg, dp_dl,
-        variant_pos, exon_starts, exon_ends, strand
+        ds_ag_alt, ds_al_alt, ds_dg_alt, ds_dl_alt,
+        variant_pos, exon_starts, exon_ends, strand,
     )
 
-    # Predict frameshift
-    frameshift_info = sai10k_predict_frameshift(
-        aberration_info.get('aberration_type', 'unknown'),
-        aberration_info,
-        cds_start, cds_end,
-        exon_starts, exon_ends, exon_frames
-    )
+    for aberration in aberrations:
+        sai10k_annotate_frameshift(
+            aberration,
+            cds_start, cds_end,
+            exon_starts, exon_ends,
+        )
+
+    # Strip internal-only fields before returning to callers (and ultimately the
+    # client). Keys prefixed with '_' are implementation details.
+    for aberration in aberrations:
+        for key in list(aberration.keys()):
+            if key.startswith('_'):
+                del aberration[key]
+        region = aberration.get('affected_region')
+        if region:
+            for key in list(region.keys()):
+                if key.startswith('_'):
+                    del region[key]
 
     return {
-        'aberration': aberration_info,
-        'frameshift': frameshift_info,
+        'aberrations': aberrations,
         'transcript_info': {
             'strand': strand,
             'tx_start': transcript_scores.get('TX_START'),
@@ -404,68 +874,46 @@ def sai10k_compute_predictions(transcript_scores, variant_pos):
             'cds_start': cds_start,
             'cds_end': cds_end,
             'num_exons': len(exon_starts) if exon_starts else 0,
-            'is_coding': cds_start is not None and cds_end is not None,
-        }
+            'is_coding': (
+                cds_start is not None and cds_end is not None and cds_start < cds_end
+            ),
+        },
     }
 
 
-def sai10k_select_canonical_transcript(scores_list):
+def sai10k_select_transcript(scores_list):
     """
-    Select the canonical (highest priority) transcript from a list.
+    Select the highest-priority transcript from a list.
 
-    Selection criteria:
-    1. Highest transcript priority (MS > MP > C > N)
-    2. Among equal priority, highest max delta score
+    Selection rule (single source of truth for SpliceAI-lookup):
+        1. Highest transcript priority (MS > MP > C > N).
+        2. Tie-break: highest SUM of |DS_AG| + |DS_AL| + |DS_DG| + |DS_DL|.
 
-    Args:
-        scores_list: List of transcript score dicts from SpliceAI
-
-    Returns:
-        The selected transcript dict, or None if scores_list is empty
+    Returns the selected transcript dict, or None if scores_list is empty.
     """
     if not scores_list:
         return None
 
-    # Priority order: MS (MANE Select) > MP (MANE Plus Clinical) > C (Canonical) > N (None)
-    priority_order = {'MS': 3, 'MP': 2, 'C': 1, 'N': 0}
-
-    best_transcript = None
+    best = None
     best_priority = -1
-    best_max_score = 0
+    best_sum = -1.0
 
     for transcript_scores in scores_list:
-        priority = priority_order.get(transcript_scores.get('t_priority', 'N'), 0)
-
-        # Calculate max delta score
-        max_score = max(
-            abs(float(transcript_scores.get('DS_AG', 0) or 0)),
-            abs(float(transcript_scores.get('DS_AL', 0) or 0)),
-            abs(float(transcript_scores.get('DS_DG', 0) or 0)),
-            abs(float(transcript_scores.get('DS_DL', 0) or 0)),
+        priority = TRANSCRIPT_PRIORITY_ORDER.get(transcript_scores.get('t_priority', 'N'), 0)
+        score_sum = sum(
+            abs(_coerce_float(transcript_scores.get(key, 0)))
+            for key in ('DS_AG', 'DS_AL', 'DS_DG', 'DS_DL')
         )
-
-        # Select highest priority, or highest score if same priority
-        if priority > best_priority or (priority == best_priority and max_score > best_max_score):
-            best_transcript = transcript_scores
+        if priority > best_priority or (priority == best_priority and score_sum > best_sum):
+            best = transcript_scores
             best_priority = priority
-            best_max_score = max_score
+            best_sum = score_sum
 
-    return best_transcript
+    return best
 
 
 def sai10k_get_transcript_predictions(transcript_scores, variant_pos):
-    """
-    Get heuristic predictions for a specific transcript.
-
-    This function computes predictions and adds transcript metadata to the result.
-
-    Args:
-        transcript_scores: Dict containing SpliceAI scores and transcript info
-        variant_pos: 1-based genomic position of the variant
-
-    Returns:
-        dict with predictions including transcript metadata
-    """
+    """Compute predictions for one transcript and attach its metadata."""
     if not transcript_scores:
         return None
 
@@ -473,23 +921,4 @@ def sai10k_get_transcript_predictions(transcript_scores, variant_pos):
     predictions['transcript_id'] = transcript_scores.get('t_id') or transcript_scores.get('NAME')
     predictions['transcript_priority'] = transcript_scores.get('t_priority', 'N')
     predictions['gene_name'] = transcript_scores.get('g_name')
-
     return predictions
-
-
-def sai10k_get_canonical_transcript_predictions(scores_list, variant_pos):
-    """
-    Get heuristic predictions for the canonical (highest priority) transcript.
-
-    This is a convenience function that combines transcript selection and
-    prediction computation.
-
-    Args:
-        scores_list: List of transcript score dicts from SpliceAI
-        variant_pos: 1-based genomic position
-
-    Returns:
-        dict with predictions for the canonical transcript, or None if no scores
-    """
-    best_transcript = sai10k_select_canonical_transcript(scores_list)
-    return sai10k_get_transcript_predictions(best_transcript, variant_pos)

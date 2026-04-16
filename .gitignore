@@ -22,6 +22,8 @@ service.backup_copy.yaml
 *.tbi
 *.crt
 
+.memory
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

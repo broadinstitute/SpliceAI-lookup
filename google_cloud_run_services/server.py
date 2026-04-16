@@ -18,8 +18,8 @@ from flask import Flask, g, request, Response, send_from_directory
 from flask_cors import CORS
 from flask_talisman import Talisman
 
-# SAI-10k style predictions for splice consequences
-from sai10k_predictions import sai10k_get_transcript_predictions
+# SAI-10k-calc predictions for splice consequences
+from sai10k_predictions import sai10k_get_transcript_predictions, sai10k_select_transcript, TRANSCRIPT_PRIORITY_ORDER
 
 app = Flask(__name__)
 
@@ -65,12 +65,6 @@ SHARED_TRANSCRIPT_ANNOTATION_PATHS = {
     ("38", "comprehensive"): f"/gencode.{GENCODE_VERSION}.annotation.transcript_annotations.json.gz",
 }
 
-TRANSCRIPT_PRIORITY_ORDER = {
-    "MS": 3,  # MANE select transcript
-    "MP": 2,  # MANE plus clinical transcript
-    "C": 1,   # canonical transcript
-    "N": 0
-}
 
 TOOL = os.environ.get("TOOL")
 GENOME_VERSION = os.environ.get("GENOME_VERSION")
@@ -385,8 +379,15 @@ def exceeds_rate_limit(conn, user_ip, params):
         return False
 
 
+# Bump SAI10K_VERSION whenever sai10k_predictions.py changes its classification
+# logic or output shape, so cached responses from older algorithm versions are
+# invalidated and recomputed.
+SAI10K_VERSION = "v2"
+
+
 def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
-    return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}__{basic_or_comprehensive}"
+    suffix = f"__sai10k-{SAI10K_VERSION}" if tool_name == "spliceai" else ""
+    return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}__{basic_or_comprehensive}{suffix}"
 
 
 def get_splicing_scores_from_cache(conn, tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
@@ -453,55 +454,36 @@ def get_spliceai_scores(conn, variant, genome_version, distance_param, mask_para
 
     #scores = [s[s.index("|")+1:] for s in scores]  # drop allele field
 
-    # to reduce the response size, return all non-zero scores only for the canonical transcript (or the 1st transcript)
-    all_non_zero_scores = None
-    all_non_zero_scores_strand = None
-    all_non_zero_scores_transcript_id = None
-    all_non_zero_scores_transcript_priority = -1
-    max_delta_score_sum = 0
-    selected_transcript = None
-    for i, transcript_scores in enumerate(scores):
+    # Enrich each transcript_scores with annotations + DB structure (needed by
+    # the canonical-transcript selector and the SAI-10k-calc module).
+    candidate_transcripts = []
+    for transcript_scores in scores:
         if "ALL_NON_ZERO_SCORES" not in transcript_scores:
             continue
 
         transcript_id_without_version = transcript_scores.get("NAME", "").split(".")[0]
 
-        # get json annotations for this transcript
         transcript_annotations = SHARED_TRANSCRIPT_ANNOTATIONS[(genome_version, basic_or_comprehensive_param)].get(transcript_id_without_version)
         if transcript_annotations is None:
             raise ValueError(f"Missing annotations for {transcript_id_without_version} in {genome_version} annotations")
-
-        # add the extra transcript annotations from the json file to the transcript scores dict
         transcript_scores.update(transcript_annotations)
 
-        # add transcript structure from the database for heuristic predictions
         transcript_structure = get_transcript_structure(conn, transcript_id_without_version, genome_version)
         if transcript_structure:
             transcript_scores.update(transcript_structure)
 
-        # decide whether to use ALL_NON_ZERO_SCORES from this transcript
-        current_transcript_priority = TRANSCRIPT_PRIORITY_ORDER[transcript_annotations["t_priority"]]
-        current_delta_score_sum = sum(abs(float(transcript_scores[key])) for key in ("DS_AG", "DS_AL", "DS_DG", "DS_DL"))
-        if current_transcript_priority > all_non_zero_scores_transcript_priority:
-            max_delta_score_sum = current_delta_score_sum
-            all_non_zero_scores_transcript_priority = current_transcript_priority
-            all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
-            all_non_zero_scores_strand = transcript_scores["t_strand"]
-            all_non_zero_scores_transcript_id = transcript_scores["t_id"]
-            selected_transcript = transcript_scores
+        candidate_transcripts.append(transcript_scores)
 
-        elif current_transcript_priority == all_non_zero_scores_transcript_priority and current_delta_score_sum > max_delta_score_sum:
-            # select the one with the highest delta score sum
-            max_delta_score_sum = current_delta_score_sum
-            all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
-            all_non_zero_scores_strand = transcript_scores["t_strand"]
-            all_non_zero_scores_transcript_id = transcript_scores["t_id"]
-            selected_transcript = transcript_scores
+    # Single source of truth for canonical-transcript selection (priority, then
+    # sum of |DS_*|). Used for both (a) which transcript's ALL_NON_ZERO_SCORES
+    # to return to the client and (b) which transcript to feed into SAI-10k-calc.
+    selected_transcript = sai10k_select_transcript(candidate_transcripts)
+    all_non_zero_scores = selected_transcript["ALL_NON_ZERO_SCORES"] if selected_transcript else None
+    all_non_zero_scores_strand = selected_transcript["t_strand"] if selected_transcript else None
+    all_non_zero_scores_transcript_id = selected_transcript["t_id"] if selected_transcript else None
 
-        for redundant_key in "ALLELE", "NAME", "STRAND", "ALL_NON_ZERO_SCORES":
-            del transcript_scores[redundant_key]
-
-    # Compute SAI-10k predictions for the selected transcript
+    # Compute SAI-10k-calc predictions for the selected transcript (before we
+    # delete ALL_NON_ZERO_SCORES / STRAND from the scores dicts below).
     sai10k_predictions = None
     if selected_transcript:
         try:
@@ -509,6 +491,10 @@ def get_spliceai_scores(conn, variant, genome_version, distance_param, mask_para
         except Exception as e:
             print(f"WARNING: Error computing SAI-10k predictions for {variant}: {e}")
             traceback.print_exc()
+
+    for transcript_scores in candidate_transcripts:
+        for redundant_key in ("ALLELE", "NAME", "STRAND", "ALL_NON_ZERO_SCORES"):
+            transcript_scores.pop(redundant_key, None)
 
     return {
         "variant": variant,
@@ -589,38 +575,39 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
             "error": f"Pangolin was unable to compute scores for this variant",
         }
 
-    # to reduce the response size, return all non-zero scores only for the canonial transcript (or the 1st transcript)
-    all_non_zero_scores = None
-    all_non_zero_scores_strand = None
-    all_non_zero_scores_transcript_id = None
-    max_delta_score_sum = 0
-    for i, transcript_scores in enumerate(scores):
+    # Enrich each transcript with annotations, then select the best one for visualization
+    # using the same priority-based logic as SpliceAI (MS > MP > C > N, tie-break on score sum).
+    candidate_transcripts = []
+    for transcript_scores in scores:
         if "ALL_NON_ZERO_SCORES" not in transcript_scores:
             continue
 
         transcript_id_without_version = transcript_scores.get("NAME", "").split(".")[0]
 
-        # get json annotations for this transcript
         transcript_annotations = SHARED_TRANSCRIPT_ANNOTATIONS[(genome_version, basic_or_comprehensive_param)].get(transcript_id_without_version)
         if transcript_annotations is None:
             raise ValueError(f"Missing annotations for {transcript_id_without_version} in {genome_version} annotations")
 
-        # add the extra transcript annotations from the json file to the transcript scores dict
         transcript_scores.update(transcript_annotations)
+        candidate_transcripts.append(transcript_scores)
 
-        # decide whether to use ALL_NON_ZERO_SCORES from this gene
-        current_delta_score_sum = sum(abs(float(s.get("SG_ALT", 0)) - float(s.get("SG_REF", 0)))
-                              for s in transcript_scores["ALL_NON_ZERO_SCORES"])
-        current_delta_score_sum += sum(abs(float(s.get("SL_ALT", 0)) - float(s.get("SL_REF", 0)))
-                               for s in transcript_scores["ALL_NON_ZERO_SCORES"])
+    # Select transcript: highest priority, then highest sum of |DS_SL| + |DS_SG|
+    selected_transcript = None
+    best_priority = -1
+    best_score_sum = -1.0
+    for transcript_scores in candidate_transcripts:
+        priority = TRANSCRIPT_PRIORITY_ORDER.get(transcript_scores.get('t_priority', 'N'), 0)
+        score_sum = abs(float(transcript_scores.get('DS_SL', 0))) + abs(float(transcript_scores.get('DS_SG', 0)))
+        if priority > best_priority or (priority == best_priority and score_sum > best_score_sum):
+            selected_transcript = transcript_scores
+            best_priority = priority
+            best_score_sum = score_sum
 
-        # return all_non_zero_scores for the transcript or gene with the highest delta score sum
-        if current_delta_score_sum > max_delta_score_sum:
-            all_non_zero_scores = transcript_scores["ALL_NON_ZERO_SCORES"]
-            all_non_zero_scores_strand = transcript_scores["STRAND"]
-            all_non_zero_scores_transcript_id = transcript_scores["NAME"]
-            max_delta_score_sum = current_delta_score_sum
+    all_non_zero_scores = selected_transcript["ALL_NON_ZERO_SCORES"] if selected_transcript else None
+    all_non_zero_scores_strand = selected_transcript["STRAND"] if selected_transcript else None
+    all_non_zero_scores_transcript_id = selected_transcript["NAME"] if selected_transcript else None
 
+    for transcript_scores in candidate_transcripts:
         for redundant_key in "NAME", "STRAND", "ALL_NON_ZERO_SCORES":
             del transcript_scores[redundant_key]
 

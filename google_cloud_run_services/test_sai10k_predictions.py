@@ -5,11 +5,11 @@ Tests for SAI-10k predictions module.
 These tests verify that the sai10k_predictions logic produces results consistent
 with the examples in the SAI-10k-calc repository.
 
-To run:
-    python -m unittest tests.sai10k_predictions_tests -v
+To run from this directory:
+    python3 -m unittest test_sai10k_predictions -v
 
 Or directly:
-    python tests/sai10k_predictions_tests.py
+    python3 test_sai10k_predictions.py
 """
 
 import os
@@ -25,10 +25,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sai10k_predictions import (
     sai10k_find_affected_region,
-    sai10k_determine_aberration_type,
-    sai10k_predict_frameshift,
+    sai10k_determine_aberrations,
+    sai10k_annotate_frameshift,
     sai10k_compute_predictions,
-    sai10k_select_canonical_transcript,
+    sai10k_select_transcript,
     sai10k_get_transcript_predictions,
     MIN_DELTA_SCORE,
 )
@@ -212,113 +212,306 @@ class TestFindAffectedRegion(unittest.TestCase):
         self.assertEqual(result["region_number"], 1)  # 1-based intron number
 
     def test_variant_in_exon_brca1_minus_strand(self):
-        """Test finding a variant within an exon of BRCA1 (minus strand)."""
+        """Variant at 41197774 sits in BRCA1's genomically-lowest exon.
+
+        BRCA1 is on '-' strand with 23 exons. Biological exon 1 has the highest
+        genomic coords; the genomically-lowest exon (genomic index 0) is
+        biological exon 23 (the last exon in transcript order).
+        """
         exon_starts = BRCA1_TRANSCRIPT_HG19["EXON_STARTS"]
         exon_ends = BRCA1_TRANSCRIPT_HG19["EXON_ENDS"]
 
-        # Variant at 41197774 is in exon 1
-        result = sai10k_find_affected_region(41197774, exon_starts, exon_ends)
+        result = sai10k_find_affected_region(41197774, exon_starts, exon_ends, strand="-")
         self.assertIsNotNone(result)
         self.assertEqual(result["region_type"], "exon")
+        self.assertEqual(result["region_number"], 23)  # biological numbering
+        self.assertEqual(result["_genomic_index"], 0)
 
     def test_empty_exons(self):
         """Test with empty exon lists."""
         result = sai10k_find_affected_region(100, [], [])
         self.assertIsNone(result)
 
+    def test_biological_numbering_plus_strand_matches_genomic(self):
+        """On '+' strand biological number equals genomic index + 1."""
+        result = sai10k_find_affected_region(
+            32890600,
+            BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            strand="+",
+        )
+        self.assertEqual(result["region_number"], 2)
+        self.assertEqual(result["_genomic_index"], 1)
 
-class TestDetermineAberrationType(unittest.TestCase):
-    """Test the sai10k_determine_aberration_type function."""
+
+class TestDetermineAberrations(unittest.TestCase):
+    """Test the sai10k_determine_aberrations function (returns a list)."""
 
     def setUp(self):
         self.exon_starts = BRCA2_TRANSCRIPT_HG19["EXON_STARTS"]
         self.exon_ends = BRCA2_TRANSCRIPT_HG19["EXON_ENDS"]
 
-    def test_donor_loss(self):
-        """Test detection of donor loss."""
-        # Example: BRCA2_c.-40+1G>A at position 32889805
-        # DS_DL=0.99, DS_DG=0.57, DS_AL=0.08, DS_AG=0.01
-        result = sai10k_determine_aberration_type(
+    def _invoke(self, **kwargs):
+        """Call sai10k_determine_aberrations with defaults for any unspecified
+        ALT scores (0) and mandatory arguments (BRCA2 coords)."""
+        kwargs.setdefault("ds_ag_alt", 0)
+        kwargs.setdefault("ds_al_alt", 0)
+        kwargs.setdefault("ds_dg_alt", 0)
+        kwargs.setdefault("ds_dl_alt", 0)
+        kwargs.setdefault("exon_starts", self.exon_starts)
+        kwargs.setdefault("exon_ends", self.exon_ends)
+        return sai10k_determine_aberrations(**kwargs)
+
+    def test_brca2_c40_1g_a(self):
+        """BRCA2_c.-40+1G>A (DS_DL=0.99, DS_DG=0.57, DS_AL=0.08, DS_AG=0.01).
+
+        Reference parser output: Intron_retention=YES AND Partial_exon_deletion=YES
+        (combination). Loss branch fires (strand-aware gate routes to
+        whole_intron_retention); cryptic-donor subflow fires with DP_DG=-100 and
+        DP_ND=-1 -> partial_exon_deletion (3' end).
+        """
+        result = self._invoke(
             ds_ag=0.01, ds_al=0.08, ds_dg=0.57, ds_dl=0.99,
+            # Supply ALT scores consistent with a real cryptic donor
+            # activation (DS_DG_ALT high, native donor DS_DL_ALT weaker).
+            ds_dg_alt=0.7, ds_dl_alt=0.01,
             dp_ag=-38, dp_al=754, dp_dg=-100, dp_dl=-1,
             variant_pos=32889805,
-            exon_starts=self.exon_starts,
-            exon_ends=self.exon_ends,
             strand="+",
         )
-        self.assertIn(result["aberration_type"], ["donor_shift", "donor_loss"])
-        self.assertEqual(result["confidence"], "high")
+        types = [a["aberration_type"] for a in result]
+        self.assertIn("whole_intron_retention", types)
+        self.assertIn("partial_exon_deletion", types)
 
     def test_exon_skipping_prediction(self):
-        """Test detection of exon skipping pattern (DL + AL)."""
-        # When both donor loss and acceptor loss are significant
-        result = sai10k_determine_aberration_type(
+        """Both donor loss and acceptor loss pass -> exon_skipping (single aberration)."""
+        result = self._invoke(
             ds_ag=0.0, ds_al=0.81, ds_dg=0.17, ds_dl=0.98,
             dp_ag=-221, dp_al=-106, dp_dg=-137, dp_dl=-1,
             variant_pos=32890665,
-            exon_starts=self.exon_starts,
-            exon_ends=self.exon_ends,
             strand="+",
         )
-        self.assertIn(result["aberration_type"], ["exon_skipping", "donor_loss"])
-        self.assertEqual(result["max_delta_score"], 0.98)
+        types = [a["aberration_type"] for a in result]
+        self.assertIn("exon_skipping", types)
+        # Driving score for exon_skipping is max(DS_DL, DS_AL) = 0.98
+        es = next(a for a in result if a["aberration_type"] == "exon_skipping")
+        self.assertEqual(es["max_delta_score"], 0.98)
 
     def test_no_significant_effect(self):
-        """Test when delta scores are below threshold."""
-        result = sai10k_determine_aberration_type(
-            ds_ag=0.01, ds_al=0.01, ds_dg=0.04, ds_dl=0.04,
+        """All scores below DS_ALDL_MIN -> empty list."""
+        result = self._invoke(
+            ds_ag=0.01, ds_al=0.01, ds_dg=0.01, ds_dl=0.01,
             dp_ag=-78, dp_al=-193, dp_dg=-214, dp_dl=-109,
             variant_pos=32890637,
-            exon_starts=self.exon_starts,
-            exon_ends=self.exon_ends,
             strand="+",
         )
-        self.assertEqual(result["aberration_type"], "none")
+        self.assertEqual(result, [])
+
+    def test_pseudoexon_requires_validation_gates(self):
+        """Paired gain in an intron, but variant too close to native exon (<50bp)
+        should NOT fire pseudoexon (even though old code did)."""
+        result = self._invoke(
+            ds_ag=0.3, ds_al=0, ds_dg=0.3, ds_dl=0,
+            dp_ag=-50, dp_al=0, dp_dg=50, dp_dl=0,
+            variant_pos=32890533,  # 26bp from exon 1 start -> fails d_50bp
+            strand="+",
+        )
+        types = [a["aberration_type"] for a in result]
+        self.assertNotIn("pseudoexon", types)
+
+    def test_pseudoexon_deep_intronic(self):
+        """Variant deep in an intron with valid paired-gain parameters -> pseudoexon."""
+        # BRCA2 intron 0: [32889805, 32890558]. Pick a variant well inside it
+        # and gain positions that define a 101bp gained exon entirely inside
+        # this intron, both gain positions >50bp from native splice sites.
+        result = self._invoke(
+            ds_ag=0.3, ds_al=0, ds_dg=0.3, ds_dl=0,
+            dp_ag=50, dp_al=0, dp_dg=150, dp_dl=0,
+            variant_pos=32890100,  # 296bp from exon 0, 458bp from exon 1
+            strand="+",
+        )
+        types = [a["aberration_type"] for a in result]
+        self.assertIn("pseudoexon", types)
+        ps = next(a for a in result if a["aberration_type"] == "pseudoexon")
+        # GEX_size = (DP_DG - DP_AG) + 1 = (150 - 50) + 1 = 101.
+        # `size` is populated by sai10k_annotate_frameshift (called from
+        # sai10k_compute_predictions); here we verify the raw geo positions.
+        self.assertEqual(abs(ps["geo_dg"] - ps["geo_ag"]) + 1, 101)
+
+    def test_lowered_min_catches_weak_paired_loss(self):
+        """DS_AL=0.13 (weak) + DS_DL=0.93 (strong) fires exon_skipping thanks to
+        the paired min=0.02 / max=0.2 gate."""
+        result = self._invoke(
+            ds_ag=0, ds_al=0.13, ds_dg=0, ds_dl=0.93,
+            dp_ag=0, dp_al=-50, dp_dg=0, dp_dl=-1,
+            variant_pos=32890600,
+            strand="+",
+        )
+        types = [a["aberration_type"] for a in result]
+        self.assertIn("exon_skipping", types)
+
+    def test_dp_zero_is_valid_not_missing(self):
+        """DP_*=0 must be treated as a valid 'at the variant base' position."""
+        # Deep-intronic variant with DP_AG=0 (cryptic acceptor at variant base)
+        # and DP_DG=150 (gained donor 150bp downstream). Should fire pseudoexon.
+        result = self._invoke(
+            ds_ag=0.3, ds_al=0, ds_dg=0.3, ds_dl=0,
+            dp_ag=0, dp_al=0, dp_dg=150, dp_dl=0,
+            variant_pos=32890100,  # deep intronic (intron 0, 296bp from nearest exon)
+            strand="+",
+        )
+        types = [a["aberration_type"] for a in result]
+        self.assertIn("pseudoexon", types)
+        ps = next(a for a in result if a["aberration_type"] == "pseudoexon")
+        self.assertEqual(ps["geo_ag"], 32890100)  # variant_pos + DP_AG(0) = variant_pos
+
+    def test_pseudoexon_ag_dg_in_different_introns(self):
+        """Pseudoexon must NOT fire when AG and DG fall in different introns."""
+        # Place the variant deep in intron 0 but configure DP_DG so that GEO_DG
+        # lands past exon 1, i.e. in intron 1. AG and DG no longer share an intron.
+        # BRCA2 intron 0: [32889805, 32890558]; exon 1: [32890559, 32890664].
+        # Variant at 32890100 (intron 0). DP_AG = 100 -> GEO_AG = 32890200 (intron 0).
+        # DP_DG = 700 -> GEO_DG = 32890800 (intron 1).
+        result = self._invoke(
+            ds_ag=0.3, ds_al=0, ds_dg=0.3, ds_dl=0,
+            dp_ag=100, dp_al=0, dp_dg=700, dp_dl=0,
+            variant_pos=32890100,
+            strand="+",
+        )
+        types = [a["aberration_type"] for a in result]
+        self.assertNotIn("pseudoexon", types)
+
+    def test_reverse_strand_biological_exon_skipping(self):
+        """Reverse-strand BRCA1 variant should report biological exon numbers."""
+        # BRCA1 on '-' strand, 23 exons. Variant at 41199659 in genomic intron 0
+        # (between genomic exons 0 and 1 = biological exons 22 and 23).
+        # DP_AL=61, DP_DL=1 with '-' strand: DP_AL*-1=-61, DP_DL*-1=-1 -> -61 < -1
+        # -> exon_skipping. Skipped exon bounded by GEO_AL=41199720 (acceptor of
+        # genomic exon 1 on '-' strand = exon_ends[1]) and GEO_DL=41199660
+        # (donor of genomic exon 1 on '-' strand = exon_starts[1]).
+        result = sai10k_determine_aberrations(
+            ds_ag=0.0, ds_al=0.40, ds_dg=0.36, ds_dl=0.93,
+            dp_ag=-4, dp_al=61, dp_dg=-4, dp_dl=1,
+            ds_ag_alt=0, ds_al_alt=0, ds_dg_alt=0, ds_dl_alt=0,
+            variant_pos=41199659,
+            exon_starts=BRCA1_TRANSCRIPT_HG19["EXON_STARTS"],
+            exon_ends=BRCA1_TRANSCRIPT_HG19["EXON_ENDS"],
+            strand="-",
+        )
+        types = [a["aberration_type"] for a in result]
+        self.assertIn("exon_skipping", types)
+
+    def test_cryptic_acceptor_partial_exon_deletion(self):
+        """Cryptic acceptor activation deep in an exon should produce
+        partial_exon_deletion."""
+        # Exonic variant, strong DS_AG at a position inside the exon (beyond the
+        # native acceptor), weak-to-absent native acceptor loss, with ALT-score
+        # conditions that satisfy the cryptic-acceptor check.
+        # BRCA2 exon 2: [32890559, 32890664]. Variant at 32890580. Native acceptor
+        # at 32890559 (dp_na = -21). Cryptic acceptor at 32890600 (dp_ag = 20).
+        # partial_size = dp_ag - dp_na = 41 (positive -> partial exon deletion).
+        result = sai10k_determine_aberrations(
+            ds_ag=0.3, ds_al=0.0, ds_dg=0.0, ds_dl=0.0,
+            dp_ag=20, dp_al=0, dp_dg=0, dp_dl=0,
+            # ALT scores to satisfy Cryptic_Acceptor_activation_check2:
+            # DS_AG >= 0.2 AND (DS_AG_ALT - DS_AL_ALT) > -0.2
+            ds_ag_alt=0.5, ds_al_alt=0.3, ds_dg_alt=0, ds_dl_alt=0,
+            variant_pos=32890580,
+            exon_starts=BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            exon_ends=BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            strand="+",
+        )
+        types = [a["aberration_type"] for a in result]
+        self.assertIn("partial_exon_deletion", types)
+
+    def test_multi_exon_skipping(self):
+        """When GEO_AL and GEO_DL span multiple exons, _find_exons_between_loss_positions
+        should identify all skipped exons and sum their sizes."""
+        # BRCA2 exons 2 and 3: [32890559, 32890664] and [32893214, 32893462].
+        # Construct a variant whose DP_AL matches exon 2's acceptor and whose
+        # DP_DL matches exon 3's donor. Variant at 32890559 (acceptor of exon 2).
+        # DP_AL = 0 -> GEO_AL = 32890559 (exon 2 acceptor).
+        # DP_DL = 2903 -> GEO_DL = 32893462 (exon 3 donor).
+        result = sai10k_determine_aberrations(
+            ds_ag=0, ds_al=0.5, ds_dg=0, ds_dl=0.5,
+            dp_ag=0, dp_al=0, dp_dg=0, dp_dl=2903,
+            ds_ag_alt=0, ds_al_alt=0, ds_dg_alt=0, ds_dl_alt=0,
+            variant_pos=32890559,
+            exon_starts=BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            exon_ends=BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            strand="+",
+        )
+        # Should be exon_skipping on loss-pair + orientation; two exons in the bracket.
+        es = [a for a in result if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+
+    def test_loss_plus_cryptic_combination(self):
+        """Loss branch and cryptic subflow should fire in parallel for
+        BRCA2 c.-40+1G>A (reference shows Intron_retention=YES + Partial_exon_deletion=YES)."""
+        result = sai10k_determine_aberrations(
+            ds_ag=0.01, ds_al=0.08, ds_dg=0.57, ds_dl=0.99,
+            # ALT scores consistent with a real cryptic-donor activation.
+            ds_ag_alt=0, ds_al_alt=0,
+            ds_dg_alt=0.7, ds_dl_alt=0.01,
+            dp_ag=-38, dp_al=754, dp_dg=-100, dp_dl=-1,
+            variant_pos=32889805,
+            exon_starts=BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            exon_ends=BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            strand="+",
+        )
+        types = [a["aberration_type"] for a in result]
+        self.assertIn("whole_intron_retention", types)
+        self.assertIn("partial_exon_deletion", types)
 
 
-class TestPredictFrameshift(unittest.TestCase):
-    """Test the sai10k_predict_frameshift function."""
+class TestAnnotateFrameshift(unittest.TestCase):
+    """Test the sai10k_annotate_frameshift function (mutates aberration dict)."""
 
     def test_frameshift_prediction_exon_skipping(self):
-        """Test frameshift prediction for exon skipping."""
-        aberration_info = {
+        # Use real BRCA2 exon 2 boundaries for geo_al / geo_dl so the size
+        # calculation can identify the skipped exon from loss positions.
+        exon2_start = BRCA2_TRANSCRIPT_HG19["EXON_STARTS"][1]  # 32890559
+        exon2_end = BRCA2_TRANSCRIPT_HG19["EXON_ENDS"][1]     # 32890664
+        aberration = {
             "aberration_type": "exon_skipping",
-            "affected_region": {"region_type": "exon", "region_number": 2},
+            "affected_region": {
+                "region_type": "exon",
+                "region_number": 2,
+                "_genomic_index": 1,
+            },
+            "geo_al": exon2_start, "geo_dl": exon2_end,
+            "geo_ag": 0, "geo_dg": 0,
+            "_strand": "+",
         }
-        exon_starts = BRCA2_TRANSCRIPT_HG19["EXON_STARTS"]
-        exon_ends = BRCA2_TRANSCRIPT_HG19["EXON_ENDS"]
-        exon_frames = BRCA2_TRANSCRIPT_HG19["EXON_FRAMES"]
-        cds_start = BRCA2_TRANSCRIPT_HG19["CDS_START"]
-        cds_end = BRCA2_TRANSCRIPT_HG19["CDS_END"]
-
-        result = sai10k_predict_frameshift(
-            aberration_type="exon_skipping",
-            aberration_info=aberration_info,
-            cds_start=cds_start,
-            cds_end=cds_end,
-            exon_starts=exon_starts,
-            exon_ends=exon_ends,
-            exon_frames=exon_frames,
+        sai10k_annotate_frameshift(
+            aberration,
+            cds_start=BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            cds_end=BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            exon_starts=BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            exon_ends=BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
         )
-        self.assertTrue(result["affects_coding"])
-        self.assertIn("exon_size", result)
+        self.assertTrue(aberration["affects_coding"])
+        self.assertEqual(aberration["size_type"], "exon")
+        # Exon 2 is 106bp (32890559..32890664)
+        self.assertEqual(aberration["size"], 106)
 
     def test_non_coding_transcript(self):
-        """Test frameshift prediction for non-coding transcript."""
-        aberration_info = {
-            "aberration_type": "donor_loss",
-            "affected_region": {"region_type": "exon", "region_number": 1},
+        aberration = {
+            "aberration_type": "exon_skipping",
+            "affected_region": {
+                "region_type": "exon",
+                "region_number": 1,
+                "_genomic_index": 0,
+            },
+            "geo_al": 100, "geo_dl": 150, "geo_ag": 0, "geo_dg": 0,
+            "_strand": "+",
         }
-        result = sai10k_predict_frameshift(
-            aberration_type="donor_loss",
-            aberration_info=aberration_info,
-            cds_start=None,
-            cds_end=None,
-            exon_starts=[100, 200],
-            exon_ends=[150, 250],
-            exon_frames=[-1, -1],
+        sai10k_annotate_frameshift(
+            aberration,
+            cds_start=None, cds_end=None,
+            exon_starts=[100, 200], exon_ends=[150, 250],
         )
-        self.assertFalse(result["affects_coding"])
+        self.assertFalse(aberration["affects_coding"])
 
 
 class TestComputePredictions(unittest.TestCase):
@@ -348,11 +541,14 @@ class TestComputePredictions(unittest.TestCase):
 
         result = sai10k_compute_predictions(transcript_scores, variant_pos=32889805)
 
-        self.assertIn("aberration", result)
-        self.assertIn("frameshift", result)
+        self.assertIn("aberrations", result)
         self.assertIn("transcript_info", result)
         self.assertEqual(result["transcript_info"]["strand"], "+")
         self.assertTrue(result["transcript_info"]["is_coding"])
+        # Frameshift fields are attached to each aberration in the list.
+        for aberration in result["aberrations"]:
+            self.assertIn("frameshift", aberration)
+            self.assertIn("affects_coding", aberration)
 
     def test_compute_predictions_brca1_variant(self):
         """Test full prediction computation for a BRCA1 variant (minus strand)."""
@@ -378,12 +574,12 @@ class TestComputePredictions(unittest.TestCase):
 
         result = sai10k_compute_predictions(transcript_scores, variant_pos=41199659)
 
-        self.assertIn("aberration", result)
+        self.assertIn("aberrations", result)
         self.assertEqual(result["transcript_info"]["strand"], "-")
 
 
 class TestSelectCanonicalTranscript(unittest.TestCase):
-    """Test the sai10k_select_canonical_transcript function."""
+    """Test the sai10k_select_transcript function."""
 
     def test_select_mane_select_over_canonical(self):
         """Test that MANE Select is preferred over canonical."""
@@ -391,22 +587,23 @@ class TestSelectCanonicalTranscript(unittest.TestCase):
             {"t_priority": "C", "DS_AG": 0.5, "DS_AL": 0.5, "DS_DG": 0.5, "DS_DL": 0.5},
             {"t_priority": "MS", "DS_AG": 0.3, "DS_AL": 0.3, "DS_DG": 0.3, "DS_DL": 0.3},
         ]
-        result = sai10k_select_canonical_transcript(scores_list)
+        result = sai10k_select_transcript(scores_list)
         self.assertEqual(result["t_priority"], "MS")
 
-    def test_select_highest_score_at_same_priority(self):
-        """Test that highest max score is selected among same priority."""
+    def test_select_highest_sum_at_same_priority(self):
+        """Tie-break rule is highest SUM of |DS_*| (matches server.py)."""
         scores_list = [
+            # sum = 2.0
             {"t_priority": "C", "DS_AG": 0.5, "DS_AL": 0.5, "DS_DG": 0.5, "DS_DL": 0.5},
+            # sum = 1.2 — lower despite higher single max
             {"t_priority": "C", "DS_AG": 0.9, "DS_AL": 0.1, "DS_DG": 0.1, "DS_DL": 0.1},
         ]
-        result = sai10k_select_canonical_transcript(scores_list)
-        # Function selects by max delta score (0.9 > 0.5), not by sum
-        self.assertEqual(result["DS_AG"], 0.9)
+        result = sai10k_select_transcript(scores_list)
+        self.assertEqual(result["DS_AG"], 0.5)  # the 2.0-sum transcript wins
 
     def test_empty_scores_list(self):
         """Test handling of empty scores list."""
-        result = sai10k_select_canonical_transcript([])
+        result = sai10k_select_transcript([])
         self.assertIsNone(result)
 
 
@@ -487,7 +684,7 @@ class TestWithDatabaseIntegration(unittest.TestCase):
 
         result = sai10k_compute_predictions(transcript_scores, variant_pos=41199659)
 
-        self.assertIn("aberration", result)
+        self.assertIn("aberrations", result)
         self.assertEqual(result["transcript_info"]["strand"], "-")
 
 
@@ -519,14 +716,17 @@ class TestExampleVariants(unittest.TestCase):
             "STRAND": BRCA2_TRANSCRIPT_HG19["STRAND"],
         }
 
+        # Supply ALT scores that match a real cryptic-donor activation.
+        transcript_scores["DS_DG_ALT"] = 0.7
+        transcript_scores["DS_DL_ALT"] = 0.01
+
         result = sai10k_compute_predictions(transcript_scores, variant_pos=32889805)
 
-        # With DS_DL=0.99 and DS_DG=0.57, we expect donor-related aberration
-        self.assertIn(
-            result["aberration"]["aberration_type"],
-            ["donor_shift", "donor_loss"],
-        )
-        self.assertEqual(result["aberration"]["confidence"], "high")
+        # Reference parser output for this variant: Intron_retention=YES AND
+        # Partial_exon_deletion=YES (combination).
+        types = [a["aberration_type"] for a in result["aberrations"]]
+        self.assertIn("whole_intron_retention", types)
+        self.assertIn("partial_exon_deletion", types)
 
     def test_brca2_c67_1g_a(self):
         """Test BRCA2_c.67+1G>A (13-32890665-G-A).
@@ -552,12 +752,10 @@ class TestExampleVariants(unittest.TestCase):
 
         result = sai10k_compute_predictions(transcript_scores, variant_pos=32890665)
 
-        # With both DS_AL=0.81 and DS_DL=0.98 significant, should predict exon skipping
-        self.assertIn(
-            result["aberration"]["aberration_type"],
-            ["exon_skipping", "donor_loss"],
-        )
-        self.assertEqual(result["aberration"]["max_delta_score"], 0.98)
+        # With both DS_AL=0.81 and DS_DL=0.98 significant, loss-pair branch fires.
+        self.assertEqual(len(result["aberrations"]), 1)
+        self.assertEqual(result["aberrations"][0]["aberration_type"], "exon_skipping")
+        self.assertEqual(result["aberrations"][0]["max_delta_score"], 0.98)
 
     def test_brca2_no_effect(self):
         """Test BRCA2_c.40A>G (13-32890637-A-G).
@@ -583,8 +781,8 @@ class TestExampleVariants(unittest.TestCase):
 
         result = sai10k_compute_predictions(transcript_scores, variant_pos=32890637)
 
-        self.assertEqual(result["aberration"]["aberration_type"], "none")
-        self.assertEqual(result["aberration"]["confidence"], "low")
+        # All scores below DS_AGDG_MAX -> empty aberrations list.
+        self.assertEqual(result["aberrations"], [])
 
     def test_brca1_c5467_5g_c(self):
         """Test BRCA1_c.5467+5G>C (17-41199655-C-G).
@@ -610,23 +808,28 @@ class TestExampleVariants(unittest.TestCase):
 
         result = sai10k_compute_predictions(transcript_scores, variant_pos=41199655)
 
-        # With DS_AL=0.28 and DS_DL=0.27 both >= 0.2, should predict exon skipping
-        self.assertIn(
-            result["aberration"]["aberration_type"],
-            ["exon_skipping", "acceptor_loss", "donor_loss"],
-        )
+        # Reference sample output: Exon_skipping=YES, Lost_exons=22. BRCA1 is on
+        # '-' strand; orientation gate DP_AL*Strand < DP_DL*Strand => -65 < -5
+        # => exon_skipping (not whole_intron_retention).
+        types = [a["aberration_type"] for a in result["aberrations"]]
+        self.assertIn("exon_skipping", types)
 
     def test_brca1_c5467_1g_a(self):
         """Test BRCA1_c.5467+1G>A (17-41199659-C-T).
 
-        Expected: Any_splicing_aberration=YES, Partial_intron_retention=YES,
-                  Exon_skipping=YES
+        Reference sample output: Exon_skipping=YES AND Partial_intron_retention=YES
+        (combination). Loss branch fires exon_skipping; cryptic-donor subflow
+        fires partial_intron_retention on the 3' side of the exon.
         """
         transcript_scores = {
             "DS_AG": 0.00,
             "DS_AL": 0.40,
             "DS_DG": 0.36,
             "DS_DL": 0.93,
+            # ALT scores chosen to satisfy Cryptic_Donor_activation_check2:
+            # DS_DG < 0.2, DS_DL > 0.1, DS_DG_ALT >= 0.9, (DS_DG_ALT - DS_DL_ALT) >= 0.2.
+            "DS_AG_ALT": 0, "DS_AL_ALT": 0,
+            "DS_DG_ALT": 0.95, "DS_DL_ALT": 0.05,
             "DP_AG": -4,
             "DP_AL": 61,
             "DP_DG": -4,
@@ -641,12 +844,130 @@ class TestExampleVariants(unittest.TestCase):
 
         result = sai10k_compute_predictions(transcript_scores, variant_pos=41199659)
 
-        # With DS_DL=0.93 and DS_DG=0.36 and DS_AL=0.40, multiple patterns
-        self.assertIn(
-            result["aberration"]["aberration_type"],
-            ["exon_skipping", "donor_shift", "donor_loss"],
+        types = [a["aberration_type"] for a in result["aberrations"]]
+        self.assertIn("exon_skipping", types)
+        self.assertIn("partial_intron_retention", types)
+
+
+class TestIncreasedExonInclusion(unittest.TestCase):
+    """Test the increased_exon_inclusion aberration type.
+
+    Increased exon inclusion fires when:
+      - Gain paired gate passes (min(DS_AG, DS_DG) >= 0.02, max >= 0.2)
+      - Orientation passes (DP_AG*Strand < DP_DG*Strand)
+      - Pseudoexon conditions fail (e.g. gain positions are at native sites)
+      - GEX_size == native exon size
+      - DP_AG == DP_NA and DP_DG == DP_ND (gain positions match native sites)
+    """
+
+    def test_increased_exon_inclusion_plus_strand(self):
+        """Variant in intron 1 of BRCA2 with gain positions matching exon 2's
+        native acceptor and donor should produce increased_exon_inclusion.
+
+        BRCA2 exon 2: [32890559, 32890664], size=106bp, '+' strand.
+        Native acceptor (geo_na) = 32890559, native donor (geo_nd) = 32890664.
+        Variant at 32890540 (intron 1, 19bp from exon 2 — closer to exon 2 than exon 1).
+        DP_AG = 32890559 - 32890540 = 19  -> geo_ag = 32890559 = geo_na
+        DP_DG = 32890664 - 32890540 = 124 -> geo_dg = 32890664 = geo_nd
+        GEX_size = (124 - 19)*1 + 1 = 106 = native exon size.
+        """
+        result = sai10k_determine_aberrations(
+            ds_ag=0.3, ds_al=0.0, ds_dg=0.3, ds_dl=0.0,
+            dp_ag=19, dp_al=0, dp_dg=124, dp_dl=0,
+            ds_ag_alt=0, ds_al_alt=0, ds_dg_alt=0, ds_dl_alt=0,
+            variant_pos=32890540,
+            exon_starts=BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            exon_ends=BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            strand="+",
         )
-        self.assertEqual(result["aberration"]["max_delta_score"], 0.93)
+        types = [a["aberration_type"] for a in result]
+        self.assertIn("increased_exon_inclusion", types)
+        iei = next(a for a in result if a["aberration_type"] == "increased_exon_inclusion")
+        self.assertEqual(iei["max_delta_score"], 0.3)
+
+    def test_increased_exon_inclusion_minus_strand(self):
+        """Variant near a BRCA1 exon with gain positions matching native sites.
+
+        BRCA1 is on '-' strand. Genomic exon at index 1: [41199660, 41199720],
+        size=61bp. On '-' strand: native acceptor = exon_end = 41199720,
+        native donor = exon_start = 41199660.
+        Variant at 41199730 (intron, 10bp past exon end, closer to exon 1 than exon 2).
+        DP_AG = 41199720 - 41199730 = -10 -> geo_ag = 41199720 = geo_na
+        DP_DG = 41199660 - 41199730 = -70 -> geo_dg = 41199660 = geo_nd
+        Orientation: DP_AG*Strand = -10*-1=10, DP_DG*Strand = -70*-1=70 -> 10 < 70 passes.
+        GEX_size = (-70 - (-10))*(-1) + 1 = 60*1 + 1 = 61 = native exon size.
+        """
+        result = sai10k_determine_aberrations(
+            ds_ag=0.3, ds_al=0.0, ds_dg=0.3, ds_dl=0.0,
+            dp_ag=-10, dp_al=0, dp_dg=-70, dp_dl=0,
+            ds_ag_alt=0, ds_al_alt=0, ds_dg_alt=0, ds_dl_alt=0,
+            variant_pos=41199730,
+            exon_starts=BRCA1_TRANSCRIPT_HG19["EXON_STARTS"],
+            exon_ends=BRCA1_TRANSCRIPT_HG19["EXON_ENDS"],
+            strand="-",
+        )
+        types = [a["aberration_type"] for a in result]
+        self.assertIn("increased_exon_inclusion", types)
+
+    def test_no_increased_exon_inclusion_when_gex_size_mismatches(self):
+        """If GEX_size doesn't match native exon size, increased_exon_inclusion
+        should NOT fire (and pseudoexon shouldn't either since positions are
+        at native sites)."""
+        # Same setup as plus-strand test but shift DP_DG by 1 so GEX_size = 107 != 106.
+        result = sai10k_determine_aberrations(
+            ds_ag=0.3, ds_al=0.0, ds_dg=0.3, ds_dl=0.0,
+            dp_ag=19, dp_al=0, dp_dg=125, dp_dl=0,
+            ds_ag_alt=0, ds_al_alt=0, ds_dg_alt=0, ds_dl_alt=0,
+            variant_pos=32890540,
+            exon_starts=BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            exon_ends=BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            strand="+",
+        )
+        types = [a["aberration_type"] for a in result]
+        self.assertNotIn("increased_exon_inclusion", types)
+
+    def test_no_increased_exon_inclusion_when_dp_ag_mismatches_native(self):
+        """If DP_AG doesn't match the native acceptor position, increased_exon_inclusion
+        should NOT fire even if GEX_size matches."""
+        # Shift DP_AG by 1 (and DP_DG by 1 to keep GEX_size=106), so
+        # geo_ag = 32890560 != geo_na = 32890559.
+        result = sai10k_determine_aberrations(
+            ds_ag=0.3, ds_al=0.0, ds_dg=0.3, ds_dl=0.0,
+            dp_ag=20, dp_al=0, dp_dg=125, dp_dl=0,
+            ds_ag_alt=0, ds_al_alt=0, ds_dg_alt=0, ds_dl_alt=0,
+            variant_pos=32890540,
+            exon_starts=BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            exon_ends=BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            strand="+",
+        )
+        types = [a["aberration_type"] for a in result]
+        self.assertNotIn("increased_exon_inclusion", types)
+
+    def test_increased_exon_inclusion_frameshift_annotation(self):
+        """Increased exon inclusion should get proper frameshift annotation:
+        frameshift=None (no frame change), affects_coding if exon overlaps CDS."""
+        transcript_scores = {
+            "DS_AG": 0.3, "DS_AL": 0.0, "DS_DG": 0.3, "DS_DL": 0.0,
+            "DP_AG": 19, "DP_AL": 0, "DP_DG": 124, "DP_DL": 0,
+            "DS_AG_ALT": 0, "DS_AL_ALT": 0, "DS_DG_ALT": 0, "DS_DL_ALT": 0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "EXON_FRAMES": BRCA2_TRANSCRIPT_HG19["EXON_FRAMES"],
+            "STRAND": BRCA2_TRANSCRIPT_HG19["STRAND"],
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32890540)
+        types = [a["aberration_type"] for a in result["aberrations"]]
+        self.assertIn("increased_exon_inclusion", types)
+        iei = next(a for a in result["aberrations"]
+                   if a["aberration_type"] == "increased_exon_inclusion")
+        # BRCA2 exon 2 overlaps CDS (CDS_START=32890598 is within [32890559, 32890664])
+        self.assertTrue(iei["affects_coding"])
+        # Increased exon inclusion doesn't change reading frame
+        self.assertIsNone(iei["frameshift"])
+        self.assertEqual(iei["size"], 106)
+        self.assertIn("Increased exon inclusion", iei["frameshift_description"])
 
 
 if __name__ == "__main__":
