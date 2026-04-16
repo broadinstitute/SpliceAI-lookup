@@ -255,7 +255,8 @@ def main():
                         parser.error(f"Invalid genome version: {genome_version}")
 
                     run(f"wget -nc {gencode_gtf_url}")
-                    gtf_to_gene_pred_os_dir = "macOSX.x86_64" if platform.system() == "Darwin" else "linux.x86_64"
+                    # Pin to v369 on Linux — the "latest" binary requires glibc >=2.32 which is too new for Debian 11 / Ubuntu 20.04.
+                    gtf_to_gene_pred_os_dir = "macOSX.x86_64" if platform.system() == "Darwin" else "linux.x86_64.v369"
                     run(f"wget -nc https://hgdownload.soe.ucsc.edu/admin/exe/{gtf_to_gene_pred_os_dir}/gtfToGenePred")
                     run(f"chmod 777 gtfToGenePred")
                     gencode_gtf_paths[(genome_version, basic_or_comprehensive)] = os.path.basename(gencode_gtf_url)
