@@ -10,6 +10,6 @@
 annotation-utils @ git+https://github.com/bw2/annotation-utils
 gffutils
 pandas
-psycopg2
+psycopg2-binary
 python-dotenv
 tqdm
