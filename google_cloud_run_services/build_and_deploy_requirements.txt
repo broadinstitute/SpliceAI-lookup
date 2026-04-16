@@ -1,0 +1,15 @@
+# Dependencies for running build_and_deploy.py (and the annotation-generation
+# scripts it calls). Install with:
+#   python3 -m pip install -r build_and_deploy_requirements.txt
+#
+# This is a minimal subset of the top-level requirements.txt — it excludes
+# tensorflow, spliceai, pangolin, and the web-server dependencies, which are
+# only needed inside the Docker containers (not on the machine running
+# build_and_deploy.py).
+
+annotation-utils @ git+https://github.com/bw2/annotation-utils
+gffutils
+pandas
+psycopg2
+python-dotenv
+tqdm
