@@ -93,7 +93,7 @@ def get_transcript_structure_from_db(conn, transcript_id, genome_version):
 
     cursor = conn.cursor()
     cursor.execute(
-        f"""SELECT strand, cds_start, cds_end, exon_starts, exon_ends, exon_frames
+        f"""SELECT strand, cds_start, cds_end, exon_starts, exon_ends
            FROM {table_name} WHERE transcript_id = %s""",
         (transcript_id_without_version,),
     )
@@ -103,7 +103,7 @@ def get_transcript_structure_from_db(conn, transcript_id, genome_version):
     if not rows:
         return None
 
-    strand, cds_start, cds_end, exon_starts_str, exon_ends_str, exon_frames_str = rows[0]
+    strand, cds_start, cds_end, exon_starts_str, exon_ends_str = rows[0]
 
     # Parse comma-separated values and convert from 0-based to 1-based coordinates
     exon_starts_0based = [int(s) for s in exon_starts_str.rstrip(",").split(",") if s]
@@ -116,16 +116,11 @@ def get_transcript_structure_from_db(conn, transcript_id, genome_version):
     cds_start_1based = cds_start + 1 if cds_start is not None else None
     cds_end_1based = cds_end if cds_end is not None else None
 
-    exon_frames = None
-    if exon_frames_str:
-        exon_frames = [int(f) for f in exon_frames_str.rstrip(",").split(",") if f]
-
     return {
         "EXON_STARTS": exon_starts_1based,
         "EXON_ENDS": exon_ends_1based,
         "CDS_START": cds_start_1based,
         "CDS_END": cds_end_1based,
-        "EXON_FRAMES": exon_frames,
         "STRAND": strand,
     }
 
@@ -154,9 +149,6 @@ BRCA2_TRANSCRIPT_HG19 = {
         32930746, 32932066, 32936830, 32937670, 32944694, 32945237, 32950928,
         32953652, 32954050, 32954282, 32969070, 32971181, 32974405,
     ],
-    "EXON_FRAMES": [
-        -1, 0, 1, 1, 2, 1, 0, 1, 0, 1, 1, 1, 1, 2, 1, 0, 2, 2, 0, 0, 1, 0, 1, 0, 1, 0, 0,
-    ],
 }
 
 BRCA1_TRANSCRIPT_HG19 = {
@@ -179,9 +171,6 @@ BRCA1_TRANSCRIPT_HG19 = {
         41219712, 41223255, 41226538, 41228631, 41234592, 41243049, 41246877,
         41247939, 41249306, 41251897, 41256278, 41256973, 41258550, 41267796,
         41276132, 41277381,
-    ],
-    "EXON_FRAMES": [
-        1, 0, 1, 0, 0, 1, 1, 0, 1, 2, 1, 0, 1, 1, 2, 1, 0, 1, 2, 2, 2, 0, -1,
     ],
 }
 
@@ -533,7 +522,6 @@ class TestComputePredictions(unittest.TestCase):
             "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
             "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
             "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
-            "EXON_FRAMES": BRCA2_TRANSCRIPT_HG19["EXON_FRAMES"],
             "STRAND": BRCA2_TRANSCRIPT_HG19["STRAND"],
             "TX_START": BRCA2_TRANSCRIPT_HG19["TX_START"],
             "TX_END": BRCA2_TRANSCRIPT_HG19["TX_END"],
@@ -566,7 +554,6 @@ class TestComputePredictions(unittest.TestCase):
             "EXON_ENDS": BRCA1_TRANSCRIPT_HG19["EXON_ENDS"],
             "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
             "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
-            "EXON_FRAMES": BRCA1_TRANSCRIPT_HG19["EXON_FRAMES"],
             "STRAND": BRCA1_TRANSCRIPT_HG19["STRAND"],
             "TX_START": BRCA1_TRANSCRIPT_HG19["TX_START"],
             "TX_END": BRCA1_TRANSCRIPT_HG19["TX_END"],
@@ -712,7 +699,6 @@ class TestExampleVariants(unittest.TestCase):
             "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
             "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
             "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
-            "EXON_FRAMES": BRCA2_TRANSCRIPT_HG19["EXON_FRAMES"],
             "STRAND": BRCA2_TRANSCRIPT_HG19["STRAND"],
         }
 
@@ -746,7 +732,6 @@ class TestExampleVariants(unittest.TestCase):
             "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
             "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
             "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
-            "EXON_FRAMES": BRCA2_TRANSCRIPT_HG19["EXON_FRAMES"],
             "STRAND": BRCA2_TRANSCRIPT_HG19["STRAND"],
         }
 
@@ -775,7 +760,6 @@ class TestExampleVariants(unittest.TestCase):
             "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
             "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
             "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
-            "EXON_FRAMES": BRCA2_TRANSCRIPT_HG19["EXON_FRAMES"],
             "STRAND": BRCA2_TRANSCRIPT_HG19["STRAND"],
         }
 
@@ -802,7 +786,6 @@ class TestExampleVariants(unittest.TestCase):
             "EXON_ENDS": BRCA1_TRANSCRIPT_HG19["EXON_ENDS"],
             "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
             "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
-            "EXON_FRAMES": BRCA1_TRANSCRIPT_HG19["EXON_FRAMES"],
             "STRAND": BRCA1_TRANSCRIPT_HG19["STRAND"],
         }
 
@@ -838,7 +821,6 @@ class TestExampleVariants(unittest.TestCase):
             "EXON_ENDS": BRCA1_TRANSCRIPT_HG19["EXON_ENDS"],
             "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
             "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
-            "EXON_FRAMES": BRCA1_TRANSCRIPT_HG19["EXON_FRAMES"],
             "STRAND": BRCA1_TRANSCRIPT_HG19["STRAND"],
         }
 
@@ -954,7 +936,6 @@ class TestIncreasedExonInclusion(unittest.TestCase):
             "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
             "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
             "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
-            "EXON_FRAMES": BRCA2_TRANSCRIPT_HG19["EXON_FRAMES"],
             "STRAND": BRCA2_TRANSCRIPT_HG19["STRAND"],
         }
         result = sai10k_compute_predictions(transcript_scores, variant_pos=32890540)
@@ -968,6 +949,230 @@ class TestIncreasedExonInclusion(unittest.TestCase):
         self.assertIsNone(iei["frameshift"])
         self.assertEqual(iei["size"], 106)
         self.assertIn("Increased exon inclusion", iei["frameshift_description"])
+
+
+class TestExonSkippingFallback(unittest.TestCase):
+    """Fallback path in sai10k_annotate_frameshift for exon_skipping when the
+    reference exact-match lookup (_find_exons_between_loss_positions) fails.
+
+    Motivated by cases like CHEK2 22:28695127 C>T where the variant is at the
+    native donor but SpliceAI's DP_AL peak lands interior to the exon, so
+    GEO_AL doesn't match any exon boundary and the reference parser returns
+    NA|NA. The fallback declares single-exon skipping of the affected exon
+    whenever the variant is exonic AND at least one of GEO_AL/GEO_DL matches
+    the affected exon's own native splice site.
+    """
+
+    def test_fallback_uses_affected_exon_when_geo_al_interior(self):
+        """Variant at exon 4's donor (BRCA2 + strand). DP_DL=0 anchors at the
+        native donor, but DP_AL lands 50bp inside the exon so the reference
+        exact-match fails — the fallback should recover exon 4."""
+        # BRCA2 exon 4 (1-based 4, genomic index 3): [32899213, 32899321], 109 bp.
+        # Variant at 32899321 (exon donor on + strand = last base of exon 4).
+        # DP_DL = 0  -> GEO_DL = 32899321 == exon_ends[3]  (native donor match)
+        # DP_AL = -50 -> GEO_AL = 32899271 (50bp into exon 4; doesn't match any boundary)
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.30, "DS_DG": 0.00, "DS_DL": 0.80,
+            "DP_AG": 0, "DP_AL": -50, "DP_DG": 0, "DP_DL": 0,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32899321)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        # 109 bp exon 4, 109 % 3 = 1 -> frameshift.
+        self.assertEqual(es[0]["size"], 109)
+        self.assertTrue(es[0]["frameshift"])
+        self.assertEqual(es[0]["frameshift_description"], "Exon 4 skipping (109bp) - frameshift")
+
+    def test_no_fallback_when_variant_intronic(self):
+        """Variant in intron with both GEO_AL/GEO_DL interior should still
+        produce the 'could not be mapped' message (fallback requires exonic)."""
+        # BRCA2 intron 1 (between exon 1 end 32889804 and exon 2 start 32890559).
+        # Place variant at 32890000 and make both GEO_AL / GEO_DL land
+        # somewhere that doesn't match any exon boundary.
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.30, "DS_DG": 0.00, "DS_DL": 0.80,
+            "DP_AG": 0, "DP_AL": 100, "DP_DG": 0, "DP_DL": 200,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        # Variant 40bp into intron 1 — within d_50bp so loss branch still fires.
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32889844)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        self.assertEqual(
+            es[0]["frameshift_description"],
+            "Exon skipping predicted but skipped exon(s) could not be mapped",
+        )
+
+
+class TestDeltaTypeAndConfidence(unittest.TestCase):
+    """The line-1 display fields computed by sai10k_compute_predictions:
+    max_delta_score (overall max of the 4 Δ scores), delta_type (name of the
+    Δ column carrying that max), and confidence (high/moderate/low)."""
+
+    def _base_scores(self):
+        return {
+            "DS_AG": 0.00, "DS_AL": 0.00, "DS_DG": 0.00, "DS_DL": 0.00,
+            "DP_AG": 0, "DP_AL": 0, "DP_DG": 0, "DP_DL": 0,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+
+    def test_high_confidence_donor_loss(self):
+        """Max Δ ≥ 0.8 → confidence='high'. Use BRCA2 c.67+1G>A (DS_DL=0.98)."""
+        scores = self._base_scores()
+        scores.update({"DS_AL": 0.81, "DS_DL": 0.98, "DP_AL": -106, "DP_DL": -1})
+        result = sai10k_compute_predictions(scores, variant_pos=32890665)
+        self.assertTrue(result["aberrations"])
+        ab = result["aberrations"][0]
+        self.assertEqual(ab["max_delta_score"], 0.98)
+        self.assertEqual(ab["delta_type"], "donor loss")
+        self.assertEqual(ab["confidence"], "high")
+
+    def test_moderate_confidence_acceptor_loss(self):
+        """Max Δ in [0.5, 0.8) → confidence='moderate'. Synthesize a loss-pair
+        that fires exon_skipping with max=0.54."""
+        scores = self._base_scores()
+        # Variant at BRCA2 exon 2 donor (32890664); DP_DL=0, DP_AL matches exon 2 acceptor.
+        scores.update({
+            "DS_AL": 0.54, "DS_DL": 0.32,
+            "DP_AL": -105,  # 32890664 + (-105) = 32890559 = exon_starts[1]
+            "DP_DL": 0,
+        })
+        result = sai10k_compute_predictions(scores, variant_pos=32890664)
+        self.assertTrue(result["aberrations"])
+        ab = result["aberrations"][0]
+        self.assertEqual(ab["max_delta_score"], 0.54)
+        self.assertEqual(ab["delta_type"], "acceptor loss")
+        self.assertEqual(ab["confidence"], "moderate")
+
+    def test_low_confidence(self):
+        """Max Δ in [0.2, 0.5) → confidence='low'. Use the cryptic-acceptor
+        partial_exon_deletion fixture (DS_AG=0.3 is the max)."""
+        scores = self._base_scores()
+        scores.update({
+            "DS_AG": 0.30, "DP_AG": 20,
+            "DS_AG_ALT": 0.5, "DS_AL_ALT": 0.3,
+        })
+        result = sai10k_compute_predictions(scores, variant_pos=32890580)
+        self.assertTrue(result["aberrations"])
+        ab = result["aberrations"][0]
+        self.assertEqual(ab["max_delta_score"], 0.30)
+        self.assertEqual(ab["delta_type"], "acceptor gain")
+        self.assertEqual(ab["confidence"], "low")
+
+    def test_all_aberrations_share_variant_level_headline(self):
+        """When one variant produces multiple aberrations (e.g. combination
+        row), they should all carry the same max_delta_score / delta_type /
+        confidence since those are variant-level, not per-aberration."""
+        scores = self._base_scores()
+        # BRCA2 c.-40+1G>A setup: DS_DL=0.99 loss + cryptic donor partial combo.
+        scores.update({
+            "DS_AG": 0.01, "DS_AL": 0.08, "DS_DG": 0.57, "DS_DL": 0.99,
+            "DP_AG": -38, "DP_AL": 754, "DP_DG": -100, "DP_DL": -1,
+            "DS_DG_ALT": 0.7, "DS_DL_ALT": 0.01,
+        })
+        result = sai10k_compute_predictions(scores, variant_pos=32889805)
+        self.assertGreaterEqual(len(result["aberrations"]), 2)
+        headlines = {
+            (a["max_delta_score"], a["delta_type"], a["confidence"])
+            for a in result["aberrations"]
+        }
+        self.assertEqual(headlines, {(0.99, "donor loss", "high")})
+
+
+class TestPotentialPrefix(unittest.TestCase):
+    """'Potential ' prefix on exon_skipping / whole_intron_retention when the
+    weaker of the two loss Δ scores is in [0.02, 0.2) — flags loss-pair
+    asymmetry to the reader (Canson reviewer feedback, 2026-04-17)."""
+
+    def test_potential_exon_skipping_on_weak_paired_loss(self):
+        """BRCA2 Figure 8 profile: DS_AL=0.13 weak partner + DS_DL=0.93 strong.
+        Expect 'Potential exon N skipping...' in frameshift_description."""
+        # BRCA2 exon 2 (1-based 2): [32890559, 32890664], 106 bp, frameshift.
+        # Variant at 32890600 inside exon 2. DP_AL=-41 matches exon_starts[1],
+        # DP_DL=64 matches exon_ends[1], so reference lookup succeeds directly.
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.13, "DS_DG": 0.00, "DS_DL": 0.93,
+            "DP_AG": 0, "DP_AL": -41, "DP_DG": 0, "DP_DL": 64,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32890600)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        # 106 bp, 106 % 3 = 1 -> frameshift.
+        self.assertEqual(
+            es[0]["frameshift_description"],
+            "Potential exon 2 skipping (106bp) - frameshift",
+        )
+
+    def test_no_potential_prefix_when_both_loss_scores_strong(self):
+        """Both DS_AL and DS_DL ≥ 0.2 → no 'Potential' prefix."""
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.50, "DS_DG": 0.00, "DS_DL": 0.93,
+            "DP_AG": 0, "DP_AL": -41, "DP_DG": 0, "DP_DL": 64,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32890600)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        self.assertFalse(es[0]["frameshift_description"].startswith("Potential"))
+        self.assertEqual(
+            es[0]["frameshift_description"],
+            "Exon 2 skipping (106bp) - frameshift",
+        )
+
+
+class TestPartialShiftDescriptions(unittest.TestCase):
+    """Reformatted line-2 strings for partial_exon_deletion / partial_intron_retention:
+    '<Donor|Acceptor> shift (Nbp partial ...) - <frameshift|in-frame|non-coding>'."""
+
+    def test_acceptor_shift_partial_exon_deletion(self):
+        """Cryptic acceptor activation inside an exon → 'Acceptor shift (...)'."""
+        # Reuse the cryptic_acceptor fixture at BRCA2 exon 2.
+        transcript_scores = {
+            "DS_AG": 0.30, "DS_AL": 0.00, "DS_DG": 0.00, "DS_DL": 0.00,
+            "DP_AG": 20, "DP_AL": 0, "DP_DG": 0, "DP_DL": 0,
+            "DS_AG_ALT": 0.5, "DS_AL_ALT": 0.3, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32890580)
+        pd = [a for a in result["aberrations"] if a["aberration_type"] == "partial_exon_deletion"]
+        self.assertEqual(len(pd), 1)
+        # partial_size = dp_ag - dp_na = 20 - (-21) = 41 bp; 41 % 3 = 2 -> frameshift.
+        self.assertEqual(pd[0]["size"], 41)
+        self.assertEqual(
+            pd[0]["frameshift_description"],
+            "Acceptor shift (41bp partial exon deletion) - frameshift",
+        )
 
 
 if __name__ == "__main__":

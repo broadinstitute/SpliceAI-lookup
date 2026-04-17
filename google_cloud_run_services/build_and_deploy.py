@@ -76,8 +76,7 @@ def update_transcript_tables(genome_versions, gencode_version):
                 cds_end INTEGER,
                 exon_count INTEGER NOT NULL,
                 exon_starts TEXT NOT NULL,
-                exon_ends TEXT NOT NULL,
-                exon_frames TEXT
+                exon_ends TEXT NOT NULL
             )
         """)
         conn.commit()
@@ -140,14 +139,13 @@ def update_transcript_tables(genome_versions, gencode_version):
                 int(row["exonCount"]),
                 row["exonStarts"],
                 row["exonEnds"],
-                row["exonFrames"] if pd.notna(row["exonFrames"]) else None,
             ))
 
         # Bulk insert using execute_values (much faster than individual inserts)
         batch_size = 1000
         insert_sql = f"""INSERT INTO {temp_table_name}
                (transcript_id, chrom, strand, tx_start, tx_end,
-                cds_start, cds_end, exon_count, exon_starts, exon_ends, exon_frames)
+                cds_start, cds_end, exon_count, exon_starts, exon_ends)
                VALUES %s
                ON CONFLICT (transcript_id) DO UPDATE SET
                    chrom = EXCLUDED.chrom,
@@ -158,8 +156,7 @@ def update_transcript_tables(genome_versions, gencode_version):
                    cds_end = EXCLUDED.cds_end,
                    exon_count = EXCLUDED.exon_count,
                    exon_starts = EXCLUDED.exon_starts,
-                   exon_ends = EXCLUDED.exon_ends,
-                   exon_frames = EXCLUDED.exon_frames"""
+                   exon_ends = EXCLUDED.exon_ends"""
 
         for i in tqdm(range(0, len(rows), batch_size), desc=f"Inserting GRCh{genome_version}"):
             batch = rows[i:i + batch_size]

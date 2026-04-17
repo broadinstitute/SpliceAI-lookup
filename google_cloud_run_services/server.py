@@ -242,7 +242,6 @@ def get_transcript_structure(conn, transcript_id, genome_version):
             - EXON_ENDS: list of 1-based exon end positions
             - CDS_START: 1-based CDS start position (or None if non-coding)
             - CDS_END: 1-based CDS end position (or None if non-coding)
-            - EXON_FRAMES: list of frame values for each exon (or None)
             - STRAND: '+' or '-'
     """
     if conn is None:
@@ -254,7 +253,7 @@ def get_transcript_structure(conn, transcript_id, genome_version):
     table_name = f"transcripts_hg{genome_version}"
     rows = run_sql(
         conn,
-        f"""SELECT strand, cds_start, cds_end, exon_starts, exon_ends, exon_frames
+        f"""SELECT strand, cds_start, cds_end, exon_starts, exon_ends
            FROM {table_name} WHERE transcript_id = %s""",
         (transcript_id_without_version,)
     )
@@ -262,7 +261,7 @@ def get_transcript_structure(conn, transcript_id, genome_version):
     if not rows:
         return None
 
-    strand, cds_start, cds_end, exon_starts_str, exon_ends_str, exon_frames_str = rows[0]
+    strand, cds_start, cds_end, exon_starts_str, exon_ends_str = rows[0]
 
     # Parse comma-separated values and convert from 0-based to 1-based coordinates
     # genePred format uses 0-based start and 0-based half-open end
@@ -277,17 +276,11 @@ def get_transcript_structure(conn, transcript_id, genome_version):
     cds_start_1based = cds_start + 1 if cds_start is not None else None
     cds_end_1based = cds_end if cds_end is not None else None
 
-    # Parse exon frames
-    exon_frames = None
-    if exon_frames_str:
-        exon_frames = [int(f) for f in exon_frames_str.rstrip(",").split(",") if f]
-
     return {
         "EXON_STARTS": exon_starts_1based,
         "EXON_ENDS": exon_ends_1based,
         "CDS_START": cds_start_1based,
         "CDS_END": cds_end_1based,
-        "EXON_FRAMES": exon_frames,
         "STRAND": strand,
     }
 
@@ -382,7 +375,7 @@ def exceeds_rate_limit(conn, user_ip, params):
 # Bump SAI10K_VERSION whenever sai10k_predictions.py changes its classification
 # logic or output shape, so cached responses from older algorithm versions are
 # invalidated and recomputed.
-SAI10K_VERSION = "v5"
+SAI10K_VERSION = "v6"
 
 
 def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):

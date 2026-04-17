@@ -193,12 +193,14 @@ def _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_end
     if affected_region['region_type'] == 'exon':
         assoc_idx = idx
     else:
-        # Intronic: pick the closer flanking exon.
-        # Intron `idx` lies between genomic exons `idx` and `idx + 1`.
-        intron_start = exon_ends[idx] + 1
-        intron_end = exon_starts[idx + 1] - 1
-        dist_to_upstream = variant_pos - intron_start   # from exon idx's 3' end
-        dist_to_downstream = intron_end - variant_pos   # from exon idx+1's 5' end
+        # Intronic: pick the closer flanking exon. Measure distance from each
+        # exon's nearest boundary (the last exonic base for the upstream exon,
+        # the first exonic base for the downstream exon), consistent with
+        # sai10k_find_affected_region:142-143 and the Canson R parser's
+        # d_from_exon formulation (R:857-871). Prior versions measured from
+        # the first intronic base, introducing a 1-bp upstream bias at ties.
+        dist_to_upstream = variant_pos - exon_ends[idx]
+        dist_to_downstream = exon_starts[idx + 1] - variant_pos
         assoc_idx = idx if dist_to_upstream <= dist_to_downstream else idx + 1
 
     exon_start = exon_starts[assoc_idx]
@@ -324,7 +326,6 @@ def sai10k_determine_aberrations(
             (exon_skipping, whole_intron_retention, pseudoexon,
              increased_exon_inclusion, partial_exon_deletion,
              partial_intron_retention).
-        description: short human-readable description.
         max_delta_score: driving delta score.
         affected_region: dict from sai10k_find_affected_region, or None.
         geo_ag, geo_al, geo_dg, geo_dl: 1-based genomic positions of predicted
@@ -374,10 +375,9 @@ def sai10k_determine_aberrations(
     else:
         d_from_exon = None  # couldn't locate variant
 
-    def make(ab_type, description, driving_score, branch):
+    def make(ab_type, driving_score, branch):
         return {
             'aberration_type': ab_type,
-            'description': description,
             'max_delta_score': driving_score,
             'affected_region': affected_region,
             'geo_ag': geo_ag,
@@ -416,15 +416,9 @@ def sai10k_determine_aberrations(
         #   DP_AL*Strand < DP_DL*Strand  -> exon skipping
         #   else                          -> whole intron retention
         if dp_al * strand_sign < dp_dl * strand_sign:
-            ab = make(
-                'exon_skipping',
-                'Predicted exon skipping (donor and acceptor loss)',
-                driving, 'loss')
+            ab = make('exon_skipping', driving, 'loss')
         else:
-            ab = make(
-                'whole_intron_retention',
-                'Predicted whole intron retention (donor and acceptor loss)',
-                driving, 'loss')
+            ab = make('whole_intron_retention', driving, 'loss')
         ab['_potential'] = is_potential
         aberrations.append(ab)
 
@@ -486,18 +480,12 @@ def sai10k_determine_aberrations(
         )
 
         if pseudoexon_conditions:
-            aberrations.append(make(
-                'pseudoexon',
-                'Predicted pseudoexon activation',
-                driving, 'gain_A'))
+            aberrations.append(make('pseudoexon', driving, 'gain_A'))
         elif native and native['native_exon_size'] and gex_size == native['native_exon_size']:
             # Increased exon inclusion: the gained exon exactly matches a
             # native exon AND the gain positions coincide with native sites.
             if dp_ag == native['dp_na'] and dp_dg == native['dp_nd']:
-                aberrations.append(make(
-                    'increased_exon_inclusion',
-                    'Predicted increased exon inclusion',
-                    driving, 'gain_A'))
+                aberrations.append(make('increased_exon_inclusion', driving, 'gain_A'))
 
     # -------------------------------------------------------------------
     # GAIN Subflow B: cryptic acceptor / donor activation
@@ -561,17 +549,11 @@ def sai10k_determine_aberrations(
             driving = ds_ag  # use delta score, not raw ALT score
             if (partial_size > 0 and partial_size < native['native_exon_size']
                     and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
-                aberrations.append(make(
-                    'partial_exon_deletion',
-                    "5' partial exon deletion (cryptic acceptor)",
-                    driving, 'gain_B_acceptor'))
+                aberrations.append(make('partial_exon_deletion', driving, 'gain_B_acceptor'))
                 aberrations[-1]['_partial_size'] = partial_size
             elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
                   and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
-                aberrations.append(make(
-                    'partial_intron_retention',
-                    "5' partial intron retention (cryptic acceptor)",
-                    driving, 'gain_B_acceptor'))
+                aberrations.append(make('partial_intron_retention', driving, 'gain_B_acceptor'))
                 # Store signed partial_size (negative = retention); formatters take abs() for display.
                 aberrations[-1]['_partial_size'] = partial_size
 
@@ -581,17 +563,11 @@ def sai10k_determine_aberrations(
             driving = ds_dg  # use delta score, not raw ALT score
             if (partial_size > 0 and partial_size < native['native_exon_size']
                     and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
-                aberrations.append(make(
-                    'partial_exon_deletion',
-                    "3' partial exon deletion (cryptic donor)",
-                    driving, 'gain_B_donor'))
+                aberrations.append(make('partial_exon_deletion', driving, 'gain_B_donor'))
                 aberrations[-1]['_partial_size'] = partial_size
             elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
                   and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
-                aberrations.append(make(
-                    'partial_intron_retention',
-                    "3' partial intron retention (cryptic donor)",
-                    driving, 'gain_B_donor'))
+                aberrations.append(make('partial_intron_retention', driving, 'gain_B_donor'))
                 aberrations[-1]['_partial_size'] = partial_size
 
     return aberrations
@@ -656,7 +632,6 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
         size: integer bp when determinable
         size_type: 'exon' | 'intron' | 'pseudoexon' | 'partial'
         frameshift_description: formatted string for display
-        exon_numbers: list of biological exon numbers (for exon_skipping)
     """
     # Treat cds_start==cds_end as non-coding (genePred encodes non-coding
     # transcripts with coincident cds start/end; after 0-based-to-1-based
@@ -722,7 +697,6 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             aberration['frameshift'] = frameshift if segment_in_cds else None
             aberration['size'] = total_size
             aberration['size_type'] = 'exon'
-            aberration['exon_numbers'] = result['biological_numbers']
             if is_potential:
                 label = 'Potential exon' if len(result['biological_numbers']) == 1 else 'Potential exons'
             else:
