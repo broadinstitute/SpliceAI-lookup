@@ -601,8 +601,8 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
     all_non_zero_scores_transcript_id = selected_transcript["NAME"] if selected_transcript else None
 
     for transcript_scores in candidate_transcripts:
-        for redundant_key in "NAME", "STRAND", "ALL_NON_ZERO_SCORES":
-            del transcript_scores[redundant_key]
+        for redundant_key in ("NAME", "STRAND", "ALL_NON_ZERO_SCORES"):
+            transcript_scores.pop(redundant_key, None)
 
     return {
         "variant": variant,

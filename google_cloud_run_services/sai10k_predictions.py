@@ -170,8 +170,8 @@ def _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_end
     Both acceptor and donor come from the SAME exon, so the increased_exon_inclusion
     condition (DP_AG == DP_NA AND DP_DG == DP_ND) is geometrically satisfiable.
 
-    Also returns the adjacent exons' boundaries (prev_eend, prev_estart,
-    next_estart, next_eend) in genomic order, used by the cryptic subflow's
+    Also returns the adjacent exons' boundaries (prev_eend, next_estart,
+    next_eend) in genomic order, used by the cryptic subflow's
     orientation checks.
 
     Returns dict with:
@@ -180,8 +180,8 @@ def _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_end
         dp_na, dp_nd:   offsets from variant_pos
         native_exon_size: size of the associated native exon (bp)
         assoc_idx:      0-based genomic index of the associated exon
-        prev_eend, prev_estart, next_estart, next_eend: adjacent exon
-                        boundaries (genomic order), or None at the transcript ends
+        prev_eend, next_estart, next_eend: adjacent exon boundaries
+                        (genomic order), or None at the transcript ends
     """
     if not affected_region or not exon_starts:
         return None
@@ -214,7 +214,6 @@ def _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_end
         geo_na = exon_start
         geo_nd = exon_end
 
-    prev_estart = exon_starts[assoc_idx - 1] if assoc_idx > 0 else None
     prev_eend = exon_ends[assoc_idx - 1] if assoc_idx > 0 else None
     next_estart = exon_starts[assoc_idx + 1] if assoc_idx + 1 < num_exons else None
     next_eend = exon_ends[assoc_idx + 1] if assoc_idx + 1 < num_exons else None
@@ -226,7 +225,6 @@ def _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_end
         'dp_nd': geo_nd - variant_pos,
         'native_exon_size': exon_end - exon_start + 1,
         'assoc_idx': assoc_idx,
-        'prev_estart': prev_estart,
         'prev_eend': prev_eend,
         'next_estart': next_estart,
         'next_eend': next_eend,
@@ -258,10 +256,11 @@ def _find_exons_between_loss_positions(geo_al, geo_dl, strand, exon_starts, exon
     num_exons = len(exon_starts)
     is_reverse = strand == '-'
     # Exact match (reference parser behavior). SpliceAI returns splice-site
-    # positions exactly at exon boundaries; a wider tolerance risks matching
-    # the wrong exon in compact gene structures.
-    tolerance = 0
-
+    # positions exactly at exon boundaries; a wider tolerance would risk
+    # matching the wrong exon in compact gene structures. Cases where DP_AL
+    # or DP_DL lands interior to the affected exon fall through to the
+    # sai10k_annotate_frameshift fallback (single-exon skipping of the
+    # affected exon).
     # On '+' strand: acceptor_loss is at exon_start (1-based closed), donor_loss
     # at exon_end. On '-' strand: acceptor_loss is at exon_end, donor_loss at
     # exon_start.
@@ -274,9 +273,9 @@ def _find_exons_between_loss_positions(geo_al, geo_dl, strand, exon_starts, exon
         else:
             acceptor_pos = exon_starts[i]
             donor_pos = exon_ends[i]
-        if abs(acceptor_pos - geo_al) <= tolerance:
+        if acceptor_pos == geo_al:
             acceptor_candidates.append(i)
-        if abs(donor_pos - geo_dl) <= tolerance:
+        if donor_pos == geo_dl:
             donor_candidates.append(i)
 
     if not acceptor_candidates or not donor_candidates:
@@ -326,7 +325,9 @@ def sai10k_determine_aberrations(
             (exon_skipping, whole_intron_retention, pseudoexon,
              increased_exon_inclusion, partial_exon_deletion,
              partial_intron_retention).
-        max_delta_score: driving delta score.
+        max_delta_score: per-branch driving delta score. NOTE:
+            sai10k_compute_predictions overwrites this with the variant-level
+            overall max across all four Δ scores before returning to callers.
         affected_region: dict from sai10k_find_affected_region, or None.
         geo_ag, geo_al, geo_dg, geo_dl: 1-based genomic positions of predicted
             acceptor-gain, acceptor-loss, donor-gain, donor-loss sites.

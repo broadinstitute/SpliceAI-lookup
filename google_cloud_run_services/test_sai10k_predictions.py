@@ -1175,5 +1175,174 @@ class TestPartialShiftDescriptions(unittest.TestCase):
         )
 
 
+class TestExonSkippingFallbackReverseStrand(unittest.TestCase):
+    """Reverse-strand coverage for the fallback path in sai10k_annotate_frameshift.
+
+    On '-' strand, the affected exon's biological donor is at exon_starts[idx]
+    (low genomic coord) and biological acceptor is at exon_ends[idx]. A
+    CHEK2-style variant at the donor with an interior DP_AL peak exercises
+    the is_reverse=True branch (sai10k_predictions.py:678)."""
+
+    def test_fallback_on_minus_strand_donor_variant(self):
+        """BRCA1 is on '-' strand. Pick an internal exon and place a variant
+        exactly at its biological donor (exon_starts on '-' strand)."""
+        exon_starts = BRCA1_TRANSCRIPT_HG19["EXON_STARTS"]
+        exon_ends = BRCA1_TRANSCRIPT_HG19["EXON_ENDS"]
+        # Genomic index 4 (biological exon 23 - 4 = 19; BRCA1 has 23 exons):
+        # exon_starts[4]=41209069, exon_ends[4]=41209152, size=84 bp (84 % 3 = 0 -> in-frame).
+        # On '-' strand, biological donor = exon_starts[4] = 41209069.
+        variant_pos = 41209069
+        bio_exon = len(exon_starts) - 4  # = 19
+        exon_size = exon_ends[4] - exon_starts[4] + 1  # = 84
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.30, "DS_DG": 0.00, "DS_DL": 0.80,
+            # DP_DL = 0 -> GEO_DL = variant_pos = exon_starts[4] (native donor on '-' strand)
+            # DP_AL = 50 -> GEO_AL = 41209119, 50 bp inside exon (not at exon_ends[4] acceptor)
+            "DP_AG": 0, "DP_AL": 50, "DP_DG": 0, "DP_DL": 0,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": exon_starts,
+            "EXON_ENDS": exon_ends,
+            "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "-",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        # Orientation on '-' strand for exon_skipping: dp_al*-1 < dp_dl*-1
+        # -50 < 0, so exon_skipping (not whole_intron_retention). ✓
+        self.assertEqual(es[0]["size"], exon_size)
+        self.assertEqual(
+            es[0]["frameshift_description"],
+            f"Exon {bio_exon} skipping ({exon_size}bp) - in-frame",
+        )
+
+
+class TestNativeSplicesitesTiebreak(unittest.TestCase):
+    """Regression: the off-by-one fix in _get_native_splice_sites changed
+    tiebreak behavior at exact equidistance from two flanking exons.
+    Pin the '<=' upstream-favoring convention."""
+
+    def test_variant_equidistant_picks_upstream(self):
+        """BRCA2 intron 1 lies between exon_ends[0]=32889804 and
+        exon_starts[1]=32890559 (754 bp gap). Midpoint: variant equidistant
+        from both flanking exons. With the '<=' tiebreak, assoc_idx = 0
+        (upstream)."""
+        # Pick a gap where both distances fit inside 50 bp of the boundary
+        # so the loss branch fires. Use an artificially small intron for the
+        # test so the variant is within d_50bp of both flanking exons.
+        exon_starts = [100, 221, 400]  # intron 1 spans (140, 220) = 80 bp
+        exon_ends =   [140, 300, 500]
+        # Midpoint of intron 1: 180 (equidistant from exon_ends[0]=140 and exon_starts[1]=221:
+        # dist_to_upstream = 180 - 140 = 40; dist_to_downstream = 221 - 180 = 41.
+        # Wait — these aren't quite equal. Use 180 and verify:
+        # Actually for exactly-equal: variant_pos - exon_ends[0] == exon_starts[1] - variant_pos
+        #   variant_pos = (exon_ends[0] + exon_starts[1]) / 2 = (140 + 221) / 2 = 180.5.
+        # Integer midpoint isn't achievable with these coords. Use exon_starts[1]=221.
+        # Adjust so midpoint is an integer: exon_ends[0]=140, exon_starts[1]=220 → midpoint 180.
+        exon_ends = [140, 300, 500]
+        exon_starts = [100, 220, 400]
+        # variant_pos=180: dist_to_upstream = 180-140=40, dist_to_downstream = 220-180=40. Tie.
+
+        # Build a scenario where the loss branch fires and assoc_idx determines
+        # which exon's splice sites become "native" for the cryptic subflow.
+        # We don't need to assert on cryptic output; we can directly invoke
+        # the _get_native_splice_sites helper.
+        from sai10k_predictions import _get_native_splice_sites, sai10k_find_affected_region
+        region = sai10k_find_affected_region(180, exon_starts, exon_ends, strand="+")
+        native = _get_native_splice_sites(region, 180, exon_starts, exon_ends, strand="+")
+        self.assertEqual(native["assoc_idx"], 0)  # upstream exon due to `<=` tiebreak
+        # Native donor of upstream exon on + strand = exon_ends[0] = 140
+        self.assertEqual(native["geo_nd"], 140)
+
+
+class TestPotentialWholeIntronRetention(unittest.TestCase):
+    """Complements TestPotentialPrefix by exercising the 'Potential whole
+    intron retention' label (sai10k_annotate_frameshift:726)."""
+
+    def test_potential_whole_intron_retention_on_weak_paired_loss(self):
+        """Variant in intron 1 with asymmetric loss pair and orientation
+        favoring whole_intron_retention over exon_skipping."""
+        exon_starts = BRCA2_TRANSCRIPT_HG19["EXON_STARTS"]
+        exon_ends = BRCA2_TRANSCRIPT_HG19["EXON_ENDS"]
+        # Intron 1 spans [32889805, 32890558] (754 bp). Place variant within
+        # d_50bp of exon 2's acceptor. DP_AL matches exon 2 acceptor
+        # (32890559), DP_DL matches exon 1 donor (32889804) — orientation
+        # gives whole_intron_retention (dp_al*1 > dp_dl*1).
+        variant_pos = 32890549  # 10 bp upstream of exon 2 acceptor
+        transcript_scores = {
+            "DS_AG": 0.0, "DS_AL": 0.93, "DS_DG": 0.0, "DS_DL": 0.13,  # weak donor partner
+            "DP_AG": 0, "DP_AL": 10, "DP_DG": 0, "DP_DL": -745,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": exon_starts,
+            "EXON_ENDS": exon_ends,
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        wir = [a for a in result["aberrations"] if a["aberration_type"] == "whole_intron_retention"]
+        self.assertEqual(len(wir), 1)
+        self.assertTrue(wir[0]["frameshift_description"].startswith("Potential whole intron retention"))
+
+
+class TestDonorShiftPartialDescription(unittest.TestCase):
+    """The donor-shift branch (_branch='gain_B_donor') uses seg_a = geo_nd
+    (native donor) and shift_type='Donor'. Previously only the acceptor-shift
+    branch had a description test."""
+
+    def test_donor_shift_partial_exon_deletion(self):
+        """Cryptic donor inside the exon upstream of the native donor should
+        render as 'Donor shift (Nbp partial exon deletion) - ...'."""
+        # BRCA2 exon 2: [32890559, 32890664], native donor at 32890664 on '+' strand.
+        # Variant at 32890650 (14 bp upstream of native donor, still inside the exon).
+        # DP_DG = -10 -> GEO_DG = 32890640 (cryptic donor 24 bp into the exon).
+        # partial_size = (dp_nd - dp_dg) * strand = (14 - (-10)) * 1 = 24, positive -> partial exon deletion.
+        # Need cryptic_donor_check: DS_DG >= 0.2 AND donor_diff > -0.2.
+        transcript_scores = {
+            "DS_AG": 0.0, "DS_AL": 0.0, "DS_DG": 0.35, "DS_DL": 0.0,
+            "DP_AG": 0, "DP_AL": 0, "DP_DG": -10, "DP_DL": 0,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0,
+            "DS_DG_ALT": 0.5, "DS_DL_ALT": 0.3,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32890650)
+        pd = [a for a in result["aberrations"] if a["aberration_type"] == "partial_exon_deletion"]
+        self.assertEqual(len(pd), 1)
+        self.assertEqual(pd[0]["size"], 24)
+        self.assertEqual(
+            pd[0]["frameshift_description"],
+            "Donor shift (24bp partial exon deletion) - in-frame",  # 24 % 3 == 0 -> in-frame
+        )
+
+
+class TestDeltaTypeTieBreak(unittest.TestCase):
+    """When two or more Δ scores tie at the max, Python's max() returns the
+    first item in the iterable. The order in sai10k_compute_predictions is:
+    acceptor loss, donor loss, acceptor gain, donor gain. Pin this convention."""
+
+    def test_al_dl_tie_picks_acceptor_loss(self):
+        """DS_AL == DS_DL == 0.50 → delta_type = 'acceptor loss' (first)."""
+        transcript_scores = {
+            "DS_AG": 0.0, "DS_AL": 0.50, "DS_DG": 0.0, "DS_DL": 0.50,
+            "DP_AG": 0, "DP_AL": -41, "DP_DG": 0, "DP_DL": 64,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32890600)
+        self.assertTrue(result["aberrations"])
+        self.assertEqual(result["aberrations"][0]["delta_type"], "acceptor loss")
+        self.assertEqual(result["aberrations"][0]["max_delta_score"], 0.50)
+        self.assertEqual(result["aberrations"][0]["confidence"], "moderate")
+
+
 if __name__ == "__main__":
     unittest.main()
