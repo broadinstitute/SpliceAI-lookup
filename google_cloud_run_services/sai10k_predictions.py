@@ -678,6 +678,28 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
     if aberration_type == 'exon_skipping':
         strand = aberration.get('_strand', '+')
         result = _find_exons_between_loss_positions(geo_al, geo_dl, strand, exon_starts, exon_ends)
+        # Reference-parser fallback: the Canson algorithm (spliceAI_parser.R:239,
+        # spliceai_parser.py:312-329) requires BOTH geo_al and geo_dl to sit exactly
+        # at exon boundaries. When SpliceAI's DP_AL/DP_DL peak lands interior to the
+        # affected exon (e.g. donor-site variants where acceptor-loss peaks inside the
+        # same exon), that exact-match lookup returns NA|NA. If the variant is exonic
+        # and at least one of geo_al/geo_dl still matches the affected exon's own
+        # splice site, treat that single exon as the skipped one.
+        if not result['match'] and affected_region and affected_region.get('region_type') == 'exon':
+            is_reverse = strand == '-'
+            idx = affected_region.get('_genomic_index')
+            if idx is not None and 0 <= idx < len(exon_starts):
+                acc_pos = exon_ends[idx] if is_reverse else exon_starts[idx]
+                don_pos = exon_starts[idx] if is_reverse else exon_ends[idx]
+                if geo_al == acc_pos or geo_dl == don_pos:
+                    num_exons = len(exon_starts)
+                    bio_num = num_exons - idx if is_reverse else idx + 1
+                    result = {
+                        'genomic_indices': [idx],
+                        'biological_numbers': [bio_num],
+                        'total_size': exon_ends[idx] - exon_starts[idx] + 1,
+                        'match': True,
+                    }
         if result['match']:
             total_size = result['total_size']
             frameshift = total_size % 3 != 0
