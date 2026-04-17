@@ -807,7 +807,7 @@
         const points = predictorScoreToPoints[predictor](record)
         const label = predictorPointsToLabel[points]
         const predictorLabel = nameMapForPredictorScores[predictor] || predictor
-        let helpText = `The ${record.score} ${nameMapForPredictorScores[predictor] || predictor} score is in the ${label} range and would count for ${points} points based on thresholds and points established for missense variants in <a href='https://www.biorxiv.org/content/10.1101/2024.09.17.611902v1.full' target='_blank'>Bergquist et al. 2024</a> and <a href='https://pmc.ncbi.nlm.nih.gov/articles/PMC9748256/' target='_blank'>Pejaver et al. 2022</a>`
+        let helpText = `The ${record.score} ${predictorLabel} score is in the ${label} range and would count for ${points} points based on thresholds and points established for missense variants in <a href='https://www.biorxiv.org/content/10.1101/2024.09.17.611902v1.full' target='_blank'>Bergquist et al. 2024</a> and <a href='https://pmc.ncbi.nlm.nih.gov/articles/PMC9748256/' target='_blank'>Pejaver et al. 2022</a>`
         // generate a color legend as an html table:
         helpText += `<br /><br /><b>Legend:</b><br /><br />`
         helpText += `<table style='border: 1px !important; border-collapse: collapse;'>`
@@ -1427,11 +1427,9 @@
                 primateAndPromoterAiTables[genomeVersion].getLines(chrom, pos-1, pos, line => {
                     //console.log("Got line:", line)
                     const fields = line.split('\t')
-                    const lineChrom = fields[0]
                     const linePos = parseInt(fields[1])
                     const lineRef = fields[2]
                     const lineAlt = fields[3]
-                    //console.log("`Got scores`:", fields)
 
                     if (linePos != pos || lineRef != ref || lineAlt != alt) {
                         return
@@ -1455,13 +1453,10 @@
                 },),
 
                 alphaMissenseTables[genomeVersion].getLines(chrom, pos-1, pos, line => {
-                    //console.log("Got line:", line)
                     const fields = line.split('\t')
-                    const lineChrom = fields[0]
                     const linePos = parseInt(fields[1])
                     const lineRef = fields[2]
                     const lineAlt = fields[3]
-                    //console.log("`Got scores`:", fields)
 
                     if (linePos != pos || lineRef != ref || lineAlt != alt) {
                         return
@@ -1608,11 +1603,6 @@
             "alphamissense", "cadd", "phylop", "polyphen_max", "primateai3d", "promoterai", "revel_max", "sift_max",
         ]
 
-        const otherPredictorMap = {}
-        for (const [otherPredictorName, otherPredictor] of Object.entries(otherPredictorScores)) {
-            otherPredictorMap[otherPredictorName] = otherPredictor
-        }
-
         $(`#other-predictors-header`).nextAll().remove()
         let firstColumn = `
             <td class="eight wide column" style="vertical-align: top" rowSpan="${Object.keys(otherPredictorScores).length}">
@@ -1625,7 +1615,7 @@
         const missingScores = []
         for (const otherPredictorName of otherPredictorNames) {
             const predictorLabel = nameMapForPredictorScores[otherPredictorName] || otherPredictorName
-            const otherPredictor = otherPredictorMap[otherPredictorName]
+            const otherPredictor = otherPredictorScores[otherPredictorName]
             const bgColor = otherPredictor && colorMapForPredictorScores[otherPredictorName] ? colorMapForPredictorScores[otherPredictorName](otherPredictor) : "#ffffff"
             const helpIcon = otherPredictor && helpTextForPredictorScores[otherPredictorName] ? `<i class='question circle outline icon' data-html="${helpTextForPredictorScores[otherPredictorName](otherPredictor)}"></i>` : ""
 
@@ -2221,22 +2211,6 @@
             $("#submit-button").click()
         }
     }
-
-    /*
-    const toggleRefAltScoreColumns = () => {
-        const currentText = $("#toggle-ref-alt-scores-button").html()
-
-        if (currentText.match(/Show/i)) {
-            $(".ref-alt-score-column").show()
-            $("#toggle-ref-alt-scores-button").removeClass('primary')
-            $("#toggle-ref-alt-scores-button").html('Hide REF & ALT Scores')
-        } else {
-            $(".ref-alt-score-column").hide()
-            $("#toggle-ref-alt-scores-button").addClass('primary')
-            $("#toggle-ref-alt-scores-button").html('Show REF & ALT Scores')
-        }
-    }
-    */
 
     // define function for parsing url parameters like ?variant=chr1-1234567-T-G
     $.urlParam = (name) => {
