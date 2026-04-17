@@ -405,19 +405,28 @@ def sai10k_determine_aberrations(
 
     if loss_paired_pass and loss_d50_pass:
         driving = max(ds_dl, ds_al)
+        # Canson reviewer feedback (2026-04-17): when the weaker score in the
+        # loss pair is in [0.02, 0.2), flag the prediction as "Potential". The
+        # paper's MIN threshold (0.02) was chosen for GWAS-scale sensitivity,
+        # but high-impact variants can still land here (e.g. BRCA2 13:32363534 G>T,
+        # DS_AL=0.13/DS_DL=0.93, experimentally 81% exon skipping). The
+        # "Potential" prefix communicates the asymmetric pair to the reader.
+        is_potential = min(ds_dl, ds_al) < DS_ALDL_MAX
         # Canson orientation gate:
         #   DP_AL*Strand < DP_DL*Strand  -> exon skipping
         #   else                          -> whole intron retention
         if dp_al * strand_sign < dp_dl * strand_sign:
-            aberrations.append(make(
+            ab = make(
                 'exon_skipping',
                 'Predicted exon skipping (donor and acceptor loss)',
-                driving, 'loss'))
+                driving, 'loss')
         else:
-            aberrations.append(make(
+            ab = make(
                 'whole_intron_retention',
                 'Predicted whole intron retention (donor and acceptor loss)',
-                driving, 'loss'))
+                driving, 'loss')
+        ab['_potential'] = is_potential
+        aberrations.append(ab)
 
     # -------------------------------------------------------------------
     # GAIN Subflow A: pseudoexon / increased_exon_inclusion
@@ -675,6 +684,8 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
         hi = max(a, b)
         return not (hi < cds_start or lo > cds_end)
 
+    is_potential = aberration.get('_potential', False)
+
     if aberration_type == 'exon_skipping':
         strand = aberration.get('_strand', '+')
         result = _find_exons_between_loss_positions(geo_al, geo_dl, strand, exon_starts, exon_ends)
@@ -712,7 +723,10 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             aberration['size'] = total_size
             aberration['size_type'] = 'exon'
             aberration['exon_numbers'] = result['biological_numbers']
-            label = 'Exon' if len(result['biological_numbers']) == 1 else 'Exons'
+            if is_potential:
+                label = 'Potential exon' if len(result['biological_numbers']) == 1 else 'Potential exons'
+            else:
+                label = 'Exon' if len(result['biological_numbers']) == 1 else 'Exons'
             nums = ', '.join(str(n) for n in result['biological_numbers'])
             aberration['frameshift_description'] = (
                 f'{label} {nums} skipping ({total_size}bp) - '
@@ -735,8 +749,9 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             aberration['frameshift'] = frameshift if segment_in_cds else None
             aberration['size'] = intron_size
             aberration['size_type'] = 'intron'
+            label = 'Potential whole intron retention' if is_potential else 'Whole intron retention'
             aberration['frameshift_description'] = (
-                f'Whole intron retention ({intron_size}bp) - '
+                f'{label} ({intron_size}bp) - '
                 f'{"frameshift" if frameshift and segment_in_cds else "in-frame" if segment_in_cds else "non-coding"}')
         else:
             aberration['affects_coding'] = None
@@ -805,17 +820,19 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
         if branch == 'gain_B_acceptor':
             seg_a = native.get('geo_na')
             seg_b = geo_ag
+            shift_type = 'Acceptor'
         else:
             seg_a = native.get('geo_nd')
             seg_b = geo_dg
+            shift_type = 'Donor'
         segment_in_cds = in_cds(seg_a, seg_b) if seg_a is not None and seg_b is not None else None
         aberration['affects_coding'] = bool(segment_in_cds) if segment_in_cds is not None else None
         aberration['frameshift'] = frameshift if segment_in_cds else None
         aberration['size'] = display_size
         aberration['size_type'] = 'partial'
-        label = aberration_type.replace('_', ' ').capitalize()
+        consequence = 'partial exon deletion' if aberration_type == 'partial_exon_deletion' else 'partial intron retention'
         aberration['frameshift_description'] = (
-            f'{label} ({display_size}bp) - '
+            f'{shift_type} shift ({display_size}bp {consequence}) - '
             f'{"frameshift" if frameshift and segment_in_cds else "in-frame" if segment_in_cds else "non-coding"}')
         return
 
@@ -868,12 +885,38 @@ def sai10k_compute_predictions(transcript_scores, variant_pos):
         variant_pos, exon_starts, exon_ends, strand,
     )
 
+    # Compute the overall max Δ score, the corresponding Δ type, and a
+    # confidence label. These are constant per variant (not per aberration) and
+    # drive the line-1 display ("Max Δ score: X — donor loss (high confidence)").
+    # Reporting the per-aberration "driving" score on its own can mislead readers
+    # when, e.g., partial_exon_deletion fires off a 0.20 cryptic gain while the
+    # variant also has a 0.92 native donor loss — the user should still see 0.92
+    # as the headline confidence (Canson reviewer feedback, 2026-04-17).
+    overall_max_score, overall_delta_type = max(
+        ((_coerce_float(ds_al), 'acceptor loss'),
+         (_coerce_float(ds_dl), 'donor loss'),
+         (_coerce_float(ds_ag), 'acceptor gain'),
+         (_coerce_float(ds_dg), 'donor gain')),
+        key=lambda item: item[0],
+    )
+    if overall_max_score >= 0.8:
+        confidence = 'high'
+    elif overall_max_score >= 0.5:
+        confidence = 'moderate'
+    else:
+        confidence = 'low'
+
     for aberration in aberrations:
         sai10k_annotate_frameshift(
             aberration,
             cds_start, cds_end,
             exon_starts, exon_ends,
         )
+        # Overwrite the per-branch driving score with the variant-level overall
+        # max so all aberration rows share the same line-1 confidence headline.
+        aberration['max_delta_score'] = overall_max_score
+        aberration['delta_type'] = overall_delta_type
+        aberration['confidence'] = confidence
 
     # Strip internal-only fields before returning to callers (and ultimately the
     # client). Keys prefixed with '_' are implementation details.
