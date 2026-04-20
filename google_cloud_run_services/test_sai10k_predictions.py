@@ -987,7 +987,7 @@ class TestExonSkippingFallback(unittest.TestCase):
         # 109 bp exon 4, 109 % 3 = 1 -> frameshift.
         self.assertEqual(es[0]["size"], 109)
         self.assertTrue(es[0]["frameshift"])
-        self.assertEqual(es[0]["frameshift_description"], "Exon 4 skipping (109bp) - frameshift")
+        self.assertEqual(es[0]["frameshift_description"], "Exon 4 skipping (109bp coding seq.) - frameshift")
 
     def test_no_fallback_when_variant_intronic(self):
         """Variant in intron with both GEO_AL/GEO_DL interior should still
@@ -1122,7 +1122,7 @@ class TestPotentialPrefix(unittest.TestCase):
         # 106 bp, 106 % 3 = 1 -> frameshift.
         self.assertEqual(
             es[0]["frameshift_description"],
-            "Potential exon 2 skipping (106bp) - frameshift",
+            "Potential exon 2 skipping (67bp coding seq.) - start codon lost",
         )
 
     def test_no_potential_prefix_when_both_loss_scores_strong(self):
@@ -1143,7 +1143,7 @@ class TestPotentialPrefix(unittest.TestCase):
         self.assertFalse(es[0]["frameshift_description"].startswith("Potential"))
         self.assertEqual(
             es[0]["frameshift_description"],
-            "Exon 2 skipping (106bp) - frameshift",
+            "Exon 2 skipping (67bp coding seq.) - start codon lost",
         )
 
 
@@ -1171,8 +1171,604 @@ class TestPartialShiftDescriptions(unittest.TestCase):
         self.assertEqual(pd[0]["size"], 41)
         self.assertEqual(
             pd[0]["frameshift_description"],
-            "Acceptor shift (41bp partial exon deletion) - frameshift",
+            "Acceptor shift (2bp coding seq. partial exon deletion) - start codon lost",
         )
+
+
+class TestStopCodonLost(unittest.TestCase):
+    """Skipping or partially deleting an exon that contains cds_end should
+    label the aberration 'stop codon lost' (priority over frameshift/in-frame)."""
+
+    def test_exon_skipping_last_exon_contains_cds_end(self):
+        """Skip BRCA2 exon 27 (last exon, 32972299-32974405; contains CDS_END=32972907).
+        Loss peaks at exon 27 acceptor (DP_AL=0) and exon 27 donor (DP_DL=2106)."""
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.80, "DS_DG": 0.00, "DS_DL": 0.50,
+            "DP_AG": 0, "DP_AL": 0, "DP_DG": 0, "DP_DL": 2106,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32972299)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        self.assertTrue(es[0]["stop_codon_lost"])
+        self.assertFalse(es[0]["start_codon_lost"])
+        self.assertIsNone(es[0]["frameshift"])  # suppressed when codon is lost
+        self.assertIn("stop codon lost", es[0]["frameshift_description"])
+        self.assertIn("coding seq.", es[0]["frameshift_description"])
+
+    def test_partial_exon_deletion_containing_cds_end(self):
+        """Donor-side cryptic shift inside BRCA2 exon 27 that deletes past cds_end."""
+        # Exon 27: 32972299-32974405. Native donor at 32974405. Place variant near
+        # donor and shift cryptic donor upstream past cds_end=32972907.
+        # variant_pos = 32972500; DP_ND = 32974405 - 32972500 = 1905.
+        # Cryptic donor at 32972800 → DP_DG = 300 (inside exon, before cds_end).
+        # partial_size = DP_ND - DP_DG = 1905 - 300 = 1605 bp; crosses cds_end.
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.00, "DS_DG": 0.30, "DS_DL": 0.00,
+            "DP_AG": 0, "DP_AL": 0, "DP_DG": 300, "DP_DL": 0,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.5, "DS_DL_ALT": 0.3,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32972500)
+        pd = [a for a in result["aberrations"] if a["aberration_type"] == "partial_exon_deletion"]
+        self.assertEqual(len(pd), 1)
+        self.assertTrue(pd[0]["stop_codon_lost"])
+        self.assertFalse(pd[0]["start_codon_lost"])
+        self.assertIsNone(pd[0]["frameshift"])
+        self.assertIn("stop codon lost", pd[0]["frameshift_description"])
+
+
+class TestPseudoexonBoundaryMatchesRParser(unittest.TestCase):
+    """Pin that the pseudoexon AG/DG distance-from-intron-boundary threshold
+    matches spliceAI_parser.R lines 211-214. R uses `intronStart + 50 < AGpos`
+    where intronStart = prev_eEnd + 1, which for integer positions means
+    `AGpos - prev_eEnd > 51`. This implementation uses > 51 bp distance to
+    match R's effective threshold; a gain at exactly 51 bp from a flanking
+    boundary must be REJECTED (previously Python accepted, R rejected)."""
+
+    # Shared synthetic transcript fixture for the two boundary tests.
+    #   exon 1: [1, 100]        (donor at 100)
+    #   exon 2: [1001, 1100]
+    #   exon 3: [2001, 2100]
+    # Intron 1 = [101, 1000] — plenty of room to place both AG and DG.
+    FIXTURE_EXON_STARTS = [1, 1001, 2001]
+    FIXTURE_EXON_ENDS = [100, 1100, 2100]
+
+    def _run_with_ag_at(self, ag_dist_from_upstream):
+        """Run Subflow A with AG placed `ag_dist_from_upstream` bp past the upstream
+        exon's donor, DG 200 bp further into the intron, and a variant halfway
+        between them. Returns the list of pseudoexon aberrations emitted."""
+        # Place variant at pos 250 (well inside intron 1). Upstream exon ends at 100.
+        variant_pos = 250
+        geo_ag = 100 + ag_dist_from_upstream
+        geo_dg = geo_ag + 200    # gex_size = 201 bp, safely within [25, 500]
+        transcript_scores = {
+            "DS_AG": 0.30, "DS_AL": 0.00, "DS_DG": 0.40, "DS_DL": 0.00,
+            "DP_AG": geo_ag - variant_pos,
+            "DP_AL": 0,
+            "DP_DG": geo_dg - variant_pos,
+            "DP_DL": 0,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": self.FIXTURE_EXON_STARTS,
+            "EXON_ENDS": self.FIXTURE_EXON_ENDS,
+            "CDS_START": 1,
+            "CDS_END": 2100,
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        return [a for a in result["aberrations"] if a["aberration_type"] == "pseudoexon"]
+
+    def test_ag_at_51bp_from_upstream_boundary_rejected(self):
+        """AG exactly 51 bp downstream of the upstream exon's donor: must NOT
+        fire pseudoexon (matches R's `intronStart + 50 < AGpos` at the boundary)."""
+        self.assertEqual(len(self._run_with_ag_at(51)), 0,
+                         "AG at exactly 51 bp from upstream exon boundary must be rejected (matches R)")
+
+    def test_ag_at_52bp_from_upstream_boundary_accepted(self):
+        """AG at 52 bp (one more) must FIRE pseudoexon."""
+        self.assertEqual(len(self._run_with_ag_at(52)), 1,
+                         "AG at 52 bp from upstream exon boundary must fire pseudoexon")
+
+    # --- Mirror the + strand boundary pinning on the − strand ---
+    #
+    # On − strand, the biologically upstream exon is at HIGHER genomic coordinate
+    # than the gained exon; "AG 51 bp from the upstream exon's donor" therefore
+    # corresponds to AG being 51 bp BELOW the genomically-next exon's start.
+    MINUS_STRAND_EXON_STARTS = [1, 1001, 2001]
+    MINUS_STRAND_EXON_ENDS = [100, 1100, 2100]
+
+    def _run_minus_strand_with_ag_at(self, ag_dist_from_upstream):
+        """Same synthetic transcript but strand='-'. Places AG at
+        `ag_dist_from_upstream` bp from the biologically-upstream exon's donor
+        (genomically downstream exon's start, i.e. below exon_starts[2] = 2001)
+        and DG 200 bp deeper into the intron in transcript order."""
+        variant_pos = 1500
+        # "biologically upstream donor" on − strand = exon_starts[2] = 2001.
+        geo_ag = 2001 - ag_dist_from_upstream   # below genomically-next exon start
+        geo_dg = geo_ag - 200                    # deeper in transcript order (lower coord)
+        transcript_scores = {
+            "DS_AG": 0.30, "DS_AL": 0.00, "DS_DG": 0.40, "DS_DL": 0.00,
+            "DP_AG": geo_ag - variant_pos,
+            "DP_AL": 0,
+            "DP_DG": geo_dg - variant_pos,
+            "DP_DL": 0,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": self.MINUS_STRAND_EXON_STARTS,
+            "EXON_ENDS": self.MINUS_STRAND_EXON_ENDS,
+            "CDS_START": 1,
+            "CDS_END": 2100,
+            "STRAND": "-",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        return [a for a in result["aberrations"] if a["aberration_type"] == "pseudoexon"]
+
+    def test_minus_strand_ag_at_51bp_rejected(self):
+        """− strand: AG exactly 51 bp from the biologically-upstream exon boundary must be rejected."""
+        self.assertEqual(len(self._run_minus_strand_with_ag_at(51)), 0,
+                         "− strand AG at 51 bp from upstream boundary must be rejected (matches R)")
+
+    def test_minus_strand_ag_at_52bp_accepted(self):
+        """− strand: AG at 52 bp must fire pseudoexon."""
+        self.assertEqual(len(self._run_minus_strand_with_ag_at(52)), 1,
+                         "− strand AG at 52 bp must fire pseudoexon")
+
+    # --- Symmetric DG-from-downstream-boundary boundary tests on + strand ---
+    #
+    # Pseudoexon activation also requires DG to be > 51 bp from the downstream
+    # exon boundary of its host intron. R's line 211 uses the symmetric condition
+    # `intronEndAdj − 50 > DGpos`. Test DG at 51 (reject) and 52 (accept).
+
+    def _run_with_dg_at(self, dg_dist_from_downstream):
+        """Place DG `dg_dist_from_downstream` bp before the downstream exon's
+        acceptor (= 1001 in the synthetic fixture), with AG fixed 200 bp further
+        upstream so gex_size stays in [25, 500]."""
+        variant_pos = 500
+        geo_dg = 1001 - dg_dist_from_downstream
+        geo_ag = geo_dg - 200
+        transcript_scores = {
+            "DS_AG": 0.30, "DS_AL": 0.00, "DS_DG": 0.40, "DS_DL": 0.00,
+            "DP_AG": geo_ag - variant_pos,
+            "DP_AL": 0,
+            "DP_DG": geo_dg - variant_pos,
+            "DP_DL": 0,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": self.FIXTURE_EXON_STARTS,
+            "EXON_ENDS": self.FIXTURE_EXON_ENDS,
+            "CDS_START": 1,
+            "CDS_END": 2100,
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        return [a for a in result["aberrations"] if a["aberration_type"] == "pseudoexon"]
+
+    def test_dg_at_51bp_from_downstream_boundary_rejected(self):
+        """DG exactly 51 bp before the downstream exon's acceptor must NOT fire pseudoexon."""
+        self.assertEqual(len(self._run_with_dg_at(51)), 0,
+                         "DG at exactly 51 bp from downstream exon boundary must be rejected (matches R)")
+
+    def test_dg_at_52bp_from_downstream_boundary_accepted(self):
+        """DG at 52 bp must fire pseudoexon."""
+        self.assertEqual(len(self._run_with_dg_at(52)), 1,
+                         "DG at 52 bp from downstream exon boundary must fire pseudoexon")
+
+
+class TestMinusStrandCodonLost(unittest.TestCase):
+    """On − strand genes, cds_start is the GENOMIC lower CDS bound, which is
+    the biological STOP codon (not start); similarly cds_end is the biological
+    START codon. These tests pin that start_codon_lost / stop_codon_lost are
+    computed biologically, not genomically."""
+
+    def test_minus_strand_skip_exon_containing_biological_atg(self):
+        """BRCA1 is − strand. Biological ATG lies at genomic CDS_END = 41276113,
+        which falls inside the exon at genomic index 21 (biological exon 2):
+        [41276034, 41276132]. Skipping it must report 'start codon lost'."""
+        exon_starts = BRCA1_TRANSCRIPT_HG19["EXON_STARTS"]
+        exon_ends = BRCA1_TRANSCRIPT_HG19["EXON_ENDS"]
+        idx = 21  # genomic index of the exon containing CDS_END
+        # Place variant at the biological acceptor (exon_ends[idx]). Loss peaks
+        # at biological acceptor and donor (exon_starts[idx]) of this exon.
+        variant_pos = exon_ends[idx]
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.80, "DS_DG": 0.00, "DS_DL": 0.50,
+            "DP_AG": 0,
+            "DP_AL": 0,                           # GEO_AL = exon_ends[idx]
+            "DP_DG": 0,
+            "DP_DL": exon_starts[idx] - variant_pos,   # GEO_DL = exon_starts[idx]
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": exon_starts,
+            "EXON_ENDS": exon_ends,
+            "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "-",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        self.assertTrue(es[0]["start_codon_lost"],
+                        "skipping the exon containing the biological ATG must set start_codon_lost=True on − strand")
+        self.assertFalse(es[0]["stop_codon_lost"])
+        self.assertIn("start codon lost", es[0]["frameshift_description"])
+
+    def test_minus_strand_skip_exon_containing_biological_stop(self):
+        """Biological stop codon lies at genomic CDS_START = 41197695, inside
+        the first exon (genomic index 0 = biological last exon on − strand):
+        [41196312, 41197819]. Skipping it must report 'stop codon lost'."""
+        exon_starts = BRCA1_TRANSCRIPT_HG19["EXON_STARTS"]
+        exon_ends = BRCA1_TRANSCRIPT_HG19["EXON_ENDS"]
+        idx = 0
+        # On − strand: biological acceptor = exon_ends[idx], biological donor = exon_starts[idx].
+        # For exon skipping on − strand, orientation check is DP_AL*strand < DP_DL*strand,
+        # i.e. DP_AL > DP_DL (strand = −1). Place the variant at the biological acceptor.
+        variant_pos = exon_ends[idx]
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.80, "DS_DG": 0.00, "DS_DL": 0.50,
+            "DP_AG": 0,
+            "DP_AL": 0,                                # GEO_AL = exon_ends[idx]
+            "DP_DG": 0,
+            "DP_DL": exon_starts[idx] - variant_pos,   # GEO_DL = exon_starts[idx]
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": exon_starts,
+            "EXON_ENDS": exon_ends,
+            "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "-",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        self.assertTrue(es[0]["stop_codon_lost"],
+                        "skipping the exon containing the biological stop codon must set stop_codon_lost=True on − strand")
+        self.assertFalse(es[0]["start_codon_lost"])
+        self.assertIn("stop codon lost", es[0]["frameshift_description"])
+
+
+class TestCodonInMiddleExonOfMultiExonSkip(unittest.TestCase):
+    """When a multi-exon skip brackets ≥3 exons and the codon lies in a
+    non-boundary exon, the iteration over `genomic_indices` must still detect
+    codon loss. Pins that the `any(contains_* for i in ...)` loop reaches
+    interior exons, not just the two boundaries."""
+
+    def test_start_codon_in_middle_of_three_exon_skip(self):
+        # Synthetic transcript with 5 exons. Skip exons 2-4 (genomic idx 1-3).
+        # ATG sits inside exon 3 (middle of the skipped bracket).
+        exon_starts = [1, 201, 401, 601, 801]
+        exon_ends = [100, 300, 500, 700, 900]
+        cds_start = 450           # inside exon 3 → ATG = [450, 452]
+        cds_end = 880             # inside exon 5
+        # Loss peaks: acceptor of exon 2 (= 201), donor of exon 4 (= 700).
+        variant_pos = 201
+        transcript_scores = {
+            "DS_AG": 0.0, "DS_AL": 0.8, "DS_DG": 0.0, "DS_DL": 0.8,
+            "DP_AG": 0, "DP_AL": 0, "DP_DG": 0, "DP_DL": 700 - 201,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": exon_starts, "EXON_ENDS": exon_ends,
+            "CDS_START": cds_start, "CDS_END": cds_end, "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        # The bracket is exons 2-4; ATG is in exon 3 (middle). The loop must
+        # reach the middle exon, not just the boundary ones.
+        self.assertTrue(es[0]["start_codon_lost"])
+        self.assertFalse(es[0]["stop_codon_lost"])
+        self.assertIn("start codon lost", es[0]["frameshift_description"])
+
+
+class TestCodonAtExonEndpoint(unittest.TestCase):
+    """Pin that contains_start_codon / contains_stop_codon use inclusive
+    bounds: a codon position exactly AT an exon endpoint must count as
+    contained. Guards against accidental strict-inequality regression."""
+
+    def test_start_codon_at_exon_start_triggers_codon_lost(self):
+        # cds_start exactly at exon_starts[1] — ATG spans [201, 203].
+        exon_starts = [1, 201, 401]
+        exon_ends = [100, 300, 500]
+        transcript_scores = {
+            "DS_AG": 0.0, "DS_AL": 0.8, "DS_DG": 0.0, "DS_DL": 0.8,
+            "DP_AG": 0, "DP_AL": 0, "DP_DG": 0, "DP_DL": 300 - 201,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": exon_starts, "EXON_ENDS": exon_ends,
+            "CDS_START": 201,     # = exon_starts[1] (boundary)
+            "CDS_END": 480,
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=201)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        self.assertTrue(es[0]["start_codon_lost"],
+                        "codon at exact exon boundary must count as contained")
+
+
+class TestPartialExonDeletionMinusStrandCodonLost(unittest.TestCase):
+    """Mirror of TestPartialShiftDescriptions + TestStopCodonLost but on −
+    strand. The cryptic segment bounds + codon-position swap on − strand is
+    a recently-added feature; these tests pin it."""
+
+    def test_minus_strand_acceptor_shift_loses_start_codon(self):
+        """BRCA1 − strand. Biological ATG at genomic CDS_END = 41276113,
+        inside exon 21 [41276034, 41276132]. Variant at that exon's biological
+        acceptor (= exon_ends[21] = 41276132). Cryptic acceptor shift INTO
+        the exon: GEO_AG < 41276132 (lower genomic coord on − strand).
+        Set GEO_AG at 41276100 (32 bp into the exon). The deletion segment
+        on − strand acceptor shift = [GEO_AG + 1, native_acceptor] =
+        [41276101, 41276132], which contains CDS_END = 41276113."""
+        variant_pos = 41276132
+        transcript_scores = {
+            "DS_AG": 0.30, "DS_AL": 0.00, "DS_DG": 0.00, "DS_DL": 0.00,
+            "DP_AG": 41276100 - variant_pos,   # = -32
+            "DP_AL": 0, "DP_DG": 0, "DP_DL": 0,
+            "DS_AG_ALT": 0.5, "DS_AL_ALT": 0.3, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA1_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA1_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "-",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        ped = [a for a in result["aberrations"] if a["aberration_type"] == "partial_exon_deletion"]
+        self.assertEqual(len(ped), 1)
+        self.assertTrue(ped[0]["start_codon_lost"],
+                        "− strand partial_exon_deletion crossing CDS_END must report start codon lost")
+        self.assertFalse(ped[0]["stop_codon_lost"])
+        self.assertIn("start codon lost", ped[0]["frameshift_description"])
+
+
+class TestPartialExonDeletionMinusStrandMoreCases(unittest.TestCase):
+    """Mirror the + strand partial_exon_deletion codon-lost tests across the
+    remaining three − strand combinations:
+      acceptor shift × stop codon,
+      donor    shift × start codon,
+      donor    shift × stop  codon.
+    Only the acceptor × start case is pinned by TestPartialExonDeletionMinusStrandCodonLost."""
+
+    def test_minus_strand_donor_shift_loses_stop_codon(self):
+        """BRCA1 − strand. Biological stop codon lies at genomic CDS_START =
+        41197695, inside the genomically-first exon [41196312, 41197819]. On
+        − strand, 'donor' is biologically at exon_starts[0] = 41196312.
+        A cryptic donor shift INTO the exon (on − strand, moving toward higher
+        genomic coords) covers the stop codon."""
+        idx = 0
+        variant_pos = 41196312   # biological donor of exon 0 on − strand
+        exon_starts = BRCA1_TRANSCRIPT_HG19["EXON_STARTS"]
+        exon_ends = BRCA1_TRANSCRIPT_HG19["EXON_ENDS"]
+        # On − strand donor-side partial_exon_deletion: deleted = [exon_start, cryptic-1].
+        # Put cryptic donor at 41197700 so the deleted range [41196312, 41197699]
+        # covers CDS_START = 41197695 (biological stop codon on − strand).
+        geo_dg = 41197700
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.00, "DS_DG": 0.30, "DS_DL": 0.00,
+            "DP_AG": 0, "DP_AL": 0,
+            "DP_DG": geo_dg - variant_pos,
+            "DP_DL": 0,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.5, "DS_DL_ALT": 0.3,
+            "EXON_STARTS": exon_starts, "EXON_ENDS": exon_ends,
+            "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "-",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        ped = [a for a in result["aberrations"] if a["aberration_type"] == "partial_exon_deletion"]
+        self.assertEqual(len(ped), 1)
+        self.assertTrue(ped[0]["stop_codon_lost"],
+                        "− strand donor-shift crossing CDS_START must set stop_codon_lost=True")
+        self.assertFalse(ped[0]["start_codon_lost"])
+        self.assertIn("stop codon lost", ped[0]["frameshift_description"])
+
+
+class TestUtrOnlyExonSkipping(unittest.TestCase):
+    """Skipping an exon that lies entirely in the 5'UTR or 3'UTR should not
+    affect the CDS at all: cds_size == 0, affects_coding == False,
+    start_codon_lost / stop_codon_lost == None (non-coding branch), and label
+    'non-coding' regardless of strand."""
+
+    def test_plus_strand_skip_5utr_exon(self):
+        # Synthetic transcript: exons [1,100], [201,300], [401,500].
+        # CDS starts in exon 2 (cds_start=220). Exon 1 is entirely 5'UTR.
+        # Skip exon 1 by pointing GEO_AL at its acceptor and GEO_DL at its donor.
+        variant_pos = 1
+        transcript_scores = {
+            "DS_AG": 0.0, "DS_AL": 0.8, "DS_DG": 0.0, "DS_DL": 0.8,
+            "DP_AG": 0, "DP_AL": 0, "DP_DG": 0, "DP_DL": 99,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": [1, 201, 401], "EXON_ENDS": [100, 300, 500],
+            "CDS_START": 220, "CDS_END": 480, "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        self.assertEqual(es[0]["cds_size"], 0)
+        self.assertFalse(es[0]["affects_coding"])
+        self.assertIsNone(es[0]["start_codon_lost"])
+        self.assertIsNone(es[0]["stop_codon_lost"])
+        self.assertIsNone(es[0]["frameshift"])
+        self.assertIn("non-coding", es[0]["frameshift_description"])
+
+
+class TestPseudoexonNeverLosesCodon(unittest.TestCase):
+    """pseudoexon adds bases; start_codon_lost and stop_codon_lost must be
+    False when the aberration overlaps the CDS, and None otherwise."""
+
+    def test_pseudoexon_coding_overlap_flags_are_false(self):
+        # Use the TestPseudoexonBoundaryMatchesRParser synthetic transcript that
+        # does fire a pseudoexon. CDS_START=1 and CDS_END=2100 so the
+        # pseudoexon inside intron 1 lies entirely within the CDS range.
+        variant_pos = 250
+        transcript_scores = {
+            "DS_AG": 0.30, "DS_AL": 0.00, "DS_DG": 0.40, "DS_DL": 0.00,
+            "DP_AG": (100 + 52) - variant_pos,
+            "DP_AL": 0,
+            "DP_DG": (100 + 52 + 200) - variant_pos,
+            "DP_DL": 0,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": [1, 1001, 2001],
+            "EXON_ENDS": [100, 1100, 2100],
+            "CDS_START": 1, "CDS_END": 2100, "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        pseudo = [a for a in result["aberrations"] if a["aberration_type"] == "pseudoexon"]
+        self.assertEqual(len(pseudo), 1)
+        self.assertFalse(pseudo[0]["start_codon_lost"])
+        self.assertFalse(pseudo[0]["stop_codon_lost"])
+
+
+class TestIncreasedExonInclusionNeverLosesCodon(unittest.TestCase):
+    """increased_exon_inclusion includes a native exon verbatim; it cannot
+    delete any codon."""
+
+    def test_iei_coding_overlap_flags_are_false(self):
+        # Synthetic 3-exon transcript on + strand. Exon 2 is entirely in CDS.
+        # Variant at exon 2 acceptor, AG at native acceptor (DP_AG = DP_NA),
+        # DG at native donor (DP_DG = DP_ND) so IEI fires.
+        # exon 2 = [201, 300]; variant at 201; DP_AG = 0; DP_DG = 99.
+        variant_pos = 201
+        transcript_scores = {
+            "DS_AG": 0.30, "DS_AL": 0.00, "DS_DG": 0.40, "DS_DL": 0.00,
+            "DP_AG": 0, "DP_AL": 0, "DP_DG": 99, "DP_DL": 0,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": [1, 201, 401],
+            "EXON_ENDS": [100, 300, 500],
+            "CDS_START": 50, "CDS_END": 480, "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        iei = [a for a in result["aberrations"] if a["aberration_type"] == "increased_exon_inclusion"]
+        self.assertEqual(len(iei), 1)
+        self.assertFalse(iei[0]["start_codon_lost"])
+        self.assertFalse(iei[0]["stop_codon_lost"])
+
+
+class TestEntireCdsInOneExon(unittest.TestCase):
+    """When a single skipped exon contains both cds_start and cds_end (e.g. a
+    single-coding-exon gene), priority rules: start_codon_lost=True wins,
+    stop_codon_lost=False, frameshift=None, label='start codon lost'."""
+
+    def test_skipped_exon_contains_both_start_and_stop(self):
+        # Synthetic transcript: exons [1,100], [201,400], [501,600].
+        # Entire CDS [250, 350] lies inside exon 2.
+        # Skip exon 2 by setting GEO_AL at exon 2 acceptor (201) and GEO_DL at
+        # exon 2 donor (400). Variant at exon 2 acceptor.
+        variant_pos = 201
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.80, "DS_DG": 0.00, "DS_DL": 0.50,
+            "DP_AG": 0, "DP_AL": 0, "DP_DG": 0, "DP_DL": 199,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": [1, 201, 501],
+            "EXON_ENDS": [100, 400, 600],
+            "CDS_START": 250,
+            "CDS_END": 350,
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        # Contract: at most one codon-lost flag is True (priority: start > stop).
+        self.assertTrue(es[0]["start_codon_lost"])
+        self.assertFalse(es[0]["stop_codon_lost"])
+        self.assertIsNone(es[0]["frameshift"])
+        self.assertIn("start codon lost", es[0]["frameshift_description"])
+        self.assertNotIn("stop codon lost", es[0]["frameshift_description"])
+
+
+class TestPartialIntronRetentionCodonInvariant(unittest.TestCase):
+    """Pin that partial_intron_retention never reports codon loss (the retained
+    bases are intronic; the native splice boundary is still removed, so neither
+    cds_start nor cds_end can sit inside the retained segment by construction)."""
+
+    def test_partial_intron_retention_codon_lost_never_true(self):
+        """Reuse the BRCA1 c.5467+1G>A fixture which DOES produce a
+        partial_intron_retention on the 3' side of the exon (verified by
+        test_brca1_c5467_1g_a)."""
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.40, "DS_DG": 0.36, "DS_DL": 0.93,
+            "DS_AG_ALT": 0, "DS_AL_ALT": 0,
+            "DS_DG_ALT": 0.95, "DS_DL_ALT": 0.05,
+            "DP_AG": -4, "DP_AL": 61, "DP_DG": -4, "DP_DL": 1,
+            "EXON_STARTS": BRCA1_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA1_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": BRCA1_TRANSCRIPT_HG19["STRAND"],
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=41199659)
+        pir = [a for a in result["aberrations"] if a["aberration_type"] == "partial_intron_retention"]
+        # Guard against a vacuous test: the fixture MUST produce at least one
+        # partial_intron_retention for the invariant assertion below to be
+        # meaningful.
+        self.assertGreaterEqual(len(pir), 1,
+                                "fixture must produce a partial_intron_retention to exercise the invariant")
+        for ab in pir:
+            self.assertIn(ab["start_codon_lost"], (False, None),
+                          "partial_intron_retention must never set start_codon_lost=True")
+            self.assertIn(ab["stop_codon_lost"], (False, None),
+                          "partial_intron_retention must never set stop_codon_lost=True")
+
+
+class TestCodonLostFieldContract(unittest.TestCase):
+    """Pinning tests for the output-dict field contract.
+
+    Every aberration dict must carry cds_size, start_codon_lost, stop_codon_lost
+    (possibly None). Types that structurally cannot lose a codon
+    (whole_intron_retention, pseudoexon, increased_exon_inclusion,
+    partial_intron_retention) must report start_codon_lost == False and
+    stop_codon_lost == False when the transcript is coding and the aberration
+    overlaps the CDS."""
+
+    def test_whole_intron_retention_never_loses_codons(self):
+        """Whole-intron retention adds bases; it must never report codon loss."""
+        # BRCA2 intron 2 (between exon 2 end 32890664 and exon 3 start 32893214).
+        # Variant at exon 2 donor (32890664) with DS_DL>0.2 AND DS_AL>0.2 and
+        # orientation DP_AL > DP_DL -> whole_intron_retention.
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.50, "DS_DG": 0.00, "DS_DL": 0.80,
+            "DP_AG": 0, "DP_AL": 2550, "DP_DG": 0, "DP_DL": 0,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32890664)
+        wir = [a for a in result["aberrations"] if a["aberration_type"] == "whole_intron_retention"]
+        self.assertEqual(len(wir), 1)
+        self.assertIn("start_codon_lost", wir[0])
+        self.assertIn("stop_codon_lost", wir[0])
+        self.assertIn("cds_size", wir[0])
+        # BRCA2 intron 2 lies within the CDS (cds_size > 0), so the coding
+        # branch runs and set_coding_fields writes explicit False for both
+        # codon-lost flags. Tighter than the None-allowed variant so we catch
+        # accidental regressions to `None` on coding-overlap WIR.
+        self.assertFalse(wir[0]["start_codon_lost"])
+        self.assertFalse(wir[0]["stop_codon_lost"])
+        self.assertGreater(wir[0]["cds_size"], 0, "fixture must have CDS overlap to exercise the coding branch")
+
+    def test_all_aberrations_carry_uniform_fields(self):
+        """Sanity: regardless of type, every emitted aberration dict has the new fields."""
+        # Re-use the BRCA2 exon 2 c.-40+1G>A scenario (exon skipping + partial
+        # exon deletion combination).
+        transcript_scores = {
+            "DS_AG": 0.30, "DS_AL": 0.77, "DS_DG": 0.00, "DS_DL": 0.17,
+            "DP_AG": 20, "DP_AL": -41, "DP_DG": 0, "DP_DL": 64,
+            "DS_AG_ALT": 0.5, "DS_AL_ALT": 0.3, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32890600)
+        for ab in result["aberrations"]:
+            self.assertIn("cds_size", ab, f"missing cds_size on {ab['aberration_type']}")
+            self.assertIn("start_codon_lost", ab, f"missing start_codon_lost on {ab['aberration_type']}")
+            self.assertIn("stop_codon_lost", ab, f"missing stop_codon_lost on {ab['aberration_type']}")
 
 
 class TestExonSkippingFallbackReverseStrand(unittest.TestCase):
@@ -1214,7 +1810,7 @@ class TestExonSkippingFallbackReverseStrand(unittest.TestCase):
         self.assertEqual(es[0]["size"], exon_size)
         self.assertEqual(
             es[0]["frameshift_description"],
-            f"Exon {bio_exon} skipping ({exon_size}bp) - in-frame",
+            f"Exon {bio_exon} skipping ({exon_size}bp coding seq.) - in-frame",
         )
 
 
@@ -1316,7 +1912,7 @@ class TestDonorShiftPartialDescription(unittest.TestCase):
         self.assertEqual(pd[0]["size"], 24)
         self.assertEqual(
             pd[0]["frameshift_description"],
-            "Donor shift (24bp partial exon deletion) - in-frame",  # 24 % 3 == 0 -> in-frame
+            "Donor shift (24bp coding seq. partial exon deletion) - in-frame",  # 24 % 3 == 0 -> in-frame
         )
 
 

@@ -65,6 +65,13 @@ GEX_SIZE_MAX = 500
 # Pseudoexon activation requires the variant to be > 50 bp into an intron.
 DISTANCE_EXON_MAX_LOSS = 50
 DISTANCE_NATIVE_SITE_MIN_PSEUDOEXON = 50
+# The pseudoexon branch also requires AG and DG to sit comfortably inside the
+# host intron. spliceAI_parser.R lines 211-214 check `intronStart + 50 < AGpos`
+# (and the symmetric condition for DG), where `intronStart` is the first
+# intronic base. Translated to a distance from the flanking exon boundary
+# (last exonic base), R's check is effectively `dist > 51`. We mirror that
+# here so Python and R produce identical pseudoexon calls at the boundary.
+DISTANCE_AG_DG_MIN_FROM_INTRON_BOUNDARY = 51
 # Partial intron retention requires both the variant and the retained segment
 # to be within 250 bp of an exon-intron junction.
 DISTANCE_PARTIAL_RETENTION_MAX = 250
@@ -472,9 +479,9 @@ def sai10k_determine_aberrations(
             and d_from_exon is not None
             and d_from_exon > DISTANCE_NATIVE_SITE_MIN_PSEUDOEXON
             and ag_dist_to_native is not None
-            and ag_dist_to_native > DISTANCE_NATIVE_SITE_MIN_PSEUDOEXON
+            and ag_dist_to_native > DISTANCE_AG_DG_MIN_FROM_INTRON_BOUNDARY
             and dg_dist_to_native is not None
-            and dg_dist_to_native > DISTANCE_NATIVE_SITE_MIN_PSEUDOEXON
+            and dg_dist_to_native > DISTANCE_AG_DG_MIN_FROM_INTRON_BOUNDARY
             and ag_intron is not None
             and dg_intron is not None
             and ag_intron == dg_intron
@@ -630,9 +637,19 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
     Adds:
         affects_coding: True | False | None
         frameshift: True | False | None
-        size: integer bp when determinable
+        size: integer bp of the full affected segment (for reference / display)
+        cds_size: integer bp of the CDS-overlapping portion of that segment
         size_type: 'exon' | 'intron' | 'pseudoexon' | 'partial'
         frameshift_description: formatted string for display
+
+    INTENTIONAL DIVERGENCE FROM spliceAI_parser.R: the reference parser computes
+    frameshift as (full_affected_size % 3). That is incorrect for exons / introns /
+    pseudoexons / partial events whose range straddles a UTR/CDS boundary — only
+    the CDS-overlapping bases affect the reading frame of the translated protein.
+    This implementation computes frameshift as (cds_size % 3), where cds_size is
+    the portion of the affected segment that overlaps [cds_start, cds_end].
+    The display label correspondingly shows "<N>bp coding seq." for the CDS-based
+    size in coding cases, and "<N>bp" with a "non-coding" suffix otherwise.
     """
     # Treat cds_start==cds_end as non-coding (genePred encodes non-coding
     # transcripts with coincident cds start/end; after 0-based-to-1-based
@@ -649,21 +666,105 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
     geo_dg = aberration.get('geo_dg')
     affected_region = aberration.get('affected_region')
 
-    # Helper: does a closed segment [a, b] overlap the CDS?
-    # Returns False for non-coding transcripts (so affects_coding lands at False).
-    def in_cds(a, b):
-        if not is_coding_transcript:
-            return False
-        if a is None or b is None:
-            return None
+    # Helper: number of bases in the closed segment [a, b] that overlap the CDS.
+    # Returns 0 for non-coding transcripts and for segments that do not overlap [cds_start, cds_end].
+    def cds_overlap_size(a, b):
+        if not is_coding_transcript or a is None or b is None:
+            return 0
         lo = min(a, b)
         hi = max(a, b)
-        return not (hi < cds_start or lo > cds_end)
+        overlap_lo = max(lo, cds_start)
+        overlap_hi = min(hi, cds_end)
+        if overlap_lo > overlap_hi:
+            return 0
+        return overlap_hi - overlap_lo + 1
+
+    # genePred convention: cds_start and cds_end are GENOMIC bounds, so
+    # cds_start < cds_end regardless of strand. Biologically the start codon
+    # (ATG) and stop codon each span 3 bases at different genomic endpoints
+    # depending on strand:
+    #   + strand: ATG = [cds_start, cds_start+2], stop = [cds_end-2, cds_end]
+    #   − strand: ATG = [cds_end-2, cds_end],     stop = [cds_start, cds_start+2]
+    # Deleting ANY base of a codon destroys it, so the "contains" check tests
+    # whether the deleted segment overlaps the 3-base codon range.
+    strand = aberration.get('_strand', '+')
+    if is_coding_transcript:
+        if strand == '-':
+            start_codon_lo, start_codon_hi = cds_end - 2, cds_end
+            stop_codon_lo, stop_codon_hi = cds_start, cds_start + 2
+        else:
+            start_codon_lo, start_codon_hi = cds_start, cds_start + 2
+            stop_codon_lo, stop_codon_hi = cds_end - 2, cds_end
+    else:
+        start_codon_lo = start_codon_hi = stop_codon_lo = stop_codon_hi = None
+
+    def _segment_overlaps(a, b, codon_lo, codon_hi):
+        if (not is_coding_transcript or a is None or b is None
+                or codon_lo is None or codon_hi is None):
+            return False
+        seg_lo = min(a, b)
+        seg_hi = max(a, b)
+        return not (seg_hi < codon_lo or seg_lo > codon_hi)
+
+    # Helpers: does the closed segment [a, b] overlap the 3-base start/stop
+    # codon range? (Partial overlap of the codon is enough to destroy it.)
+    def contains_start_codon(a, b):
+        return _segment_overlaps(a, b, start_codon_lo, start_codon_hi)
+
+    def contains_stop_codon(a, b):
+        return _segment_overlaps(a, b, stop_codon_lo, stop_codon_hi)
+
+    # Set the five coding-consequence fields (affects_coding, cds_size, frameshift,
+    # start_codon_lost, stop_codon_lost) on the aberration dict, and return the
+    # status string for the display label.
+    #
+    # Priority of the status label: start-codon loss > stop-codon loss > frameshift
+    # > in-frame > non-coding. The flags match the displayed label (at most one of
+    # start_codon_lost / stop_codon_lost is True), so when a single skipped exon
+    # contains BOTH cds_start and cds_end, only start_codon_lost is True.
+    # Types that structurally can't delete a codon (whole_intron_retention,
+    # pseudoexon, increased_exon_inclusion, partial_intron_retention) pass
+    # start_lost=False and stop_lost=False.
+    def set_coding_fields(aberration, cds_size, start_lost, stop_lost):
+        affects_coding = cds_size > 0
+        aberration['cds_size'] = cds_size
+        aberration['affects_coding'] = affects_coding
+        if not affects_coding:
+            aberration['frameshift'] = None
+            aberration['start_codon_lost'] = None
+            aberration['stop_codon_lost'] = None
+            return 'non-coding'
+        if start_lost:
+            aberration['frameshift'] = None
+            aberration['start_codon_lost'] = True
+            aberration['stop_codon_lost'] = False
+            return 'start codon lost'
+        if stop_lost:
+            aberration['frameshift'] = None
+            aberration['start_codon_lost'] = False
+            aberration['stop_codon_lost'] = True
+            return 'stop codon lost'
+        aberration['frameshift'] = (cds_size % 3 != 0)
+        aberration['start_codon_lost'] = False
+        aberration['stop_codon_lost'] = False
+        return 'frameshift' if aberration['frameshift'] else 'in-frame'
 
     is_potential = aberration.get('_potential', False)
 
+    # Uniform output-dict contract: every aberration dict carries these fields
+    # (value = None when not applicable / unknown). Individual branches below
+    # overwrite with type-specific values. Types that structurally cannot lose
+    # the start or stop codon (whole_intron_retention, pseudoexon,
+    # increased_exon_inclusion, partial_intron_retention) set the codon-lost
+    # fields to False when the transcript is coding and the aberration has
+    # CDS overlap, and to None on non-coding / unknown branches.
+    aberration.setdefault('cds_size', None)
+    aberration.setdefault('start_codon_lost', None)
+    aberration.setdefault('stop_codon_lost', None)
+    aberration.setdefault('size', None)
+    aberration.setdefault('size_type', None)
+
     if aberration_type == 'exon_skipping':
-        strand = aberration.get('_strand', '+')
         result = _find_exons_between_loss_positions(geo_al, geo_dl, strand, exon_starts, exon_ends)
         # Reference-parser fallback: the Canson algorithm (spliceAI_parser.R:239,
         # spliceai_parser.py:312-329) requires BOTH geo_al and geo_dl to sit exactly
@@ -689,13 +790,19 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
                     }
         if result['match']:
             total_size = result['total_size']
-            frameshift = total_size % 3 != 0
-            segment_in_cds = any(
-                in_cds(exon_starts[i], exon_ends[i])
+            cds_size = sum(
+                cds_overlap_size(exon_starts[i], exon_ends[i])
                 for i in result['genomic_indices']
             )
-            aberration['affects_coding'] = bool(segment_in_cds)
-            aberration['frameshift'] = frameshift if segment_in_cds else None
+            start_lost = any(
+                contains_start_codon(exon_starts[i], exon_ends[i])
+                for i in result['genomic_indices']
+            )
+            stop_lost = any(
+                contains_stop_codon(exon_starts[i], exon_ends[i])
+                for i in result['genomic_indices']
+            )
+            status = set_coding_fields(aberration, cds_size, start_lost, stop_lost)
             aberration['size'] = total_size
             aberration['size_type'] = 'exon'
             if is_potential:
@@ -703,9 +810,8 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             else:
                 label = 'Exon' if len(result['biological_numbers']) == 1 else 'Exons'
             nums = ', '.join(str(n) for n in result['biological_numbers'])
-            aberration['frameshift_description'] = (
-                f'{label} {nums} skipping ({total_size}bp) - '
-                f'{"frameshift" if frameshift and segment_in_cds else "in-frame" if segment_in_cds else "non-coding"}')
+            size_text = f'{cds_size}bp coding seq.' if aberration['affects_coding'] else f'{total_size}bp'
+            aberration['frameshift_description'] = f'{label} {nums} skipping ({size_text}) - {status}'
         else:
             aberration['affects_coding'] = None
             aberration['frameshift'] = None
@@ -718,16 +824,14 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             # Segment = retained intron: from min(geo_al, geo_dl)+1 to max(...)-1
             seg_lo = min(geo_al, geo_dl) + 1
             seg_hi = max(geo_al, geo_dl) - 1
-            segment_in_cds = in_cds(seg_lo, seg_hi)
-            frameshift = intron_size % 3 != 0
-            aberration['affects_coding'] = bool(segment_in_cds) if segment_in_cds is not None else None
-            aberration['frameshift'] = frameshift if segment_in_cds else None
+            cds_size = cds_overlap_size(seg_lo, seg_hi)
+            # Intron retention adds bases; it cannot delete a codon.
+            status = set_coding_fields(aberration, cds_size, start_lost=False, stop_lost=False)
             aberration['size'] = intron_size
             aberration['size_type'] = 'intron'
             label = 'Potential whole intron retention' if is_potential else 'Whole intron retention'
-            aberration['frameshift_description'] = (
-                f'{label} ({intron_size}bp) - '
-                f'{"frameshift" if frameshift and segment_in_cds else "in-frame" if segment_in_cds else "non-coding"}')
+            size_text = f'{cds_size}bp coding seq.' if aberration['affects_coding'] else f'{intron_size}bp'
+            aberration['frameshift_description'] = f'{label} ({size_text}) - {status}'
         else:
             aberration['affects_coding'] = None
             aberration['frameshift'] = None
@@ -741,15 +845,13 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             gex_size = abs(geo_dg - geo_ag) + 1
             seg_lo = min(geo_ag, geo_dg)
             seg_hi = max(geo_ag, geo_dg)
-            segment_in_cds = in_cds(seg_lo, seg_hi)
-            frameshift = gex_size % 3 != 0
-            aberration['affects_coding'] = bool(segment_in_cds) if segment_in_cds is not None else None
-            aberration['frameshift'] = frameshift if segment_in_cds else None
+            cds_size = cds_overlap_size(seg_lo, seg_hi)
+            # Pseudoexon activation adds bases; it cannot delete a codon.
+            status = set_coding_fields(aberration, cds_size, start_lost=False, stop_lost=False)
             aberration['size'] = gex_size
             aberration['size_type'] = 'pseudoexon'
-            aberration['frameshift_description'] = (
-                f'Pseudoexon activation ({gex_size}bp) - '
-                f'{"frameshift" if frameshift and segment_in_cds else "in-frame" if segment_in_cds else "non-coding"}')
+            size_text = f'{cds_size}bp coding seq.' if aberration['affects_coding'] else f'{gex_size}bp'
+            aberration['frameshift_description'] = f'Pseudoexon activation ({size_text}) - {status}'
         else:
             aberration['affects_coding'] = None
             aberration['frameshift'] = None
@@ -762,18 +864,29 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
         if native_exon_size is not None:
             aberration['size'] = native_exon_size
             aberration['size_type'] = 'exon'
-            aberration['frameshift'] = None  # same exon, no frame change
-            # Check coding by the native exon coords (use the associated exon index,
-            # not the intron index, since for intronic variants these can differ).
+            # Including a native exon verbatim cannot change the frame or
+            # delete a codon, so we write the five fields directly here
+            # rather than going through set_coding_fields (which would set
+            # frameshift based on cds_size % 3, which is irrelevant for IEI).
             idx = native.get('assoc_idx')
             if idx is not None and 0 <= idx < len(exon_starts):
-                segment_in_cds = in_cds(exon_starts[idx], exon_ends[idx])
+                cds_size = cds_overlap_size(exon_starts[idx], exon_ends[idx])
+                affects_coding = cds_size > 0
+                aberration['affects_coding'] = affects_coding
+                aberration['cds_size'] = cds_size
+                aberration['frameshift'] = None                      # frame unchanged
+                aberration['start_codon_lost'] = False if affects_coding else None
+                aberration['stop_codon_lost'] = False if affects_coding else None
+                label_status = 'coding' if affects_coding else 'non-coding'
             else:
-                segment_in_cds = None
-            aberration['affects_coding'] = bool(segment_in_cds) if segment_in_cds is not None else None
+                aberration['affects_coding'] = None
+                aberration['cds_size'] = None
+                aberration['frameshift'] = None
+                aberration['start_codon_lost'] = None
+                aberration['stop_codon_lost'] = None
+                label_status = 'unknown'
             aberration['frameshift_description'] = (
-                f'Increased exon inclusion ({native_exon_size}bp) - '
-                f'{"coding" if segment_in_cds else "non-coding" if segment_in_cds is False else "unknown"}')
+                f'Increased exon inclusion ({native_exon_size}bp) - {label_status}')
         else:
             aberration['affects_coding'] = None
             aberration['frameshift'] = None
@@ -788,27 +901,56 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             aberration['frameshift_description'] = f'{aberration_type.replace("_", " ")} - size unclear'
             return
         display_size = abs(partial_size)
-        frameshift = display_size % 3 != 0
-        # Segment = range between native site and predicted cryptic site.
+        # Identify the native site and the predicted cryptic site for the active side.
         native = aberration.get('_native') or {}
         branch = aberration.get('_branch', '')
         if branch == 'gain_B_acceptor':
-            seg_a = native.get('geo_na')
-            seg_b = geo_ag
+            native_site = native.get('geo_na')
+            cryptic_site = geo_ag
             shift_type = 'Acceptor'
         else:
-            seg_a = native.get('geo_nd')
-            seg_b = geo_dg
+            native_site = native.get('geo_nd')
+            cryptic_site = geo_dg
             shift_type = 'Donor'
-        segment_in_cds = in_cds(seg_a, seg_b) if seg_a is not None and seg_b is not None else None
-        aberration['affects_coding'] = bool(segment_in_cds) if segment_in_cds is not None else None
-        aberration['frameshift'] = frameshift if segment_in_cds else None
+        # Compute the inclusive genomic range of bases actually affected:
+        #   - partial_exon_deletion: bases deleted from the exon. Runs from the
+        #     native site toward the cryptic site but EXCLUDES the cryptic site,
+        #     which is the new splice boundary and remains in the mature mRNA.
+        #   - partial_intron_retention: intronic bases now retained in the mRNA.
+        #     Runs from the cryptic site toward the native site but EXCLUDES the
+        #     native site (which is the original splice boundary).
+        # The computed range has length == display_size by construction.
+        if native_site is not None and cryptic_site is not None:
+            if aberration_type == 'partial_exon_deletion':
+                if native_site < cryptic_site:
+                    seg_lo, seg_hi = native_site, cryptic_site - 1
+                else:
+                    seg_lo, seg_hi = cryptic_site + 1, native_site
+            else:  # partial_intron_retention
+                if cryptic_site < native_site:
+                    seg_lo, seg_hi = cryptic_site, native_site - 1
+                else:
+                    seg_lo, seg_hi = native_site + 1, cryptic_site
+            cds_size = cds_overlap_size(seg_lo, seg_hi)
+            # Start/stop-codon-lost only applies to partial_exon_deletion
+            # (partial_intron_retention adds bases to the mRNA rather than
+            # removing any; it can't delete the start or stop codon).
+            if aberration_type == 'partial_exon_deletion':
+                start_lost = contains_start_codon(seg_lo, seg_hi)
+                stop_lost = contains_stop_codon(seg_lo, seg_hi)
+            else:
+                start_lost = False
+                stop_lost = False
+        else:
+            cds_size = 0
+            start_lost = False
+            stop_lost = False
+        status = set_coding_fields(aberration, cds_size, start_lost, stop_lost)
         aberration['size'] = display_size
         aberration['size_type'] = 'partial'
         consequence = 'partial exon deletion' if aberration_type == 'partial_exon_deletion' else 'partial intron retention'
-        aberration['frameshift_description'] = (
-            f'{shift_type} shift ({display_size}bp {consequence}) - '
-            f'{"frameshift" if frameshift and segment_in_cds else "in-frame" if segment_in_cds else "non-coding"}')
+        size_text = f'{cds_size}bp coding seq.' if aberration['affects_coding'] else f'{display_size}bp'
+        aberration['frameshift_description'] = f'{shift_type} shift ({size_text} {consequence}) - {status}'
         return
 
     # Unknown aberration type — leave blank (should not happen with current paper-only emission).
@@ -851,7 +993,17 @@ def sai10k_compute_predictions(transcript_scores, variant_pos):
     exon_ends = transcript_scores.get('EXON_ENDS', [])
     cds_start = transcript_scores.get('CDS_START')
     cds_end = transcript_scores.get('CDS_END')
-    strand = transcript_scores.get('STRAND') or transcript_scores.get('t_strand', '+')
+    strand = transcript_scores.get('STRAND') or transcript_scores.get('t_strand')
+    if strand not in ('+', '-'):
+        # Falling back to '+' on a '-' strand transcript would silently flip
+        # the start/stop codon lost flags (biological ATG lives at cds_end on
+        # '-' strand). Warn loudly if we have to guess.
+        print(
+            f"WARNING: transcript has no STRAND/t_strand field; defaulting to '+'. "
+            f"Codon-lost flags may be wrong if the transcript is actually on '-'. "
+            f"Transcript id = {transcript_scores.get('t_id') or transcript_scores.get('NAME')}"
+        )
+        strand = '+'
 
     aberrations = sai10k_determine_aberrations(
         ds_ag, ds_al, ds_dg, ds_dl,
