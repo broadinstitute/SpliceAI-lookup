@@ -362,6 +362,12 @@ def parse_ref_output(path):
         lines = f.read().splitlines()
     if len(lines) < 2:
         return None
+    # Single-variant VCF + 1-row refseq_table → exactly one data row is the
+    # invariant this harness relies on. Surface deviations loudly instead of
+    # silently dropping rows 2..N.
+    assert len(lines) == 2, (
+        f"Expected 1 data row in reference parser output, got {len(lines) - 1}: {path}"
+    )
     header = lines[0].split("\t")
     row = dict(zip(header, lines[1].split("\t")))
 
@@ -470,7 +476,6 @@ def run_new_impl(variant_pos, transcript, scores):
         "CDS_START": transcript.get("CDS_START"),
         "CDS_END": transcript.get("CDS_END"),
         "STRAND": transcript["t_strand"],
-        "t_strand": transcript["t_strand"],
         "t_id": transcript["t_id"],
         "g_name": transcript.get("g_name"),
         "t_priority": transcript.get("t_priority"),
@@ -518,7 +523,10 @@ def run_new_impl(variant_pos, transcript, scores):
         elif len(distinct) == 1:
             regions[ab_type] = distinct[0]
         else:
-            regions[ab_type] = tuple(sorted(set(distinct), key=str))
+            # Sort numerically; `key=str` would produce lexicographic order
+            # (e.g. (11, 2) instead of (2, 11)) and miscompare against the
+            # ref parser's numerically-sorted tuples.
+            regions[ab_type] = tuple(sorted(set(distinct)))
 
     return {
         "any_aberration": bool(aberration_types),
@@ -577,12 +585,27 @@ def _region_for_comparison(aberration, ab_type):
 
 # ---- Full per-variant pipeline --------------------------------------------
 def prepare_variant(variant, hg):
-    """Resolve HGVS, query API, pick top transcript. Returns a dict or None."""
+    """Resolve HGVS, query API, pick top transcript. Returns a dict or None.
+
+    Transport-level failures (ConnectionError, HTTP 5xx, JSON-parse errors)
+    are converted to skip_reasons so one flaky network request doesn't turn
+    every downstream unittest into an ERROR.
+    """
     actual_variant = variant
     if variant.startswith("HGVS:"):
-        actual_variant = normalize_hgvs(variant[len("HGVS:"):], hg)
+        try:
+            actual_variant = normalize_hgvs(variant[len("HGVS:"):], hg)
+        except (requests.RequestException, ValueError) as e:
+            return {"skip_reason": f"HGVS resolution failed: {type(e).__name__}: {e}"}
 
-    response = query_spliceai_api(actual_variant, hg)
+    try:
+        response = query_spliceai_api(actual_variant, hg)
+    except requests.RequestException as e:
+        return {"skip_reason": f"SpliceAI API request failed: {type(e).__name__}: {e}"}
+    except ValueError as e:
+        # .json() raises ValueError on non-JSON response (e.g., HTML error page)
+        return {"skip_reason": f"SpliceAI API returned non-JSON: {e}"}
+
     if response.get("error"):
         return {"skip_reason": f"API error: {response['error']}"}
 
@@ -594,7 +617,10 @@ def prepare_variant(variant, hg):
     if not top:
         return {"skip_reason": "No top transcript selected"}
 
-    chrom, pos, ref, alt = parse_variant_coords(actual_variant)
+    try:
+        chrom, pos, ref, alt = parse_variant_coords(actual_variant)
+    except ValueError as e:
+        return {"skip_reason": f"Could not parse variant coords {actual_variant!r}: {e}"}
 
     # Sanity: API returns t_strand for Ensembl transcripts but some records
     # may omit structure fields when the variant is outside transcribed regions.
@@ -730,41 +756,55 @@ _SKIP_FRAMESHIFT_COMPARE = frozenset({
 })
 
 
+# Discrepancies are (severity, message) tuples. "hard" fails the test;
+# "soft" is informational only. Using a structured tag avoids the fragility
+# of substring-matching a sentinel string like "KNOWN DIVERGENCE".
+def _hard(msg):
+    return ("hard", msg)
+
+
+def _soft(tag, msg):
+    return ("soft", f"{msg} (KNOWN DIVERGENCE: {tag})")
+
+
 def _compare_one_ref(new, ref, ref_label, is_indel):
     """Compare the new impl's output against one reference impl (Python or R).
 
-    Returns a list of human-readable discrepancy strings. Messages tagged
-    "(KNOWN DIVERGENCE ...)" are soft divergences that don't fail tests.
+    Returns a list of (severity, message) tuples.
 
     Indels: reference parsers NaN-out scores for indels, so ref['aberration_types']
-    is always empty. If the new impl predicted aberrations, that's the expected
-    case (not a failure) -- ref simply can't evaluate the indel.
+    is normally empty. If it's NOT empty, the ref unexpectedly emitted
+    aberrations for an indel -- treat that as a hard failure (the parser has
+    deviated from its documented indel-filtering behavior and the comparison
+    is no longer on solid ground). If new impl predicted aberrations for an
+    indel that ref skipped, that's the expected asymmetry -- soft.
     """
     out = []
     prefix = f"[{ref_label}]"
 
     if is_indel:
         if ref["aberration_types"]:
-            # Unexpected: the ref parser usually drops indels at preprocessing.
-            # If it did emit aberrations, surface them.
-            out.append(
-                f"{prefix} indel: unexpected aberrations from ref: "
-                f"{sorted(ref['aberration_types'])} (KNOWN DIVERGENCE: indel)"
-            )
+            # Ref produced aberrations despite the indel filter. That's a
+            # deviation from ref's documented behavior; surface as hard.
+            out.append(_hard(
+                f"{prefix} indel: ref unexpectedly produced aberrations "
+                f"{sorted(ref['aberration_types'])} "
+                f"(new={sorted(new['aberration_types'])})"
+            ))
         elif new["aberration_types"]:
-            out.append(
+            out.append(_soft(
+                "indel",
                 f"{prefix} indel: new impl predicted "
-                f"{sorted(new['aberration_types'])}, ref skipped "
-                "(KNOWN DIVERGENCE: indel)"
-            )
+                f"{sorted(new['aberration_types'])}, ref skipped"
+            ))
         return out
 
     if new["aberration_types"] != ref["aberration_types"]:
-        out.append(
+        out.append(_hard(
             f"{prefix} aberration_types: "
             f"new={sorted(new['aberration_types'])} "
             f"ref={sorted(ref['aberration_types'])}"
-        )
+        ))
 
     for ab_type in new["aberration_types"] & ref["aberration_types"]:
         nr = new["regions"].get(ab_type)
@@ -779,18 +819,18 @@ def _compare_one_ref(new, ref, ref_label, is_indel):
             # A None that doesn't match either condition means the regex
             # failed on an unexpected frameshift_description format -- which
             # is a test bug, not a benign divergence, so it should fail hard.
+            # Note: if BOTH sides are None, `nr != rr` is False and no
+            # message is emitted. That's the "both could not map" case.
             new_is_fallback = ab_type in new.get("unmappable", set())
+            msg = f"{prefix} {ab_type} region: new={nr} ref={rr}"
             if nr is None or rr is None:
                 if nr != rr:
                     if ab_type == "exon_skipping" and (new_is_fallback or rr is None):
-                        out.append(
-                            f"{prefix} {ab_type} region: new={nr} ref={rr} "
-                            "(KNOWN DIVERGENCE: one side could not map)"
-                        )
+                        out.append(_soft("one side could not map", msg))
                     else:
-                        out.append(f"{prefix} {ab_type} region: new={nr} ref={rr}")
+                        out.append(_hard(msg))
             elif nr != rr:
-                out.append(f"{prefix} {ab_type} region: new={nr} ref={rr}")
+                out.append(_hard(msg))
 
         if ab_type not in _SKIP_FRAMESHIFT_COMPARE:
             new_fs = new["frameshifts"].get(ab_type)
@@ -800,20 +840,19 @@ def _compare_one_ref(new, ref, ref_label, is_indel):
             # (ref parser doesn't compute frameshift for non-coding transcripts;
             # new impl applies its own CDS-based predicate).
             if new_fs != ref_fs:
-                out.append(
-                    f"{prefix} {ab_type} frameshift: new={new_fs} ref={ref_fs} "
-                    "(KNOWN DIVERGENCE: CDS vs full-size)"
-                )
+                out.append(_soft(
+                    "CDS vs full-size",
+                    f"{prefix} {ab_type} frameshift: new={new_fs} ref={ref_fs}"
+                ))
 
     return out
 
 
 def _collect_discrepancies(new, ref_py, ref_r, is_indel):
-    """List human-readable mismatches across the three impls.
+    """Compare the new impl against each ref impl.
 
-    Soft divergences are tagged "(KNOWN DIVERGENCE: ...)" and don't fail
-    tests. Hard discrepancies (aberration type set mismatch, region mismatch
-    for comparable types) fail.
+    Returns a list of (severity, message) tuples. "hard" severity fails the
+    test; "soft" is informational (known divergence between impls).
     """
     out = []
     if ref_py is not None:
@@ -821,6 +860,14 @@ def _collect_discrepancies(new, ref_py, ref_r, is_indel):
     if ref_r is not None:
         out.extend(_compare_one_ref(new, ref_r, "ref_r", is_indel))
     return out
+
+
+def _is_hard(d):
+    return d[0] == "hard"
+
+
+def _message(d):
+    return d[1]
 
 
 def _expand_cases():
@@ -854,12 +901,11 @@ class TestSAI10kReferenceConsistency(unittest.TestCase):
             self.skipTest(
                 "Both reference parsers unavailable: " + " | ".join(reasons)
             )
-        # KNOWN DIVERGENCE messages are soft: CDS-vs-full-size frameshift,
-        # indel handling, and region fields the new impl doesn't structurally
-        # expose. Hard discrepancies (type-set mismatch, comparable regions)
-        # fail the test.
-        hard_discrepancies = [d for d in diff["discrepancies"]
-                              if "KNOWN DIVERGENCE" not in d]
+        # Soft divergences are informational only (CDS-vs-full-size frameshift,
+        # indel asymmetry, region fields the new impl doesn't structurally
+        # expose). Hard discrepancies (type-set mismatch, comparable-region
+        # mismatch) fail the test.
+        hard_discrepancies = [_message(d) for d in diff["discrepancies"] if _is_hard(d)]
         if hard_discrepancies:
             msg = (
                 f"\nVariant: {diff['variant']} (hg{hg}) "
@@ -916,16 +962,16 @@ def dump_all(json_out=None):
         elif diff["ref_r_err"]:
             print(f"  ref_r    ERROR: {diff['ref_r_err']}")
 
-        hard = [d for d in diff["discrepancies"] if "KNOWN DIVERGENCE" not in d]
-        soft = [d for d in diff["discrepancies"] if "KNOWN DIVERGENCE" in d]
+        hard = [_message(d) for d in diff["discrepancies"] if _is_hard(d)]
+        soft = [_message(d) for d in diff["discrepancies"] if not _is_hard(d)]
         if hard:
-            for d in hard:
-                print(f"  DIFF: {d}")
+            for m in hard:
+                print(f"  DIFF: {m}")
             fail += 1
         else:
             if soft:
-                for d in soft:
-                    print(f"  (known) {d}")
+                for m in soft:
+                    print(f"  (known) {m}")
             ok += 1
 
         all_diffs.append({
@@ -938,7 +984,10 @@ def dump_all(json_out=None):
                             if diff["ref_r"] else None),
             "ref_py_err": diff["ref_py_err"],
             "ref_r_err": diff["ref_r_err"],
-            "discrepancies": diff["discrepancies"],
+            "discrepancies": [
+                {"severity": sev, "message": m}
+                for sev, m in diff["discrepancies"]
+            ],
         })
 
     print(f"\n=== Summary: {ok} ok | {fail} mismatched | {skip} skipped ===")
