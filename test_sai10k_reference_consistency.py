@@ -305,8 +305,12 @@ def write_variant_vcf(path, variant_id, chrom, pos, ref, alt, transcript, scores
 
     # `or 0` guards against explicit JSON null in the API response --
     # dict.get(k, 0) only returns the default when the key is absent.
+    # Use :.4f (not :.2f) to preserve precision around threshold boundaries:
+    # if the API ever returns 3+ decimals, rounding 0.195 to "0.20" would
+    # cross the 0.2 threshold on the ref-parser side while the new impl saw
+    # the raw float, producing a false hard type-set mismatch.
     def f2(k):
-        return f"{float(scores.get(k) or 0):.2f}"
+        return f"{float(scores.get(k) or 0):.4f}"
 
     def i0(k):
         return str(int(scores.get(k) or 0))
@@ -364,10 +368,13 @@ def parse_ref_output(path):
         return None
     # Single-variant VCF + 1-row refseq_table → exactly one data row is the
     # invariant this harness relies on. Surface deviations loudly instead of
-    # silently dropping rows 2..N.
-    assert len(lines) == 2, (
-        f"Expected 1 data row in reference parser output, got {len(lines) - 1}: {path}"
-    )
+    # silently dropping rows 2..N. Use an explicit raise rather than `assert`
+    # so `python -O` doesn't disable the check, and so the failure surfaces
+    # as a test FAIL rather than an unittest ERROR.
+    if len(lines) != 2:
+        raise ValueError(
+            f"Expected 1 data row in reference parser output, got {len(lines) - 1}: {path}"
+        )
     header = lines[0].split("\t")
     row = dict(zip(header, lines[1].split("\t")))
 
@@ -407,25 +414,33 @@ def parse_ref_output(path):
         "partial_intron_retention":  _fs(row.get("Partial_frameshift")),
     }
 
+    # Pandas promotes integer columns to float64 when any row is NaN, so the
+    # TSV may contain "5.0" for an exon number. int("5.0") raises; go through
+    # float() so both "5" and "5.0" parse.
     def _to_int(val):
         v = _na(val)
         if v is None:
             return None
         try:
-            return int(v)
+            return int(float(v))
         except ValueError:
             return None
 
-    # Lost_exons is "N" or "N,M" (never a range). Normalize to a sorted
-    # tuple of ints so it compares equal to the new impl's parsed tuple.
+    # Lost_exons is typically "N" (single exon) or "N,M" (boundary exons of
+    # a multi-exon skip; ref's find_exon_lost_gain only keeps boundary
+    # exons). Normalize through the same collapse the new-impl side uses so
+    # single-exon cases give (N,) and multi-exon cases give (min, max).
     def _lost_exons(val):
         v = _na(val)
         if v is None:
             return None
         try:
-            return tuple(sorted(int(x) for x in v.split(",") if x.strip()))
+            nums = sorted(int(float(x)) for x in v.split(",") if x.strip())
         except ValueError:
             return None
+        if not nums:
+            return None
+        return _collapse_exon_range(nums)
 
     regions = {
         "exon_skipping":             _lost_exons(row.get("Lost_exons")),
@@ -573,7 +588,7 @@ def _region_for_comparison(aberration, ab_type):
         nums = [int(x) for x in match.group(1).split(",") if x.strip()]
         if not nums:
             return None
-        return tuple(sorted(nums))
+        return _collapse_exon_range(sorted(nums))
 
     if ab_type == "whole_intron_retention":
         # No structural retained-intron field on the aberration dict; skip.
@@ -581,6 +596,26 @@ def _region_for_comparison(aberration, ab_type):
 
     region = aberration.get("affected_region") or {}
     return region.get("region_number")
+
+
+def _collapse_exon_range(nums):
+    """Normalize a list of contiguous skipped exon numbers to the boundary-only
+    representation the reference parser emits.
+
+    `find_exon_lost_gain` in spliceai_parser.py only keeps exons whose
+    boundaries match the DL/AL positions exactly, so a 3-exon skip
+    [3, 4, 5] becomes "3,5". The new impl emits all bracketed exons,
+    producing (3, 4, 5). Collapse to (min, max) so the two representations
+    compare equal for contiguous ranges.
+    """
+    if len(nums) <= 1:
+        return tuple(nums)
+    first, last = nums[0], nums[-1]
+    if last - first + 1 == len(nums):
+        # Contiguous: ref reports boundary pair only (or a single int).
+        return (first,) if first == last else (first, last)
+    # Non-contiguous (unusual, but possible): keep all numbers.
+    return tuple(nums)
 
 
 # ---- Full per-variant pipeline --------------------------------------------
@@ -811,21 +846,31 @@ def _compare_one_ref(new, ref, ref_label, is_indel):
         rr = ref["regions"].get(ab_type)
 
         if ab_type not in _SKIP_REGION_COMPARE:
-            # For exon_skipping, treat None as a soft divergence ONLY when we
-            # can attribute it to one side's explicit "could not map" fallback:
-            #   * new impl: frameshift_description literally contains
-            #     "could not be mapped" (tracked via new["unmappable"])
-            #   * ref: Lost_exons column is NA (rr is None)
-            # A None that doesn't match either condition means the regex
-            # failed on an unexpected frameshift_description format -- which
-            # is a test bug, not a benign divergence, so it should fail hard.
+            # Treat None as a soft divergence when we can attribute it to a
+            # known ref-parser or new-impl mapping limitation:
+            #   * exon_skipping: new impl's frameshift_description literally
+            #     says "could not be mapped" (new_is_fallback) OR ref's
+            #     Lost_exons is NA (rr is None)
+            #   * pseudoexon: ref's find_pseudoexon_position returns "NA|NA"
+            #     when its candidate-intron filter matches 0 or ≥2 introns
+            #     (spliceai_parser.py:281-289). When rr is None but nr has a
+            #     value, that's a ref limitation, not a new-impl bug.
+            # A None that doesn't match one of these conditions means the
+            # regex failed on an unexpected frameshift_description format --
+            # which is a test-harness bug, not a benign divergence, so it
+            # should fail hard.
             # Note: if BOTH sides are None, `nr != rr` is False and no
             # message is emitted. That's the "both could not map" case.
             new_is_fallback = ab_type in new.get("unmappable", set())
             msg = f"{prefix} {ab_type} region: new={nr} ref={rr}"
             if nr is None or rr is None:
                 if nr != rr:
-                    if ab_type == "exon_skipping" and (new_is_fallback or rr is None):
+                    soft_ok = (
+                        (ab_type == "exon_skipping"
+                            and (new_is_fallback or rr is None))
+                        or (ab_type == "pseudoexon" and rr is None)
+                    )
+                    if soft_ok:
                         out.append(_soft("one side could not map", msg))
                     else:
                         out.append(_hard(msg))
@@ -836,12 +881,17 @@ def _compare_one_ref(new, ref, ref_label, is_indel):
             new_fs = new["frameshifts"].get(ab_type)
             ref_fs = ref["frameshifts"].get(ab_type)
             # Python's `None != None` is False, so both-None is silently OK.
-            # (bool, None) pairs DO differ and are surfaced as soft divergences
-            # (ref parser doesn't compute frameshift for non-coding transcripts;
-            # new impl applies its own CDS-based predicate).
+            # (bool, None) and (True, False) pairs DO differ; surface as soft.
+            # The frameshift value can legitimately diverge for several
+            # reasons that aren't tests of the new impl's core correctness:
+            #   * CDS-overlap-size vs full-affected-size computation method
+            #   * ref's clean_partial_frameshift nullifies on aaseq guard
+            #     conditions ("impacts native start/stop", "cannot determine",
+            #     "deletion greater than exon size", "does not affect coding")
+            #   * wrong-assembly FASTA fallback can shift the aaseq path
             if new_fs != ref_fs:
                 out.append(_soft(
-                    "CDS vs full-size",
+                    "frameshift impl difference",
                     f"{prefix} {ab_type} frameshift: new={new_fs} ref={ref_fs}"
                 ))
 
