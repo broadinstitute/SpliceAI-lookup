@@ -242,13 +242,17 @@ def write_refseq_table(path, chrom, transcript):
     ends_0b = list(exon_ends_1b)
     tx_start_0b = starts_0b[0]
     tx_end_0b = ends_0b[-1]
-    # genePred non-coding convention: cdsStart == cdsEnd, both set to txEnd
-    # (the standard encoding in UCSC's genePred table). Use `is not None`
-    # so a legit cds_start == 0 doesn't collapse to "missing".
-    if cds_start_1b is not None and cds_end_1b is not None:
+    # Mirror the new impl's coding check (sai10k_predictions.py: cds_start <
+    # cds_end). An API that returns cds_start == cds_end signals non-coding;
+    # encoding it as a 1bp CDS would make the ref parser treat it as coding
+    # while the new impl treats it as non-coding -- an asymmetry that could
+    # flip every frameshift comparison for non-coding transcripts.
+    if (cds_start_1b is not None and cds_end_1b is not None
+            and cds_start_1b < cds_end_1b):
         cds_start_0b = cds_start_1b - 1
         cds_end_0b = cds_end_1b
     else:
+        # genePred non-coding convention: cdsStart == cdsEnd.
         cds_start_0b = tx_end_0b
         cds_end_0b = tx_end_0b
 
@@ -385,7 +389,12 @@ def parse_ref_output(path):
         "exon_skipping":             _fs(row.get("Exon_skipping_frameshift")),
         "whole_intron_retention":    _fs(row.get("Intron_retention_frameshift")),
         "pseudoexon":                _fs(row.get("Pseudoexon_frameshift")),
-        "increased_exon_inclusion":  _fs(row.get("Increased_exon_inclusion_frameshift")),
+        # Ref parsers don't emit an Increased_exon_inclusion_frameshift column
+        # (they report IEI frameshift in the aaseq column as text only), so we
+        # can't frameshift-compare IEI. Leave as None and let the comparison
+        # see matching None-vs-None (no divergence). Any new-impl frameshift
+        # value for IEI will surface as a soft (bool, None) divergence.
+        "increased_exon_inclusion":  None,
         # Reference parser has a single Partial_frameshift shared by the two
         # partial branches.
         "partial_exon_deletion":     _fs(row.get("Partial_frameshift")),
@@ -470,18 +479,53 @@ def run_new_impl(variant_pos, transcript, scores):
 
     aberration_types = {a["aberration_type"] for a in predictions["aberrations"]}
 
-    frameshifts = {}
-    regions = {}
+    # The new impl can emit multiple aberrations with the same type for a
+    # single variant (e.g., two partial_exon_deletion from both gain_B_acceptor
+    # and gain_B_donor -- sai10k_predictions.py:554-580). A naive
+    # dict[type]=value would drop all but the last. Aggregate instead:
+    #   frameshift: collapse to True if ANY is True, False if ALL are False,
+    #               else None (matches the ref parser's single Partial_frameshift
+    #               column which also flips on any true).
+    #   region: sorted tuple of distinct values (None excluded).
+    frameshifts_list = {}
+    regions_list = {}
+    # Track aberrations where the new impl emitted its explicit
+    # "could not be mapped" fallback -- distinguishing benign fallbacks from
+    # regex mismatches on unanticipated frameshift_description formats.
+    unmappable = set()
     for a in predictions["aberrations"]:
         ab_type = a["aberration_type"]
-        frameshifts[ab_type] = a.get("frameshift")
-        regions[ab_type] = _region_for_comparison(a, ab_type)
+        frameshifts_list.setdefault(ab_type, []).append(a.get("frameshift"))
+        regions_list.setdefault(ab_type, []).append(_region_for_comparison(a, ab_type))
+        desc = a.get("frameshift_description") or ""
+        if "could not be mapped" in desc:
+            unmappable.add(ab_type)
+
+    frameshifts = {}
+    for ab_type, vals in frameshifts_list.items():
+        if any(v is True for v in vals):
+            frameshifts[ab_type] = True
+        elif all(v is False for v in vals):
+            frameshifts[ab_type] = False
+        else:
+            frameshifts[ab_type] = None
+
+    regions = {}
+    for ab_type, vals in regions_list.items():
+        distinct = [v for v in vals if v is not None]
+        if not distinct:
+            regions[ab_type] = None
+        elif len(distinct) == 1:
+            regions[ab_type] = distinct[0]
+        else:
+            regions[ab_type] = tuple(sorted(set(distinct), key=str))
 
     return {
         "any_aberration": bool(aberration_types),
         "aberration_types": aberration_types,
         "frameshifts": frameshifts,
         "regions": regions,
+        "unmappable": unmappable,
         "raw_aberrations": predictions["aberrations"],
     }
 
@@ -556,6 +600,8 @@ def prepare_variant(variant, hg):
     # may omit structure fields when the variant is outside transcribed regions.
     if not top.get("EXON_STARTS") or not top.get("EXON_ENDS"):
         return {"skip_reason": "Top transcript has no exon structure"}
+    if top.get("t_strand") not in ("+", "-"):
+        return {"skip_reason": f"Top transcript has invalid t_strand: {top.get('t_strand')!r}"}
 
     return {
         "actual_variant": actual_variant,
@@ -676,6 +722,14 @@ _SKIP_REGION_COMPARE = frozenset({
 })
 
 
+# Frameshift comparison is skipped for aberration types where the ref parser
+# doesn't emit a structural frameshift value. Ref reports IEI frameshift only
+# as a free-text aaseq label, so we can't machine-compare it.
+_SKIP_FRAMESHIFT_COMPARE = frozenset({
+    "increased_exon_inclusion",
+})
+
+
 def _compare_one_ref(new, ref, ref_label, is_indel):
     """Compare the new impl's output against one reference impl (Python or R).
 
@@ -717,13 +771,18 @@ def _compare_one_ref(new, ref, ref_label, is_indel):
         rr = ref["regions"].get(ab_type)
 
         if ab_type not in _SKIP_REGION_COMPARE:
-            # For exon_skipping both impls have explicit "could not map"
-            # fallbacks; either side reporting None there is a soft divergence.
-            # For any other type, None means a missing structural field and
-            # should be a hard fail.
+            # For exon_skipping, treat None as a soft divergence ONLY when we
+            # can attribute it to one side's explicit "could not map" fallback:
+            #   * new impl: frameshift_description literally contains
+            #     "could not be mapped" (tracked via new["unmappable"])
+            #   * ref: Lost_exons column is NA (rr is None)
+            # A None that doesn't match either condition means the regex
+            # failed on an unexpected frameshift_description format -- which
+            # is a test bug, not a benign divergence, so it should fail hard.
+            new_is_fallback = ab_type in new.get("unmappable", set())
             if nr is None or rr is None:
                 if nr != rr:
-                    if ab_type == "exon_skipping":
+                    if ab_type == "exon_skipping" and (new_is_fallback or rr is None):
                         out.append(
                             f"{prefix} {ab_type} region: new={nr} ref={rr} "
                             "(KNOWN DIVERGENCE: one side could not map)"
@@ -733,13 +792,18 @@ def _compare_one_ref(new, ref, ref_label, is_indel):
             elif nr != rr:
                 out.append(f"{prefix} {ab_type} region: new={nr} ref={rr}")
 
-        new_fs = new["frameshifts"].get(ab_type)
-        ref_fs = ref["frameshifts"].get(ab_type)
-        if new_fs is not None and ref_fs is not None and new_fs != ref_fs:
-            out.append(
-                f"{prefix} {ab_type} frameshift: new={new_fs} ref={ref_fs} "
-                "(KNOWN DIVERGENCE: CDS vs full-size)"
-            )
+        if ab_type not in _SKIP_FRAMESHIFT_COMPARE:
+            new_fs = new["frameshifts"].get(ab_type)
+            ref_fs = ref["frameshifts"].get(ab_type)
+            # Python's `None != None` is False, so both-None is silently OK.
+            # (bool, None) pairs DO differ and are surfaced as soft divergences
+            # (ref parser doesn't compute frameshift for non-coding transcripts;
+            # new impl applies its own CDS-based predicate).
+            if new_fs != ref_fs:
+                out.append(
+                    f"{prefix} {ab_type} frameshift: new={new_fs} ref={ref_fs} "
+                    "(KNOWN DIVERGENCE: CDS vs full-size)"
+                )
 
     return out
 
