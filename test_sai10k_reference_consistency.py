@@ -118,45 +118,76 @@ API_URL_TEMPLATE = (
 #   test_ui.py              (smoke-test variants; mostly dup with above)
 #   google_cloud_run_services/test_sai10k_predictions.py  (BRCA1/2 hg19 natives)
 
-# (variant, genome_versions_to_test) where genome_versions is a tuple.
-# HGVS:-prefixed variants are resolved via the Ensembl VEP API at runtime.
+# (variant, hg, label) — one entry per (coord, assembly) pair.
+# HGVS:-prefixed variants are resolved via the Ensembl VEP API at runtime
+# (VEP handles per-assembly resolution, so the same HGVS string gets two entries).
+#
+# Most variants have an hg38 coordinate + its hg19 liftover (from the Broad
+# liftover service, bcftools plugin). The production SpliceAI service looks
+# up genes by genomic position, so querying hg37 with an hg38 coord would
+# miss the target gene by ~1-2 Mb and return no scores. Each pair is listed
+# as two entries (one per assembly) rather than testing the same coord on both.
 VARIANT_SOURCES = [
-    # -- test_api_consistency.py VARIANTS (both hg37 + hg38) --
-    ("8-140300616-T-G",        ("37", "38"), "TRAPPC9 (index.html + test_ui)"),
-    ("6-31740453-G-T",         ("37", "38"), "index.html space-separated"),
-    ("1-930130-C-G",           ("37", "38"), "index.html overlapping genes"),
-    ("1-1042601-A-AGAGAG",     ("37", "38"), "indel (insertion)"),
-    ("1-1042466-GGGC-G",       ("37", "38"), "indel (deletion)"),
-    ("17-58709857-A-C",        ("37", "38"), "RAD51C exon skipping + partial deletion"),
-    ("22-28695127-C-T",        ("37", "38"), "CHEK2 exon skipping"),
-    ("16-23641111-T-C",        ("37", "38"), "PALB2 partial exon deletion"),
-    ("17-58696687-T-A",        ("37", "38"), "RAD51C partial intron retention"),
-    ("22-28741768-C-A",        ("37", "38"), "CHEK2 non-coding partial exon deletion"),
-    ("13-32345247-T-G",        ("37", "38"), "BRCA2 pseudoexon"),
-    ("13-32363534-G-T",        ("37", "38"), "BRCA2 exon skipping"),
-    ("2-47790924-C-CAGTTG",    ("37", "38"), "indel (insertion)"),
-    ("1-55039916-G-A",         ("37", "38"), "index.html source comment"),
-    ("17-43047638-C-G",        ("37", "38"), "BRCA1 c.5467+5G>C (hg38 liftover)"),
-    ("17-43047642-C-T",        ("37", "38"), "BRCA1 c.5467+1G>A (hg38 liftover)"),
-    ("17-43045714-G-C",        ("37", "38"), "BRCA1 region hg38"),
-    ("X-154031414-C-T",        ("37", "38"), "MECP2 region"),
-    ("HGVS:NM_000249.4:c.116G>A", ("37", "38"), "MLH1 HGVS"),
+    # -- test_api_consistency.py VARIANTS (tested on both hg37 + hg38 via liftover) --
+    ("8-140300616-T-G",        "38", "TRAPPC9 (index.html + test_ui)"),
+    ("8-141310715-T-G",        "37", "TRAPPC9 hg19 liftover"),
+    ("6-31740453-G-T",         "38", "index.html space-separated"),
+    ("6-31708230-G-T",         "37", "index.html space-separated hg19 liftover"),
+    ("1-930130-C-G",           "38", "index.html overlapping genes"),
+    ("1-865510-C-G",           "37", "index.html overlapping genes hg19 liftover"),
+    ("1-1042601-A-AGAGAG",     "38", "indel (insertion)"),
+    ("1-977981-A-AGAGAG",      "37", "indel (insertion) hg19 liftover"),
+    ("1-1042466-GGGC-G",       "38", "indel (deletion)"),
+    ("1-977846-GGGC-G",        "37", "indel (deletion) hg19 liftover"),
+    ("17-58709857-A-C",        "38", "RAD51C exon skipping + partial deletion"),
+    ("17-56787218-A-C",        "37", "RAD51C hg19 liftover"),
+    ("22-28695127-C-T",        "38", "CHEK2 exon skipping"),
+    ("22-29091115-C-T",        "37", "CHEK2 hg19 liftover"),
+    ("16-23641111-T-C",        "38", "PALB2 partial exon deletion"),
+    ("16-23652432-T-C",        "37", "PALB2 hg19 liftover"),
+    ("17-58696687-T-A",        "38", "RAD51C partial intron retention"),
+    ("17-56774048-T-A",        "37", "RAD51C partial intron retention hg19 liftover"),
+    ("22-28741768-C-A",        "38", "CHEK2 non-coding partial exon deletion"),
+    ("22-29137756-C-A",        "37", "CHEK2 non-coding partial exon deletion hg19 liftover"),
+    ("13-32345247-T-G",        "38", "BRCA2 pseudoexon"),
+    ("13-32919384-T-G",        "37", "BRCA2 pseudoexon hg19 liftover"),
+    ("13-32363534-G-T",        "38", "BRCA2 exon skipping"),
+    ("13-32937671-G-T",        "37", "BRCA2 exon skipping hg19 liftover"),
+    ("2-47790924-C-CAGTTG",    "38", "indel (insertion)"),
+    ("2-48018063-C-CAGTTG",    "37", "indel (insertion) hg19 liftover"),
+    ("1-55039916-G-A",         "38", "index.html source comment"),
+    ("1-55505589-G-A",         "37", "index.html source comment hg19 liftover"),
+    # 17-43047638 hg38 lifts to 17-41199655 hg19 (== VARIANTS_HG37_ONLY entry below; dedup'd)
+    ("17-43047638-C-G",        "38", "BRCA1 c.5467+5G>C"),
+    # 17-43047642 hg38 lifts to 17-41199659 hg19 (== VARIANTS_HG37_ONLY entry below; dedup'd)
+    ("17-43047642-C-T",        "38", "BRCA1 c.5467+1G>A"),
+    ("17-43045714-G-C",        "38", "BRCA1 region"),
+    ("17-41197731-G-C",        "37", "BRCA1 region hg19 liftover"),
+    ("X-154031414-C-T",        "38", "MECP2 region"),
+    ("X-153296865-C-T",        "37", "MECP2 region hg19 liftover"),
+    # HGVS is resolved per-assembly by Ensembl VEP, so no liftover needed.
+    ("HGVS:NM_000249.4:c.116G>A", "38", "MLH1 HGVS hg38"),
+    ("HGVS:NM_000249.4:c.116G>A", "37", "MLH1 HGVS hg37"),
 
     # -- test_api_consistency.py VARIANTS_HG37_ONLY (hg19-native) --
-    ("17-41199655-C-G",        ("37",),      "BRCA1 c.5467+5G>C (hg19 native)"),
-    ("17-41199659-C-T",        ("37",),      "BRCA1 c.5467+1G>A (hg19 native)"),
+    ("17-41199655-C-G",        "37", "BRCA1 c.5467+5G>C (hg19 native)"),
+    ("17-41199659-C-T",        "37", "BRCA1 c.5467+1G>A (hg19 native)"),
 
     # -- test_sai10k_predictions.py BRCA2 hg19-native --
-    ("13-32889805-G-A",        ("37",),      "BRCA2 c.-40+1G>A"),
-    ("13-32890665-G-A",        ("37",),      "BRCA2 c.67+1G>A"),
-    ("13-32890637-A-G",        ("37",),      "BRCA2 c.40A>G"),
+    ("13-32889805-G-A",        "37", "BRCA2 c.-40+1G>A"),
+    ("13-32890665-G-A",        "37", "BRCA2 c.67+1G>A"),
+    ("13-32890637-A-G",        "37", "BRCA2 c.40A>G"),
 
-    # -- test_spliceai.py (hg38 SNV + indel) --
-    ("1-69091-A-AA",           ("38",),      "OR4F5 indel (insertion)"),
-    ("1-69539-T-G",            ("38",),      "OR4F5 SNV"),
+    # -- test_spliceai.py (hg38 SNV + indel, each with hg19 liftover) --
+    # Note: 1-69091-A-AA hg38 lifts to 1-69090-T-TA hg19 (REF/ALT shifted because
+    # hg19 and hg38 have different reference bases at this position).
+    ("1-69091-A-AA",           "38", "OR4F5 indel (insertion)"),
+    ("1-69090-T-TA",           "37", "OR4F5 indel hg19 liftover (REF/ALT shifted)"),
+    ("1-69539-T-G",            "38", "OR4F5 SNV"),
+    ("1-69539-T-G",            "37", "OR4F5 SNV hg19 (same coord, no change)"),
 
     # -- test_ui.py (mostly overlap; this one is unannotated / will skip) --
-    ("1-10000-A-G",            ("38",),      "unannotated intergenic (expected: no scores)"),
+    ("1-10000-A-G",            "38", "unannotated intergenic (expected: no scores)"),
 ]
 
 
@@ -921,16 +952,15 @@ def _message(d):
 
 
 def _expand_cases():
-    """Expand VARIANT_SOURCES into [(variant, hg, label), ...] dedup'd."""
+    """Return VARIANT_SOURCES as a dedup'd list of (variant, hg, label)."""
     seen = set()
     out = []
-    for v, hgs, label in VARIANT_SOURCES:
-        for hg in hgs:
-            key = (v, hg)
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append((v, hg, label))
+    for v, hg, label in VARIANT_SOURCES:
+        key = (v, hg)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((v, hg, label))
     return out
 
 
