@@ -820,7 +820,10 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
 
     if aberration_type == 'whole_intron_retention':
         if geo_al is not None and geo_dl is not None:
-            intron_size = abs(geo_al - geo_dl) - 1
+            # max(0, ...) guards the degenerate geo_al == geo_dl case where
+            # abs(0) - 1 would otherwise produce a negative size in the emitted
+            # aberration.
+            intron_size = max(0, abs(geo_al - geo_dl) - 1)
             # Segment = retained intron: from min(geo_al, geo_dl)+1 to max(...)-1
             seg_lo = min(geo_al, geo_dl) + 1
             seg_hi = max(geo_al, geo_dl) - 1
