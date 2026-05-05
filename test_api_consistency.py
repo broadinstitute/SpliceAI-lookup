@@ -23,11 +23,23 @@ import unittest
 import requests
 
 
+
+# The GCP-assigned Cloud Run hostname slug changes if the service is recreated
+# or moved between projects, so allow it to be overridden via
+# SPLICEAI_API_URL_TEMPLATE=https://{tool}-{hg}-your-new-slug-uc.a.run.app
+# (placeholders {tool} and {hg} are substituted per-endpoint).
+#
+# Set SPLICEAI_API_ENV=dev to point at the 'dev'-tagged Cloud Run revisions
+# deployed by `build_and_deploy.py --dev` (no traffic). Ignored if
+# SPLICEAI_API_URL_TEMPLATE is also set.
+_DEFAULT_API_URL_TEMPLATE = "https://{tool}-{hg}-xwkwwwxdwq-uc.a.run.app"
+if os.environ.get("SPLICEAI_API_ENV") == "dev":
+    _DEFAULT_API_URL_TEMPLATE = "https://dev---{tool}-{hg}-xwkwwwxdwq-uc.a.run.app"
+_API_URL_TEMPLATE = os.environ.get("SPLICEAI_API_URL_TEMPLATE", _DEFAULT_API_URL_TEMPLATE)
 API_URLS = {
-    ("spliceai", "37"): "https://spliceai-37-xwkwwwxdwq-uc.a.run.app",
-    ("spliceai", "38"): "https://spliceai-38-xwkwwwxdwq-uc.a.run.app",
-    ("pangolin", "37"): "https://pangolin-37-xwkwwwxdwq-uc.a.run.app",
-    ("pangolin", "38"): "https://pangolin-38-xwkwwwxdwq-uc.a.run.app",
+    (tool, hg): _API_URL_TEMPLATE.format(tool=tool, hg=hg)
+    for tool in ("spliceai", "pangolin")
+    for hg in ("37", "38")
 }
 
 TRANSCRIPT_PRIORITY = {"MS": 3, "MP": 2, "C": 1, "N": 0}

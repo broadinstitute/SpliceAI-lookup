@@ -132,11 +132,12 @@ def main():
         start_time = time.time()
         # Hostname slug is GCP-assigned and may change on service recreate;
         # allow override via SPLICEAI_API_URL_TEMPLATE (same env var as
-        # test_api_consistency.py).
-        url_template = os.environ.get(
-            "SPLICEAI_API_URL_TEMPLATE",
-            "https://{tool}-{hg}-xwkwwwxdwq-uc.a.run.app",
-        )
+        # test_api_consistency.py). SPLICEAI_API_ENV=dev points at the
+        # 'dev'-tagged revisions from build_and_deploy.py --dev.
+        default_template = "https://{tool}-{hg}-xwkwwwxdwq-uc.a.run.app"
+        if os.environ.get("SPLICEAI_API_ENV") == "dev":
+            default_template = "https://dev---{tool}-{hg}-xwkwwwxdwq-uc.a.run.app"
+        url_template = os.environ.get("SPLICEAI_API_URL_TEMPLATE", default_template)
         base_url = url_template.format(tool=tool, hg=hg)
         url = f"{base_url}/{tool}/?hg={hg}&distance={distance}&mask={mask}&variant={variant}&raw={variant}"
         # print(url)

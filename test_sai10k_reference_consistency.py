@@ -105,10 +105,20 @@ REF_NAME = {"37": "hg19", "38": "hg38"}
 RSCRIPT = shutil.which("Rscript")
 HAS_R = RSCRIPT is not None
 
-API_URL_TEMPLATE = (
-    "https://spliceai-{hg}-xwkwwwxdwq-uc.a.run.app/spliceai/"
-    "?hg={hg}&distance=500&mask=0&variant={variant}&raw={variant}"
-)
+# Hostname slug is GCP-assigned and may change on service recreate; allow
+# override via SPLICEAI_API_URL_TEMPLATE (same env var as
+# test_api_consistency.py). SPLICEAI_API_ENV=dev points at the 'dev'-tagged
+# revisions from `build_and_deploy.py --dev`.
+_DEFAULT_API_BASE = "https://spliceai-{hg}-xwkwwwxdwq-uc.a.run.app"
+if os.environ.get("SPLICEAI_API_ENV") == "dev":
+    _DEFAULT_API_BASE = "https://dev---spliceai-{hg}-xwkwwwxdwq-uc.a.run.app"
+# SPLICEAI_API_URL_TEMPLATE is shared with test_api_consistency.py / test_score_consistency.py
+# and uses {tool} + {hg} placeholders. This test only hits spliceai, so substitute {tool}=spliceai
+# up front when consuming it, then append the spliceai endpoint + query string.
+_SHARED_TEMPLATE = os.environ.get("SPLICEAI_API_URL_TEMPLATE")
+if _SHARED_TEMPLATE:
+    _DEFAULT_API_BASE = _SHARED_TEMPLATE.format(tool="spliceai", hg="{hg}")
+API_URL_TEMPLATE = _DEFAULT_API_BASE + "/spliceai/?hg={hg}&distance=500&mask=0&variant={variant}&raw={variant}"
 
 
 # ---- Variant superset ------------------------------------------------------
@@ -193,7 +203,7 @@ VARIANT_SOURCES = [
 
 def _is_indel(variant):
     parts = variant.split("-")
-    if len(parts) < 4 or variant.startswith("HGVS:"):
+    if len(parts) < 4:
         return False
     ref, alt = parts[-2], parts[-1]
     return len(ref) != 1 or len(alt) != 1
@@ -866,11 +876,28 @@ def _compare_one_ref(new, ref, ref_label, is_indel):
         return out
 
     if new["aberration_types"] != ref["aberration_types"]:
-        out.append(_hard(
-            f"{prefix} aberration_types: "
-            f"new={sorted(new['aberration_types'])} "
-            f"ref={sorted(ref['aberration_types'])}"
-        ))
+        only_in_ref = ref["aberration_types"] - new["aberration_types"]
+        only_in_new = new["aberration_types"] - ref["aberration_types"]
+        # New impl gates whole_intron_retention via _whole_intron_retention_native_match
+        # in sai10k_predictions.py: the call is suppressed unless the predicted lost
+        # donor and acceptor map to native splice sites bounding a single intron in
+        # the reference transcript. Reference parsers don't apply this gate, so they
+        # emit whole_intron_retention (with potentially misleading sizes) when the
+        # weaker partner peak in the loss pair lands on a cryptic position.
+        # Example: BRCA2 13-32889805-G-A (hg37) at max_distance=500.
+        if only_in_ref == {"whole_intron_retention"} and not only_in_new:
+            out.append(_soft(
+                "whole_intron_retention native-site gate",
+                f"{prefix} aberration_types: "
+                f"new={sorted(new['aberration_types'])} "
+                f"ref={sorted(ref['aberration_types'])}"
+            ))
+        else:
+            out.append(_hard(
+                f"{prefix} aberration_types: "
+                f"new={sorted(new['aberration_types'])} "
+                f"ref={sorted(ref['aberration_types'])}"
+            ))
 
     for ab_type in new["aberration_types"] & ref["aberration_types"]:
         nr = new["regions"].get(ab_type)
@@ -968,18 +995,95 @@ TEST_CASES = _expand_cases()
 
 
 # ---- unittest integration -------------------------------------------------
+@unittest.skipUnless(
+    os.environ.get("RUN_LIVE_API_TESTS") == "1",
+    "Set RUN_LIVE_API_TESTS=1 to run the live SpliceAI API consistency tests. "
+    "Skipped by default so unittest test runners — and IDE configurations that "
+    "execute setUpClass during discovery — don't hit the production API.",
+)
 class TestSAI10kReferenceConsistency(unittest.TestCase):
+
+    # Filled in by setUpClass; subset of {"py", "r"} indicating which reference
+    # parsers were actually configured in this environment. _run_case only
+    # requires those parsers to succeed for a given variant.
+    _configured_parsers = frozenset()
+
+    @classmethod
+    def setUpClass(cls):
+        # Fail loudly when the environment can't support ANY reference
+        # comparison or can't reach the SpliceAI API. Previously, each case
+        # simply called skipTest and a misconfigured CI machine reported "0
+        # tests run, all green".
+        if REF_DIR is None:
+            raise unittest.SkipTest(
+                "No SAI-10k-calc reference directory found. Tried: "
+                + ", ".join(REF_DIR_CANDIDATES) + ". Either clone the reference "
+                "parsers or run the individual implementation tests in "
+                "google_cloud_run_services/test_sai10k_predictions.py instead."
+            )
+        configured = set()
+        missing = []
+        if REF_PYTHON and os.path.isfile(REF_PYTHON):
+            configured.add("py")
+        else:
+            missing.append(f"spliceai_parser.py (expected at {REF_PYTHON})")
+        if HAS_R and REF_R and os.path.isfile(REF_R):
+            configured.add("r")
+        else:
+            missing.append(f"Rscript + spliceAI_parser.R (expected at {REF_R})")
+        if not configured:
+            # Neither reference parser is available — no comparison is possible.
+            # Use failureException (rather than a bare AssertionError) to signal
+            # "failed" rather than "errored" intent in CI dashboards that
+            # distinguish the two.
+            raise unittest.TestCase.failureException(
+                "test_sai10k_reference_consistency requires at least ONE reference "
+                "parser to be usable; neither is available:\n  - "
+                + "\n  - ".join(missing)
+            )
+        cls._configured_parsers = frozenset(configured)
+        # Sanity-check the SpliceAI API once at the class level so an outage
+        # produces ONE loud failure instead of 200 per-case skips.
+        try:
+            probe = requests.get(
+                API_URL_TEMPLATE.format(hg="38", variant="chr17-43057135-T-C"),
+                timeout=30,
+            )
+            probe.raise_for_status()
+            probe.json()
+        except (requests.RequestException, ValueError) as e:
+            raise unittest.TestCase.failureException(
+                f"SpliceAI API sanity probe failed: {type(e).__name__}: {e}. "
+                "All per-variant tests would skip silently; failing loudly "
+                "instead. Fix the API or mark this test class as expected-fail."
+            ) from e
 
     def _run_case(self, variant, hg):
         diff = compare_variant(variant, hg)
         if diff["status"] == "skipped":
+            # Per-case skips are still allowed (e.g. HGVS resolution failed for
+            # a specific entry, variant outside transcribed region). The
+            # setUpClass sanity probe ensures at least the API is up.
             self.skipTest(diff["reason"])
-        # If BOTH reference parsers failed to run, there's nothing to compare
-        # against; skip rather than silently pass with an empty discrepancy list.
-        if diff["ref_py"] is None and diff["ref_r"] is None:
-            reasons = [r for r in (diff["ref_py_err"], diff["ref_r_err"]) if r]
-            self.skipTest(
-                "Both reference parsers unavailable: " + " | ".join(reasons)
+        # Fail only when EVERY parser configured for this environment failed on
+        # this case. If the user only has Rscript installed (so "py" is not in
+        # _configured_parsers), we don't penalise the case for ref_py being
+        # None — that's expected, not a regression.
+        configured = self._configured_parsers
+        configured_failed = []
+        if "py" in configured and diff["ref_py"] is None:
+            configured_failed.append(("py", diff.get("ref_py_err")))
+        if "r" in configured and diff["ref_r"] is None:
+            configured_failed.append(("r", diff.get("ref_r_err")))
+        if configured_failed and len(configured_failed) == len(configured):
+            reasons = [f"{name}: {reason}" for name, reason in configured_failed if reason]
+            parser_label = (
+                "every configured reference parser"
+                if len(configured) > 1
+                else f"the only configured reference parser ({next(iter(configured))})"
+            )
+            self.fail(
+                f"{parser_label} failed on this case: " + " | ".join(reasons)
             )
         # Soft divergences are informational only (CDS-vs-full-size frameshift,
         # indel asymmetry, region fields the new impl doesn't structurally
