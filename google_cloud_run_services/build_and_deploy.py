@@ -214,6 +214,11 @@ def main():
                         "https://www.gencodegenes.org/human/. Either this or --gencode-version must be specified for "
                         "the 'update_annotations' command")
 
+    parser.add_argument("--dev", action="store_true",
+                        help="Deploy as a 'dev'-tagged revision with --no-traffic so production keeps "
+                             "serving the existing revision. Test against the tagged URL printed by "
+                             "gcloud, then promote with: "
+                             "gcloud run services update-traffic <service> --region us-central1 --to-tags dev=100")
     parser.add_argument("command", nargs="?", choices=VALID_COMMANDS,
                         help="Command to run. If not specified, it will run 'build' and then 'deploy'")
 
@@ -424,8 +429,9 @@ def main():
                     if not re.match("^sha256:[a-f0-9]{64}$", sha256):
                         raise ValueError(f"Invalid sha256 value found in docker/{tool}/sha256_grch{genome_version}.txt: {sha256}")
 
-                    print(f"Deploying {service} with image sha256 {sha256}")
+                    print(f"Deploying {service} with image sha256 {sha256}{' (dev revision, no traffic)' if args.dev else ''}")
 
+                    dev_flags = "--no-traffic --tag dev " if args.dev else ""
                     run(f"""gcloud \
 --project {GCLOUD_PROJECT} beta run deploy {service} \
 --image {tag}@{sha256} \
@@ -439,8 +445,13 @@ def main():
 --update-secrets=DB_PASSWORD=spliceai-lookup-db-password:2 \
 --allow-unauthenticated \
 --memory 4Gi \
---cpu 4
-""")
+--cpu 4 \
+{dev_flags}""")
+
+                    if args.dev:
+                        print(f"To promote the dev revision of {service} to production, run:")
+                        print(f"  gcloud --project {GCLOUD_PROJECT} run services update-traffic {service} "
+                              f"--region us-central1 --to-tags dev=100")
 
                                 # --add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
                 # --add-volume-mount=volume=ref,mount-path=/ref \
