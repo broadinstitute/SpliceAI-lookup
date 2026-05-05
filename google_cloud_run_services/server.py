@@ -5,12 +5,13 @@ import logging
 import os
 import psycopg2
 import re
+import threading
 import time
 import traceback
 
 
 # used for DB connection pooling
-from psycopg2.pool import SimpleConnectionPool
+from psycopg2.pool import ThreadedConnectionPool
 from contextlib import contextmanager
 
 # flask imports
@@ -23,12 +24,23 @@ from sai10k_predictions import sai10k_get_transcript_predictions, sai10k_select_
 
 app = Flask(__name__)
 
+# Intentional: this is a read-only public API with no cookie/session auth.
+# Wildcard CORS lets notebook and cross-origin research tools call the API
+# directly. Restricting to a single frontend origin would break those users
+# without adding real security (no auth state to protect).
 CORS(app)
 
 
-DEBUG = True # if socket.gethostname() == "spliceai-lookup" else True
-if not DEBUG:
-    Talisman(app)
+# On Cloud Run, disable Werkzeug's debug PIN / interactive traceback; keep it
+# on for local development.
+DEBUG = not os.environ.get('RUNNING_ON_GOOGLE_CLOUD_RUN')
+
+# Security headers: HSTS, CSP, X-Frame-Options, X-Content-Type-Options, etc.
+# force_https=False because Cloud Run's load balancer terminates TLS and
+# forwards plain HTTP to the container with X-Forwarded-Proto: https — the
+# LB already enforces HTTPS at the edge, so an app-level redirect would loop
+# with the LB.
+Talisman(app, force_https=False)
 
 logging.getLogger('werkzeug').disabled = True
 
@@ -41,13 +53,13 @@ PANGOLIN_EXAMPLE_URL = f"/pangolin/?hg=38&distance=500&mask=0&variant=chr8-14030
 
 
 VARIANT_RE = re.compile(
-    "(chr)?(?P<chrom>[0-9XYMTt]{1,2})"
-    "[-\s:]+"
-    "(?P<pos>[0-9]{1,9})"
-    "[-\s:]+"
-    "(?P<ref>[ACGT]+)"
-    "[-\s:>]+"
-    "(?P<alt>[ACGT]+)"
+    r"(chr)?(?P<chrom>[0-9XYMTt]{1,2})"
+    r"[-\s:]+"
+    r"(?P<pos>[0-9]{1,9})"
+    r"[-\s:]+"
+    r"(?P<ref>[ACGT]+)"
+    r"[-\s:>]+"
+    r"(?P<alt>[ACGT]+)"
 )
 
 FASTA_PATH = {
@@ -134,11 +146,16 @@ def init_transcript_annotations(genome_version, basic_or_comprehensive):
         SHARED_TRANSCRIPT_ANNOTATIONS[(genome_version, basic_or_comprehensive)] = json.load(ta_f)
 
 
-def error_response(error_message, source=None):
+def error_response(error_message, source=None, status=400):
+    # Default to HTTP 400 (Bad Request) so clients and monitoring can
+    # distinguish failures from successful responses. Callers that wrap an
+    # internal exception pass status=500 explicitly. The previous default of
+    # 200 made it impossible for the frontend's `xhr.status < 300` check —
+    # and any generic API client — to detect the error.
     response_json = {"error": str(error_message)}
     if source:
         response_json["source"] = source
-    return Response(json.dumps(response_json), status=200, mimetype='application/json')
+    return Response(json.dumps(response_json), status=status, mimetype='application/json')
 
 
 def parse_variant(variant_str):
@@ -149,82 +166,166 @@ def parse_variant(variant_str):
     return match['chrom'], int(match['pos']), match['ref'], match['alt']
 
 
-#while True:
-#    # https://groups.google.com/g/google-cloud-sql-discuss/c/mxsaf-YDrbA?pli=1
-#    # https://cloud.google.com/sql/docs/postgres/flags#gcloud
-#
-#    error_count = 0
-#    try:
-#        DATABASE_CONNECTION_POOL = SimpleConnectionPool(
-#            minconn=1,
-#            maxconn=5,
-#            dbname="spliceai-lookup-db",
-#            user="postgres",
-#            password=os.environ.get("DB_PASSWORD"),
-#            host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
-#            port="5432",
-#            connect_timeout=5,
-#        )
-#        print(f"Successfully connected to database", flush=True)
-#        break
-#    except psycopg2.Error as e:
-#        error_count += 1
-#        time.sleep(2)
-#        print(f"Error connecting to database: {e}", flush=True)
-#        traceback.print_exc()
-#        if error_count > 5:
-#            print(f"Error connecting to database. Exiting...", flush=True)
-#            sys.exit(1)
+DB_CONNECT_KWARGS = dict(
+    dbname="spliceai-lookup-db",
+    user="postgres",
+    password=os.environ.get("DB_PASSWORD"),
+    host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
+    port="5432",
+    connect_timeout=5,
+)
+
+# Module-level connection pool for Cloud SQL. Flask under Cloud Run typically
+# serves multiple concurrent requests per instance via threaded workers, so use
+# ThreadedConnectionPool (thread-safe) rather than SimpleConnectionPool.
+# maxconn is sized to match Cloud Run's default per-instance request concurrency
+# (80) so the 81st cache-miss request never blocks on getconn(). Each Cloud Run
+# instance is one Python process; with ~10 instances the absolute peak is ~800
+# Cloud SQL connections, well under the per-tier limit.
+# If initialisation fails (e.g. transient Cloud SQL hiccup at startup, or
+# DB_PASSWORD not set in a local dev environment), DATABASE_CONNECTION_POOL
+# stays None and get_db_connection falls back to opening a connection per
+# request. _try_init_database_pool retries the init lazily (throttled to once per minute)
+# so a momentary outage at startup doesn't permanently disable pooling for the
+# container's lifetime.
+DATABASE_CONNECTION_POOL = None
+_DATABASE_POOL_INIT_RETRY_SECONDS = 60
+_database_pool_init_last_attempt = 0.0
+_database_pool_init_lock = threading.Lock()
+
+
+def _try_init_database_pool():
+    """Attempt to (re)initialise DATABASE_CONNECTION_POOL, throttled to once per _DATABASE_POOL_INIT_RETRY_SECONDS."""
+    global DATABASE_CONNECTION_POOL, _database_pool_init_last_attempt
+    with _database_pool_init_lock:
+        if DATABASE_CONNECTION_POOL is not None:
+            return
+        now = time.monotonic()
+        if _database_pool_init_last_attempt and now - _database_pool_init_last_attempt < _DATABASE_POOL_INIT_RETRY_SECONDS:
+            return
+        _database_pool_init_last_attempt = now
+        try:
+            DATABASE_CONNECTION_POOL = ThreadedConnectionPool(minconn=1, maxconn=80, **DB_CONNECT_KWARGS)
+            print("Successfully initialised DB connection pool", flush=True)
+        except Exception as e:
+            print(f"WARNING: DB connection pool init failed; falling back to per-request connections: {e}", flush=True)
+
+
+_try_init_database_pool()
 
 
 @contextmanager
 def get_db_connection():
-    """Get a database connection"""
-    #conn = DATABASE_CONNECTION_POOL.getconn()
-    try:
-        conn = psycopg2.connect(
-            dbname="spliceai-lookup-db",
-            user="postgres",
-            password=os.environ.get("DB_PASSWORD"),
-            host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
-            port="5432",
-            connect_timeout=5,
-        )
-    except Exception as e:
-        print(f"ERROR: Unable to connect to SQL database: {e}")
-        conn = None
+    """Get a database connection from the pool (or open a per-request connection if the pool is unavailable).
 
+    Standard transaction discipline: commit when the with-block exits cleanly,
+    rollback when an exception escapes. Previously this committed inside the
+    cursor scope and then unconditionally rolled back on connection exit — an
+    extra round-trip per request that cost real Cloud SQL latency under load.
+
+    Broken connections (conn.closed != 0) are discarded instead of recycled.
+
+    If the pool has not yet been initialised (e.g. Cloud SQL was unavailable at
+    container startup), retry pool init lazily so a transient outage doesn't
+    permanently disable pooling for this instance.
+    """
+    if DATABASE_CONNECTION_POOL is None:
+        _try_init_database_pool()
+
+    conn = None
+    from_pool = False
+    if DATABASE_CONNECTION_POOL is not None:
+        try:
+            conn = DATABASE_CONNECTION_POOL.getconn()
+            from_pool = True
+        except Exception as e:
+            print(f"ERROR: Unable to get DB connection from pool: {e}")
+            conn = None
+    else:
+        try:
+            conn = psycopg2.connect(**DB_CONNECT_KWARGS)
+        except Exception as e:
+            print(f"ERROR: Unable to connect to SQL database: {e}")
+            conn = None
+
+    raised = False
     try:
         yield conn
+    except Exception:
+        raised = True
+        raise
     finally:
         if conn is not None:
-            conn.close()
-            #DATABASE_CONNECTION_POOL.putconn(conn)
+            try:
+                if not conn.closed:
+                    if raised:
+                        conn.rollback()
+                    else:
+                        conn.commit()
+            except Exception as txn_err:
+                print(f"ERROR finalising DB transaction: {txn_err}", flush=True)
+            if from_pool:
+                try:
+                    DATABASE_CONNECTION_POOL.putconn(conn, close=bool(conn.closed))
+                except Exception as put_err:
+                    print(f"ERROR returning connection to pool: {put_err}")
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+            else:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 @contextmanager
 def get_db_cursor(conn):
-    """Get a database cursor"""
+    """Yield a database cursor, or None when the connection is None.
+
+    Transaction commit/rollback is handled at the connection scope (see
+    get_db_connection), not here — yielding the cursor and closing it on exit
+    is all this needs to do.
+
+    A bare `return` before `yield` in a @contextmanager generator raises
+    `RuntimeError("generator didn't yield")` when used via `with`, so yield
+    None explicitly and let callers guard on the result.
+    """
     if conn is None:
+        yield None
         return
 
     cursor = conn.cursor()
     try:
         yield cursor
-        conn.commit()
     finally:
         cursor.close()
 
 
 def run_sql(conn, sql_query, *params):
     if conn is None:
-        return
+        return []
 
-    with get_db_cursor(conn) as cursor:
-        cursor.execute(sql_query, *params)
+    try:
+        with get_db_cursor(conn) as cursor:
+            cursor.execute(sql_query, *params)
+            try:
+                results = cursor.fetchall()
+            except psycopg2.ProgrammingError:
+                # No result set (e.g. from DELETE/INSERT/UPDATE); caller just needs [].
+                results = []
+    except psycopg2.Error:
+        # Commit/rollback now happens at the connection scope (one commit per
+        # `with get_db_connection()` block). A failed query leaves the conn in
+        # an aborted-transaction state where any further query raises
+        # InFailedSqlTransaction. Rollback here so the conn is usable for the
+        # next query in the same scope, then re-raise so the caller can decide.
         try:
-            results = cursor.fetchall()
-        except:
-            results = []
+            if conn and not conn.closed:
+                conn.rollback()
+        except Exception:
+            pass
+        raise
     return results
 
 
@@ -251,12 +352,21 @@ def get_transcript_structure(conn, transcript_id, genome_version):
     transcript_id_without_version = transcript_id.split(".")[0]
 
     table_name = f"transcripts_hg{genome_version}"
-    rows = run_sql(
-        conn,
-        f"""SELECT strand, cds_start, cds_end, exon_starts, exon_ends
-           FROM {table_name} WHERE transcript_id = %s""",
-        (transcript_id_without_version,)
-    )
+    try:
+        rows = run_sql(
+            conn,
+            f"""SELECT strand, cds_start, cds_end, exon_starts, exon_ends
+               FROM {table_name} WHERE transcript_id = %s""",
+            (transcript_id_without_version,)
+        )
+    except psycopg2.Error as e:
+        # A transient OperationalError (e.g. broken connection mid-query) used
+        # to be swallowed by run_sql's bare except; that bare except is gone, so
+        # catch here and return None (the same shape as "transcript not found").
+        # SAI-10k will fall back to its annotation-based defaults instead of
+        # bubbling a 500 to the client.
+        print(f"DB error fetching transcript structure for {transcript_id_without_version}: {e}", flush=True)
+        return None
 
     if not rows:
         return None
@@ -317,7 +427,14 @@ def is_user_on_whitelist(conn, user_ip):
     if not re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", user_ip):
         return False
 
-    rows = run_sql(conn, "SELECT COUNT(ip) FROM whitelist_ips WHERE ip=%s", (user_ip,))
+    try:
+        rows = run_sql(conn, "SELECT COUNT(ip) FROM whitelist_ips WHERE ip=%s", (user_ip,))
+    except psycopg2.Error as e:
+        # Fail closed (treat as not on whitelist) so a DB blip doesn't
+        # accidentally skip the rate-limit check. exceeds_rate_limit's own
+        # try/except already fails open if the rate-limit query itself fails.
+        print(f"DB error checking whitelist for {user_ip}: {e}", flush=True)
+        return False
     return rows and int(rows[0][0]) > 0
 
 def exceeds_rate_limit(conn, user_ip, params):
@@ -366,8 +483,11 @@ def exceeds_rate_limit(conn, user_ip, params):
             return RATE_LIMIT_ERROR_MESSAGE
 
     except Exception as e:
-        print(f"Error while checking rate limit: {e}", flush=True)
-        # print traceback
+        # Fail open so a transient DB hiccup doesn't lock everyone out, but log
+        # loudly so repeated failures are visible in the Cloud Run logs — a
+        # silent-always-allow would let an attacker DoS the DB to bypass the
+        # rate limiter.
+        print(f"SECURITY: rate-limit check failed (failing open): {e}", flush=True)
         traceback.print_exc()
         return False
 
@@ -410,7 +530,7 @@ def add_splicing_scores_to_cache(conn, tool_name, variant, genome_version, dista
         print(f"Cache error: {e}", flush=True)
 
 
-def get_spliceai_scores(conn, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param):
+def get_spliceai_scores(variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param):
     try:
         chrom, pos, ref, alt = parse_variant(variant)
     except ValueError as e:
@@ -447,8 +567,7 @@ def get_spliceai_scores(conn, variant, genome_version, distance_param, mask_para
 
     #scores = [s[s.index("|")+1:] for s in scores]  # drop allele field
 
-    # Enrich each transcript_scores with annotations + DB structure (needed by
-    # the canonical-transcript selector and the SAI-10k-calc module).
+    # Enrich each transcript_scores with in-memory annotations (no DB).
     candidate_transcripts = []
     for transcript_scores in scores:
         if "ALL_NON_ZERO_SCORES" not in transcript_scores:
@@ -461,29 +580,67 @@ def get_spliceai_scores(conn, variant, genome_version, distance_param, mask_para
             raise ValueError(f"Missing annotations for {transcript_id_without_version} in {genome_version} annotations")
         transcript_scores.update(transcript_annotations)
 
-        transcript_structure = get_transcript_structure(conn, transcript_id_without_version, genome_version)
-        if transcript_structure:
-            transcript_scores.update(transcript_structure)
-
         candidate_transcripts.append(transcript_scores)
+
+    # Brief DB scope: enrich every candidate with transcript structure (used by
+    # SAI-10k-calc and returned in the response). Held only for the structure
+    # SELECTs — not across model inference, which the caller already ran outside
+    # any pooled connection.
+    skip_cache = False
+    if candidate_transcripts:
+        with get_db_connection() as conn:
+            if conn is None:
+                # DB unavailable: get_transcript_structure would return None for
+                # every candidate, SAI-10k-calc would silently fall back to its
+                # annotation defaults instead of EXON_STARTS/EXON_ENDS/CDS_*/STRAND,
+                # and the degraded result would be cached under the same key.
+                # Log loudly and skip the cache write so the next request retries.
+                print(f"WARNING: DB unavailable for transcript-structure lookup for {variant}; "
+                      f"SAI-10k will use annotation defaults and the result will not be cached.", flush=True)
+                skip_cache = True
+            else:
+                for transcript_scores in candidate_transcripts:
+                    transcript_id_without_version = transcript_scores.get("NAME", "").split(".")[0]
+                    transcript_structure = get_transcript_structure(conn, transcript_id_without_version, genome_version)
+                    if transcript_structure:
+                        transcript_scores.update(transcript_structure)
+                    else:
+                        # DB is up but this row is missing. Without skip_cache, the
+                        # degraded result (SAI-10k falling back to annotation defaults)
+                        # would be cached permanently and re-served forever.
+                        print(f"WARNING: transcript {transcript_id_without_version} not found in "
+                              f"transcripts_hg{genome_version} for {variant}; "
+                              f"SAI-10k will use annotation defaults and the result will not be cached.", flush=True)
+                        skip_cache = True
 
     # Single source of truth for canonical-transcript selection (priority, then
     # sum of |DS_*|). Used for both (a) which transcript's ALL_NON_ZERO_SCORES
     # to return to the client and (b) which transcript to feed into SAI-10k-calc.
     selected_transcript = sai10k_select_transcript(candidate_transcripts)
     all_non_zero_scores = selected_transcript["ALL_NON_ZERO_SCORES"] if selected_transcript else None
-    all_non_zero_scores_strand = selected_transcript["t_strand"] if selected_transcript else None
+    # Fall back to STRAND (from the SpliceAI annotator, structurally guaranteed)
+    # if t_strand is missing from the external transcript-annotations JSON, mirroring
+    # sai10k_predictions.py's own fallback. Without this, an annotation file missing
+    # t_strand for a transcript would surface as a 500 via the generic exception
+    # wrapper in run_splice_prediction_tool.
+    all_non_zero_scores_strand = (selected_transcript.get("t_strand") or selected_transcript.get("STRAND")) if selected_transcript else None
     all_non_zero_scores_transcript_id = selected_transcript["t_id"] if selected_transcript else None
 
     # Compute SAI-10k-calc predictions for the selected transcript (before we
     # delete ALL_NON_ZERO_SCORES / STRAND from the scores dicts below).
     sai10k_predictions = None
+    sai10k_predictions_error = None
     if selected_transcript:
         try:
             sai10k_predictions = sai10k_get_transcript_predictions(selected_transcript, pos)
         except Exception as e:
-            print(f"WARNING: Error computing SAI-10k predictions for {variant}: {e}")
+            # Log the full exception server-side; return a generic message to the
+            # client so internal details (file paths, transcript IDs, dict-key
+            # names from KeyErrors, etc.) aren't echoed back through the JSON
+            # response that index.html renders.
+            print(f"WARNING: Error computing SAI-10k predictions for {variant}: {type(e).__name__}: {e}")
             traceback.print_exc()
+            sai10k_predictions_error = "Internal error computing SAI-10k predictions."
 
     for transcript_scores in candidate_transcripts:
         for redundant_key in ("ALLELE", "NAME", "STRAND", "ALL_NON_ZERO_SCORES"):
@@ -504,12 +661,18 @@ def get_spliceai_scores(conn, variant, genome_version, distance_param, mask_para
         "allNonZeroScoresStrand": all_non_zero_scores_strand,
         "allNonZeroScoresTranscriptId": all_non_zero_scores_transcript_id,
         "sai10kPredictions": sai10k_predictions,
+        "sai10kPredictionsError": sai10k_predictions_error,
+        # Internal sentinel: stripped by run_splice_prediction_tool before the
+        # response is returned to the client. True if the per-request DB
+        # connection couldn't be acquired and transcript-structure enrichment
+        # was skipped — see the get_db_connection block above.
+        "_skip_cache": skip_cache,
     }
 
 
 def get_pangolin_scores(variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param):
     if genome_version not in ("37", "38"):
-        raise ValueError(f"Invalid genome_version: {mask_param}")
+        raise ValueError(f"Invalid genome_version: {genome_version}")
 
     if mask_param not in ("True", "False"):
         raise ValueError(f"Invalid mask_param: {mask_param}")
@@ -557,7 +720,7 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
             model.eval()
             pangolin_models.append(model)
 
-    features_db = gffutils.FeatureDB(PANGOLIN_ANNOTATION_PATHS[(GENOME_VERSION, basic_or_comprehensive_param)])
+    features_db = gffutils.FeatureDB(PANGOLIN_ANNOTATION_PATHS[(genome_version, basic_or_comprehensive_param)])
     scores = process_variant_using_pangolin(
         0, chrom, int(pos), ref, alt, features_db, pangolin_models, PangolinArgs)
 
@@ -623,21 +786,23 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
 
 @app.route("/spliceai/", methods=['POST', 'GET'])
 def run_spliceai():
-    with get_db_connection() as conn:
-        return run_splice_prediction_tool(conn, tool_name="spliceai")
+    return run_splice_prediction_tool(tool_name="spliceai")
 
 
 @app.route("/pangolin/", methods=['POST', 'GET'])
 def run_pangolin():
-    with get_db_connection() as conn:
-        return run_splice_prediction_tool(conn, tool_name="pangolin")
+    return run_splice_prediction_tool(tool_name="pangolin")
 
 
-def run_splice_prediction_tool(conn, tool_name):
-    """Handles API request for splice prediction
+def run_splice_prediction_tool(tool_name):
+    """Handles API request for splice prediction.
+
+    DB connections are taken from the pool only for short bursts (cache lookup,
+    rate-limit check, log writes, cache writes, and per-call transcript-structure
+    SELECTs inside get_spliceai_scores). The model inference runs without holding
+    any pooled connection, so a slow inference can't starve the pool.
 
     Args:
-        conn (psycopg2.connection): Database connection
         tool_name (str): "spliceai" or "pangolin"
     """
 
@@ -661,12 +826,15 @@ def run_splice_prediction_tool(conn, tool_name):
         params.update(request.get_json(force=True, silent=True) or {})
 
     variant = params.get('variant', '')
+    # Type-check before .strip() — a non-string payload (e.g. {"variant": 123}
+    # from request.get_json) would otherwise raise AttributeError and 500
+    # instead of producing a clean 400.
+    if not isinstance(variant, str):
+        return error_response(f'"variant" value must be a string rather than a {type(variant)}.\n', source=tool_name)
+
     variant = variant.strip().strip("'").strip('"').strip(",")
     if not variant:
         return error_response(f'"variant" not specified.\n', source=tool_name)
-
-    if not isinstance(variant, str):
-        return error_response(f'"variant" value must be a string rather than a {type(variant)}.\n', source=tool_name)
 
     genome_version = params.get("hg")
     if not genome_version:
@@ -680,6 +848,9 @@ def run_splice_prediction_tool(conn, tool_name):
         distance_param = int(distance_param)
     except Exception as e:
         return error_response(f'Invalid "distance": "{distance_param}". The value must be an integer.\n', source=tool_name)
+
+    if distance_param < 0:
+        return error_response(f'Invalid "distance": "{distance_param}". The value must be non-negative.\n', source=tool_name)
 
     if distance_param > MAX_DISTANCE_LIMIT:
         return error_response(f'Invalid "distance": "{distance_param}". The value must be < {MAX_DISTANCE_LIMIT}.\n', source=tool_name)
@@ -704,43 +875,78 @@ def run_splice_prediction_tool(conn, tool_name):
 
     init_transcript_annotations(genome_version, basic_or_comprehensive_param)
 
-    # check cache before processing the variant
+    # check cache before processing the variant (short DB scope)
     results = {}
     if not force:
-        results = get_splicing_scores_from_cache(conn, tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param)
+        with get_db_connection() as conn:
+            results = get_splicing_scores_from_cache(conn, tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param)
 
-    duration = (datetime.now() - start_time).total_seconds()
     if results:
-        log(conn, f"{tool_name}:from-cache", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
+        # Cache hit: brief log scope, then fall through to response building.
+        with get_db_connection() as conn:
+            log(conn, f"{tool_name}:from-cache", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
+            if "error" in results:
+                log(conn, f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
     else:
-        error_message = exceeds_rate_limit(conn, user_ip, params)
+        # Rate-limit check (short DB scope).
+        with get_db_connection() as conn:
+            error_message = exceeds_rate_limit(conn, user_ip, params)
         if error_message:
             print(f"{logging_prefix}: {user_ip}: response: {error_message}", flush=True)
-            return error_response(error_message, source=tool_name)
+            return error_response(error_message, source=tool_name, status=429)
 
+        # Model inference runs without a pooled DB connection. get_spliceai_scores
+        # acquires its own short-lived connection internally for transcript-structure
+        # SELECTs after inference completes; get_pangolin_scores does no DB work.
         try:
             if tool_name == "spliceai":
-                results = get_spliceai_scores(conn, variant, genome_version, distance_param, int(mask_param), basic_or_comprehensive_param)
+                results = get_spliceai_scores(variant, genome_version, distance_param, int(mask_param), basic_or_comprehensive_param)
             elif tool_name == "pangolin":
                 pangolin_mask_param = "True" if mask_param == "1" else "False"
                 results = get_pangolin_scores(variant, genome_version, distance_param, pangolin_mask_param, basic_or_comprehensive_param)
             else:
                 raise ValueError(f"Invalid tool_name: {tool_name}")
         except Exception as e:
+            # Internal exceptions can carry implementation detail (file paths,
+            # KeyError on internal dict shapes, missing-annotation messages
+            # naming specific transcript IDs). Don't echo them to clients —
+            # log server-side and return a generic message. User-input
+            # validation errors above are passed straight to error_response and
+            # are unaffected by this wrapping.
+            print(f"{logging_prefix}: 500 in {tool_name} for variant {variant}: {type(e).__name__}: {e}", flush=True)
             traceback.print_exc()
-            return error_response(f"ERROR: {e}", source=tool_name)
+            return error_response(
+                "Internal server error while computing predictions. "
+                "If this persists, please file an issue at "
+                "https://github.com/broadinstitute/SpliceAI-lookup/issues.",
+                source=tool_name,
+                status=500,
+            )
 
+        # Strip the internal sentinel before anything downstream sees `results`.
+        # Set by get_spliceai_scores when the per-request DB connection couldn't
+        # be acquired, so the transcript-structure enrichment was skipped and
+        # the result reflects degraded inputs — don't cache it.
+        skip_cache = results.pop("_skip_cache", False)
+
+        # Post-inference: log + cache write + (if error) error log, all in one short DB scope.
         duration = (datetime.now() - start_time).total_seconds()
-        log(conn, f"{tool_name}:computed", ip=user_ip, duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
+        with get_db_connection() as conn:
+            log(conn, f"{tool_name}:computed", ip=user_ip, duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
+            if "error" not in results and not skip_cache:
+                add_splicing_scores_to_cache(conn, tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param, results)
+            elif "error" in results:
+                log(conn, f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
 
-        if "error" not in results:
-            add_splicing_scores_to_cache(conn, tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param, results)
-
-    if "error" in results:
-        log(conn, f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
-
-    response_json = {}
-    response_json.update(params)  # copy input params to output
+    # Echo only a whitelist of input params back to the client. A prior version
+    # used `response_json.update(params)`, which reflected every query-string
+    # field unchanged — combined with the `.html()` sinks in index.html and
+    # the URL-hash auto-submit on page load, that let a crafted link execute
+    # arbitrary HTML in visitors' browsers.
+    ECHO_PARAM_KEYS = (
+        "variant", "hg", "bc", "distance", "mask", "raw", "variant_consequence",
+    )
+    response_json = {k: params[k] for k in ECHO_PARAM_KEYS if k in params}
     response_json.update(results)
 
     response_log_string = ", ".join([f"{k}: {v}" for k, v in response_json.items() if not k.startswith("allNonZeroScores")])
@@ -771,7 +977,15 @@ def log(conn, event_name, ip=None, duration=None, variant=None, genome=None, dis
 
 
 def get_user_ip(request):
-    return request.environ.get("HTTP_X_FORWARDED_FOR")
+    # On Cloud Run the X-Forwarded-For header is "<client-supplied>..., <verified-client>",
+    # where the final entry is appended by GCP's load balancer and is the only value
+    # the client cannot forge. Using the whole header (or the first entry) lets an
+    # attacker spoof a different IP to bypass per-IP rate limits or frame a victim
+    # IP into the 1-week restricted_ips ban list.
+    xff = request.environ.get("HTTP_X_FORWARDED_FOR", "")
+    if not xff:
+        return None
+    return xff.rsplit(",", 1)[-1].strip() or None
 
 
 @app.route('/log/<string:name>/', strict_slashes=False)
@@ -825,7 +1039,15 @@ def log_event(name):
 @app.route('/', strict_slashes=False, defaults={'path': ''})
 @app.route('/<path:path>/')
 def catch_all(path):
-    return f"SpliceAI-lookup APIs: invalid endpoint {path}"
+    # Serve as text/plain so a `path` containing HTML/JS can't be rendered as
+    # markup by browsers — Flask's default mimetype is text/html, which would
+    # make this a reflected-XSS sink. Talisman's default CSP blocks inline
+    # scripts but does not strip the HTML content type itself.
+    return Response(
+        f"SpliceAI-lookup APIs: invalid endpoint {path}",
+        status=404,
+        mimetype='text/plain',
+    )
 
 
 if '__main__' == __name__ or os.environ.get('RUNNING_ON_GOOGLE_CLOUD_RUN'):

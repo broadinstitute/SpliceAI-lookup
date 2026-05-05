@@ -282,9 +282,6 @@ class TestDetermineAberrations(unittest.TestCase):
         )
         types = [a["aberration_type"] for a in result]
         self.assertIn("exon_skipping", types)
-        # Driving score for exon_skipping is max(DS_DL, DS_AL) = 0.98
-        es = next(a for a in result if a["aberration_type"] == "exon_skipping")
-        self.assertEqual(es["max_delta_score"], 0.98)
 
     def test_no_significant_effect(self):
         """All scores below DS_ALDL_MIN -> empty list."""
@@ -533,7 +530,14 @@ class TestComputePredictions(unittest.TestCase):
         self.assertIn("transcript_info", result)
         self.assertEqual(result["transcript_info"]["strand"], "+")
         self.assertTrue(result["transcript_info"]["is_coding"])
-        # Frameshift fields are attached to each aberration in the list.
+        # A broken predictor returning {"aberrations": []} used to pass the old
+        # assertions. BRCA2_c.-40+1G>A has DS_DL=0.99 and DS_DG=0.57, well above
+        # the paper's DS_ALDL_MIN=0.02 / DS_AGDG_MIN=0.02 thresholds, so we
+        # should always get at least one classified aberration.
+        self.assertGreater(
+            len(result["aberrations"]), 0,
+            f"Expected at least one aberration for BRCA2 c.-40+1G>A, got: {result}",
+        )
         for aberration in result["aberrations"]:
             self.assertIn("frameshift", aberration)
             self.assertIn("affects_coding", aberration)
@@ -563,6 +567,16 @@ class TestComputePredictions(unittest.TestCase):
 
         self.assertIn("aberrations", result)
         self.assertEqual(result["transcript_info"]["strand"], "-")
+        # Same rationale as BRCA2: DS_DL=0.93 plus DS_AL=0.40 and DS_DG=0.36
+        # triples are well above threshold, so we should always classify at
+        # least one aberration.
+        self.assertGreater(
+            len(result["aberrations"]), 0,
+            f"Expected at least one aberration for BRCA1 c.5467+1G>A, got: {result}",
+        )
+        for aberration in result["aberrations"]:
+            self.assertIn("frameshift", aberration)
+            self.assertIn("affects_coding", aberration)
 
 
 class TestSelectCanonicalTranscript(unittest.TestCase):
@@ -618,15 +632,13 @@ class TestWithDatabaseIntegration(unittest.TestCase):
         # Try to get BRCA2 transcript (ENST00000380152 is the canonical BRCA2)
         result = get_transcript_structure_from_db(self.conn, "ENST00000380152", "37")
 
-        if result is not None:
-            self.assertIn("EXON_STARTS", result)
-            self.assertIn("EXON_ENDS", result)
-            self.assertIn("CDS_START", result)
-            self.assertIn("CDS_END", result)
-            self.assertIn("STRAND", result)
-            self.assertEqual(result["STRAND"], "+")
-        else:
-            print("Warning: BRCA2 transcript not found in database")
+        self.assertIsNotNone(result, "BRCA2 (ENST00000380152) transcript missing from database")
+        self.assertIn("EXON_STARTS", result)
+        self.assertIn("EXON_ENDS", result)
+        self.assertIn("CDS_START", result)
+        self.assertIn("CDS_END", result)
+        self.assertIn("STRAND", result)
+        self.assertEqual(result["STRAND"], "+")
 
     def test_retrieve_transcript_structure_brca1(self):
         """Test retrieving BRCA1 transcript structure from database."""
@@ -636,13 +648,11 @@ class TestWithDatabaseIntegration(unittest.TestCase):
         # Try to get BRCA1 transcript (ENST00000357654 is the canonical BRCA1)
         result = get_transcript_structure_from_db(self.conn, "ENST00000357654", "37")
 
-        if result is not None:
-            self.assertIn("EXON_STARTS", result)
-            self.assertIn("EXON_ENDS", result)
-            self.assertIn("STRAND", result)
-            self.assertEqual(result["STRAND"], "-")
-        else:
-            print("Warning: BRCA1 transcript not found in database")
+        self.assertIsNotNone(result, "BRCA1 (ENST00000357654) transcript missing from database")
+        self.assertIn("EXON_STARTS", result)
+        self.assertIn("EXON_ENDS", result)
+        self.assertIn("STRAND", result)
+        self.assertEqual(result["STRAND"], "-")
 
     def test_predictions_with_db_transcript(self):
         """Test predictions using transcript data from database."""
@@ -653,8 +663,7 @@ class TestWithDatabaseIntegration(unittest.TestCase):
         transcript_struct = get_transcript_structure_from_db(
             self.conn, "ENST00000357654", "37"
         )
-        if transcript_struct is None:
-            self.skipTest("BRCA1 transcript not found in database")
+        self.assertIsNotNone(transcript_struct, "BRCA1 (ENST00000357654) transcript missing from database")
 
         # Use the database transcript structure
         transcript_scores = {
@@ -673,6 +682,10 @@ class TestWithDatabaseIntegration(unittest.TestCase):
 
         self.assertIn("aberrations", result)
         self.assertEqual(result["transcript_info"]["strand"], "-")
+        # BRCA1 c.5467+1G>A — strong DS_DL=0.93 must produce at least one aberration.
+        # Mirrors the in-memory equivalent (TestExampleVariants) so a regression that
+        # returns an empty list is not silently accepted.
+        self.assertGreater(len(result["aberrations"]), 0)
 
 
 class TestExampleVariants(unittest.TestCase):
@@ -740,7 +753,6 @@ class TestExampleVariants(unittest.TestCase):
         # With both DS_AL=0.81 and DS_DL=0.98 significant, loss-pair branch fires.
         self.assertEqual(len(result["aberrations"]), 1)
         self.assertEqual(result["aberrations"][0]["aberration_type"], "exon_skipping")
-        self.assertEqual(result["aberrations"][0]["max_delta_score"], 0.98)
 
     def test_brca2_no_effect(self):
         """Test BRCA2_c.40A>G (13-32890637-A-G).
@@ -864,8 +876,6 @@ class TestIncreasedExonInclusion(unittest.TestCase):
         )
         types = [a["aberration_type"] for a in result]
         self.assertIn("increased_exon_inclusion", types)
-        iei = next(a for a in result if a["aberration_type"] == "increased_exon_inclusion")
-        self.assertEqual(iei["max_delta_score"], 0.3)
 
     def test_increased_exon_inclusion_minus_strand(self):
         """Variant near a BRCA1 exon with gain positions matching native sites.
@@ -1015,10 +1025,10 @@ class TestExonSkippingFallback(unittest.TestCase):
         )
 
 
-class TestDeltaTypeAndConfidence(unittest.TestCase):
-    """The line-1 display fields computed by sai10k_compute_predictions:
-    max_delta_score (overall max of the 4 Δ scores), delta_type (name of the
-    Δ column carrying that max), and confidence (high/moderate/low)."""
+class TestDeltaType(unittest.TestCase):
+    """delta_type (name of the Δ column carrying the overall max Δ score) is
+    computed per-variant by sai10k_compute_predictions and copied onto every
+    aberration."""
 
     def _base_scores(self):
         return {
@@ -1032,20 +1042,16 @@ class TestDeltaTypeAndConfidence(unittest.TestCase):
             "STRAND": "+",
         }
 
-    def test_high_confidence_donor_loss(self):
-        """Max Δ ≥ 0.8 → confidence='high'. Use BRCA2 c.67+1G>A (DS_DL=0.98)."""
+    def test_donor_loss_delta_type(self):
+        """DS_DL is the max → delta_type = 'donor loss'. BRCA2 c.67+1G>A."""
         scores = self._base_scores()
         scores.update({"DS_AL": 0.81, "DS_DL": 0.98, "DP_AL": -106, "DP_DL": -1})
         result = sai10k_compute_predictions(scores, variant_pos=32890665)
         self.assertTrue(result["aberrations"])
-        ab = result["aberrations"][0]
-        self.assertEqual(ab["max_delta_score"], 0.98)
-        self.assertEqual(ab["delta_type"], "donor loss")
-        self.assertEqual(ab["confidence"], "high")
+        self.assertEqual(result["aberrations"][0]["delta_type"], "donor loss")
 
-    def test_moderate_confidence_acceptor_loss(self):
-        """Max Δ in [0.5, 0.8) → confidence='moderate'. Synthesize a loss-pair
-        that fires exon_skipping with max=0.54."""
+    def test_acceptor_loss_delta_type(self):
+        """DS_AL is the max → delta_type = 'acceptor loss'."""
         scores = self._base_scores()
         # Variant at BRCA2 exon 2 donor (32890664); DP_DL=0, DP_AL matches exon 2 acceptor.
         scores.update({
@@ -1055,14 +1061,11 @@ class TestDeltaTypeAndConfidence(unittest.TestCase):
         })
         result = sai10k_compute_predictions(scores, variant_pos=32890664)
         self.assertTrue(result["aberrations"])
-        ab = result["aberrations"][0]
-        self.assertEqual(ab["max_delta_score"], 0.54)
-        self.assertEqual(ab["delta_type"], "acceptor loss")
-        self.assertEqual(ab["confidence"], "moderate")
+        self.assertEqual(result["aberrations"][0]["delta_type"], "acceptor loss")
 
-    def test_low_confidence(self):
-        """Max Δ in [0.2, 0.5) → confidence='low'. Use the cryptic-acceptor
-        partial_exon_deletion fixture (DS_AG=0.3 is the max)."""
+    def test_acceptor_gain_delta_type(self):
+        """DS_AG is the max → delta_type = 'acceptor gain'. Cryptic-acceptor
+        partial_exon_deletion fixture."""
         scores = self._base_scores()
         scores.update({
             "DS_AG": 0.30, "DP_AG": 20,
@@ -1070,15 +1073,12 @@ class TestDeltaTypeAndConfidence(unittest.TestCase):
         })
         result = sai10k_compute_predictions(scores, variant_pos=32890580)
         self.assertTrue(result["aberrations"])
-        ab = result["aberrations"][0]
-        self.assertEqual(ab["max_delta_score"], 0.30)
-        self.assertEqual(ab["delta_type"], "acceptor gain")
-        self.assertEqual(ab["confidence"], "low")
+        self.assertEqual(result["aberrations"][0]["delta_type"], "acceptor gain")
 
-    def test_all_aberrations_share_variant_level_headline(self):
+    def test_all_aberrations_share_variant_level_delta_type(self):
         """When one variant produces multiple aberrations (e.g. combination
-        row), they should all carry the same max_delta_score / delta_type /
-        confidence since those are variant-level, not per-aberration."""
+        row), they should all carry the same delta_type since it's variant-level,
+        not per-aberration."""
         scores = self._base_scores()
         # BRCA2 c.-40+1G>A setup: DS_DL=0.99 loss + cryptic donor partial combo.
         scores.update({
@@ -1088,11 +1088,8 @@ class TestDeltaTypeAndConfidence(unittest.TestCase):
         })
         result = sai10k_compute_predictions(scores, variant_pos=32889805)
         self.assertGreaterEqual(len(result["aberrations"]), 2)
-        headlines = {
-            (a["max_delta_score"], a["delta_type"], a["confidence"])
-            for a in result["aberrations"]
-        }
-        self.assertEqual(headlines, {(0.99, "donor loss", "high")})
+        delta_types = {a["delta_type"] for a in result["aberrations"]}
+        self.assertEqual(delta_types, {"donor loss"})
 
 
 class TestPotentialPrefix(unittest.TestCase):
@@ -1881,6 +1878,88 @@ class TestPotentialWholeIntronRetention(unittest.TestCase):
         self.assertEqual(len(wir), 1)
         self.assertTrue(wir[0]["frameshift_description"].startswith("Potential whole intron retention"))
 
+    def test_suppressed_when_lost_sites_dont_match_native(self):
+        """BRCA2 c.-40+5G>T at SpliceAI max_distance=500: the 500bp window
+        doesn't reach exon 2's native acceptor (754bp downstream), so DP_AL
+        peaks at a cryptic position 269bp downstream with weak DS_AL=0.03.
+        Orientation still routes to whole_intron_retention, but geo_dl and
+        geo_al do not jointly map to the native donor and native acceptor of
+        a single intron — the prediction must be suppressed rather than
+        emitted with a misleading 273bp size."""
+        exon_starts = BRCA2_TRANSCRIPT_HG19["EXON_STARTS"]
+        exon_ends = BRCA2_TRANSCRIPT_HG19["EXON_ENDS"]
+        # c.-40+5 lies in intron 1, 5 bp downstream of exon 1's donor
+        # (32889804). With max_distance=500, DP_AL peaks at a cryptic
+        # acceptor 269 bp downstream of the variant, NOT at the native
+        # acceptor of exon 2 (which is 754 bp downstream).
+        variant_pos = 32889809
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.03, "DS_DG": 0.61, "DS_DL": 0.89,
+            "DP_AG": 0, "DP_AL": 269, "DP_DG": -104, "DP_DL": -5,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": exon_starts,
+            "EXON_ENDS": exon_ends,
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        types = [a["aberration_type"] for a in result["aberrations"]]
+        self.assertNotIn("whole_intron_retention", types)
+
+    def test_minus_strand_whole_intron_retention_native_match(self):
+        """'-' strand coverage: BRCA1 transcript intron 17 (genomic intron
+        between exon_ends[5]=41215390 and exon_starts[6]=41215891, 500 bp).
+        Variant 1 bp into the intron from the donor; DP_DL/DP_AL point to the
+        native donor (exon_starts[6]) and native acceptor (exon_ends[5]) —
+        helper must accept and emit whole_intron_retention."""
+        exon_starts = BRCA1_TRANSCRIPT_HG19["EXON_STARTS"]
+        exon_ends = BRCA1_TRANSCRIPT_HG19["EXON_ENDS"]
+        # On '-' strand the transcript donor of intron 17 sits at the LOW
+        # genomic coord of the upstream-in-transcript exon (exon_starts[6]),
+        # and the acceptor at the HIGH coord of the downstream exon
+        # (exon_ends[5]). variant_pos = 41215890 is donor+1 in transcript order.
+        variant_pos = 41215890
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.78, "DS_DG": 0.00, "DS_DL": 0.89,
+            # DP_DL=1 -> geo_dl=41215891=exon_starts[6] (native donor)
+            # DP_AL=-500 -> geo_al=41215390=exon_ends[5] (native acceptor)
+            "DP_AG": 0, "DP_AL": -500, "DP_DG": 0, "DP_DL": 1,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": exon_starts,
+            "EXON_ENDS": exon_ends,
+            "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "-",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        wir = [a for a in result["aberrations"] if a["aberration_type"] == "whole_intron_retention"]
+        self.assertEqual(len(wir), 1)
+        self.assertEqual(wir[0]["size"], 500)
+
+    def test_minus_strand_whole_intron_retention_suppressed(self):
+        """'-' strand suppression: same BRCA1 fixture with DP_DL still pointing
+        to the native donor but DP_AL pointing into the intron interior (not a
+        native acceptor). Orientation still routes to WIR but the helper must
+        reject — prediction suppressed."""
+        exon_starts = BRCA1_TRANSCRIPT_HG19["EXON_STARTS"]
+        exon_ends = BRCA1_TRANSCRIPT_HG19["EXON_ENDS"]
+        variant_pos = 41215890
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.03, "DS_DG": 0.00, "DS_DL": 0.89,
+            # DP_DL=1 -> native donor; DP_AL=-300 -> 41215590, intron interior.
+            "DP_AG": 0, "DP_AL": -300, "DP_DG": 0, "DP_DL": 1,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": exon_starts,
+            "EXON_ENDS": exon_ends,
+            "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "-",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
+        types = [a["aberration_type"] for a in result["aberrations"]]
+        self.assertNotIn("whole_intron_retention", types)
+
 
 class TestDonorShiftPartialDescription(unittest.TestCase):
     """The donor-shift branch (_branch='gain_B_donor') uses seg_a = geo_nd
@@ -1936,8 +2015,6 @@ class TestDeltaTypeTieBreak(unittest.TestCase):
         result = sai10k_compute_predictions(transcript_scores, variant_pos=32890600)
         self.assertTrue(result["aberrations"])
         self.assertEqual(result["aberrations"][0]["delta_type"], "acceptor loss")
-        self.assertEqual(result["aberrations"][0]["max_delta_score"], 0.50)
-        self.assertEqual(result["aberrations"][0]["confidence"], "moderate")
 
 
 if __name__ == "__main__":

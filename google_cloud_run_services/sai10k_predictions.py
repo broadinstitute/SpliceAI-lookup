@@ -318,6 +318,34 @@ def _find_exons_between_loss_positions(geo_al, geo_dl, strand, exon_starts, exon
     }
 
 
+def _whole_intron_retention_native_match(geo_al, geo_dl, strand, exon_starts, exon_ends):
+    """
+    Verify that geo_dl matches a native donor and geo_al matches a native
+    acceptor of a SINGLE intron in the reference transcript (i.e. they bound
+    the same intron between adjacent exons i and i+1).
+
+    Without this check, the loss branch can emit "(potential) whole intron
+    retention" with a misleading size when SpliceAI's max_distance window is
+    too narrow to capture both native sites and the weaker partner peak lands
+    on a cryptic position. Example: BRCA2 c.-40+5G>T at max_distance=500
+    yields DS_AL=0.03 with DP_AL pointing to a cryptic site 269bp downstream
+    rather than the native acceptor of exon 2 (754bp downstream).
+    """
+    if len(exon_starts) < 2 or len(exon_ends) < 2:
+        return False
+    is_reverse = strand == '-'
+    for i in range(len(exon_starts) - 1):
+        if is_reverse:
+            native_donor = exon_starts[i + 1]
+            native_acceptor = exon_ends[i]
+        else:
+            native_donor = exon_ends[i]
+            native_acceptor = exon_starts[i + 1]
+        if geo_dl == native_donor and geo_al == native_acceptor:
+            return True
+    return False
+
+
 def sai10k_determine_aberrations(
         ds_ag, ds_al, ds_dg, ds_dl,
         dp_ag, dp_al, dp_dg, dp_dl,
@@ -332,9 +360,6 @@ def sai10k_determine_aberrations(
             (exon_skipping, whole_intron_retention, pseudoexon,
              increased_exon_inclusion, partial_exon_deletion,
              partial_intron_retention).
-        max_delta_score: per-branch driving delta score. NOTE:
-            sai10k_compute_predictions overwrites this with the variant-level
-            overall max across all four Δ scores before returning to callers.
         affected_region: dict from sai10k_find_affected_region, or None.
         geo_ag, geo_al, geo_dg, geo_dl: 1-based genomic positions of predicted
             acceptor-gain, acceptor-loss, donor-gain, donor-loss sites.
@@ -343,7 +368,9 @@ def sai10k_determine_aberrations(
 
     The paper flowchart's three branches (LOSS, GAIN Subflow A, GAIN Subflow B)
     evaluate INDEPENDENTLY; a single variant can produce up to one aberration
-    from each.
+    from each. The LOSS branch additionally requires whole_intron_retention to
+    have geo_dl/geo_al match native splice sites bounding a single intron;
+    otherwise the call is suppressed (see _whole_intron_retention_native_match).
     """
     ds_ag = _coerce_float(ds_ag)
     ds_al = _coerce_float(ds_al)
@@ -383,10 +410,9 @@ def sai10k_determine_aberrations(
     else:
         d_from_exon = None  # couldn't locate variant
 
-    def make(ab_type, driving_score, branch):
+    def make(ab_type, branch):
         return {
             'aberration_type': ab_type,
-            'max_delta_score': driving_score,
             'affected_region': affected_region,
             'geo_ag': geo_ag,
             'geo_al': geo_al,
@@ -412,7 +438,6 @@ def sai10k_determine_aberrations(
     loss_d50_pass = d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS
 
     if loss_paired_pass and loss_d50_pass:
-        driving = max(ds_dl, ds_al)
         # Canson reviewer feedback (2026-04-17): when the weaker score in the
         # loss pair is in [0.02, 0.2), flag the prediction as "Potential". The
         # paper's MIN threshold (0.02) was chosen for GWAS-scale sensitivity,
@@ -424,11 +449,18 @@ def sai10k_determine_aberrations(
         #   DP_AL*Strand < DP_DL*Strand  -> exon skipping
         #   else                          -> whole intron retention
         if dp_al * strand_sign < dp_dl * strand_sign:
-            ab = make('exon_skipping', driving, 'loss')
-        else:
-            ab = make('whole_intron_retention', driving, 'loss')
-        ab['_potential'] = is_potential
-        aberrations.append(ab)
+            ab = make('exon_skipping', 'loss')
+            ab['_potential'] = is_potential
+            aberrations.append(ab)
+        elif _whole_intron_retention_native_match(geo_al, geo_dl, strand, exon_starts, exon_ends):
+            # Only emit whole_intron_retention when the predicted lost donor
+            # and acceptor map to the native splice sites bounding a single
+            # native intron. Suppresses misleading calls with a wrong intron
+            # size when SpliceAI's max_distance window doesn't reach both
+            # native sites (e.g. BRCA2 c.-40+5G>T at max_distance=500).
+            ab = make('whole_intron_retention', 'loss')
+            ab['_potential'] = is_potential
+            aberrations.append(ab)
 
     # -------------------------------------------------------------------
     # GAIN Subflow A: pseudoexon / increased_exon_inclusion
@@ -441,7 +473,6 @@ def sai10k_determine_aberrations(
 
     if gain_paired_pass and orientation_pass:
         gex_size = (dp_dg - dp_ag) * strand_sign + 1
-        driving = max(ds_dg, ds_ag)
 
         # Identify which intron AG and DG fall into (same-intron check).
         def intron_of(position):
@@ -488,12 +519,12 @@ def sai10k_determine_aberrations(
         )
 
         if pseudoexon_conditions:
-            aberrations.append(make('pseudoexon', driving, 'gain_A'))
+            aberrations.append(make('pseudoexon', 'gain_A'))
         elif native and native['native_exon_size'] and gex_size == native['native_exon_size']:
             # Increased exon inclusion: the gained exon exactly matches a
             # native exon AND the gain positions coincide with native sites.
             if dp_ag == native['dp_na'] and dp_dg == native['dp_nd']:
-                aberrations.append(make('increased_exon_inclusion', driving, 'gain_A'))
+                aberrations.append(make('increased_exon_inclusion', 'gain_A'))
 
     # -------------------------------------------------------------------
     # GAIN Subflow B: cryptic acceptor / donor activation
@@ -554,28 +585,26 @@ def sai10k_determine_aberrations(
         if activate_acceptor and _cryptic_acceptor_orientation_ok(geo_ag, native, is_reverse=strand == '-'):
             # partial_size = (DP_AG*Strand) - (DP_NA*Strand)
             partial_size = (dp_ag - dp_na) * strand_sign
-            driving = ds_ag  # use delta score, not raw ALT score
             if (partial_size > 0 and partial_size < native['native_exon_size']
                     and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
-                aberrations.append(make('partial_exon_deletion', driving, 'gain_B_acceptor'))
+                aberrations.append(make('partial_exon_deletion', 'gain_B_acceptor'))
                 aberrations[-1]['_partial_size'] = partial_size
             elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
                   and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
-                aberrations.append(make('partial_intron_retention', driving, 'gain_B_acceptor'))
+                aberrations.append(make('partial_intron_retention', 'gain_B_acceptor'))
                 # Store signed partial_size (negative = retention); formatters take abs() for display.
                 aberrations[-1]['_partial_size'] = partial_size
 
         if activate_donor and _cryptic_donor_orientation_ok(geo_dg, native, is_reverse=strand == '-'):
             # partial_size = (DP_ND*Strand) - (DP_DG*Strand)
             partial_size = (dp_nd - dp_dg) * strand_sign
-            driving = ds_dg  # use delta score, not raw ALT score
             if (partial_size > 0 and partial_size < native['native_exon_size']
                     and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
-                aberrations.append(make('partial_exon_deletion', driving, 'gain_B_donor'))
+                aberrations.append(make('partial_exon_deletion', 'gain_B_donor'))
                 aberrations[-1]['_partial_size'] = partial_size
             elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
                   and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
-                aberrations.append(make('partial_intron_retention', driving, 'gain_B_donor'))
+                aberrations.append(make('partial_intron_retention', 'gain_B_donor'))
                 aberrations[-1]['_partial_size'] = partial_size
 
     return aberrations
@@ -1015,26 +1044,15 @@ def sai10k_compute_predictions(transcript_scores, variant_pos):
         variant_pos, exon_starts, exon_ends, strand,
     )
 
-    # Compute the overall max Δ score, the corresponding Δ type, and a
-    # confidence label. These are constant per variant (not per aberration) and
-    # drive the line-1 display ("Max Δ score: X — donor loss (high confidence)").
-    # Reporting the per-aberration "driving" score on its own can mislead readers
-    # when, e.g., partial_exon_deletion fires off a 0.20 cryptic gain while the
-    # variant also has a 0.92 native donor loss — the user should still see 0.92
-    # as the headline confidence (Canson reviewer feedback, 2026-04-17).
-    overall_max_score, overall_delta_type = max(
+    # Pick the overall delta_type (the Δ branch with the highest Δ score). This
+    # is constant per variant and labels which SpliceAI score drove the call.
+    _, overall_delta_type = max(
         ((_coerce_float(ds_al), 'acceptor loss'),
          (_coerce_float(ds_dl), 'donor loss'),
          (_coerce_float(ds_ag), 'acceptor gain'),
          (_coerce_float(ds_dg), 'donor gain')),
         key=lambda item: item[0],
     )
-    if overall_max_score >= 0.8:
-        confidence = 'high'
-    elif overall_max_score >= 0.5:
-        confidence = 'moderate'
-    else:
-        confidence = 'low'
 
     for aberration in aberrations:
         sai10k_annotate_frameshift(
@@ -1042,11 +1060,7 @@ def sai10k_compute_predictions(transcript_scores, variant_pos):
             cds_start, cds_end,
             exon_starts, exon_ends,
         )
-        # Overwrite the per-branch driving score with the variant-level overall
-        # max so all aberration rows share the same line-1 confidence headline.
-        aberration['max_delta_score'] = overall_max_score
         aberration['delta_type'] = overall_delta_type
-        aberration['confidence'] = confidence
 
     # Strip internal-only fields before returning to callers (and ultimately the
     # client). Keys prefixed with '_' are implementation details.

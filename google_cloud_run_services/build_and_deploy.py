@@ -230,7 +230,7 @@ def main():
         tools = ["spliceai", "pangolin"]
 
     if args.gencode_version:
-        if not re.match("v[0-9][0-9]", args.gencode_version):
+        if not re.fullmatch(r"v\d+", args.gencode_version):
             parser.error("--gencode-version must be of the form 'v46'")
         gencode_version_number = int(args.gencode_version.lstrip("v"))
     else:
