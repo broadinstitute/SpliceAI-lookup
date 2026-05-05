@@ -149,10 +149,16 @@ def sai10k_find_affected_region(variant_pos, exon_starts, exon_ends, strand='+')
             dist_to_upstream_exon = variant_pos - exon_ends[i]
             dist_to_downstream_exon = exon_starts[i + 1] - variant_pos
             intron_num = num_exons - 1 - i if is_reverse else i + 1
+            # Tie-break with `<=` so the upstream genomic exon wins on an
+            # exact midpoint, matching `_get_native_splice_sites`'s assoc_idx
+            # tie-break (`assoc_idx = idx if dist_to_upstream <= dist_to_downstream`).
+            # Without this, the loss branch's `nearest_boundary`-derived exon
+            # and the gain-B branch's `_native.assoc_idx` could diverge for
+            # an equidistant intronic variant.
             if is_reverse:
-                nearest = 'acceptor' if dist_to_upstream_exon < dist_to_downstream_exon else 'donor'
+                nearest = 'acceptor' if dist_to_upstream_exon <= dist_to_downstream_exon else 'donor'
             else:
-                nearest = 'donor' if dist_to_upstream_exon < dist_to_downstream_exon else 'acceptor'
+                nearest = 'donor' if dist_to_upstream_exon <= dist_to_downstream_exon else 'acceptor'
             return {
                 'region_type': 'intron',
                 'region_number': intron_num,
@@ -265,9 +271,10 @@ def _find_exons_between_loss_positions(geo_al, geo_dl, strand, exon_starts, exon
     # Exact match (reference parser behavior). SpliceAI returns splice-site
     # positions exactly at exon boundaries; a wider tolerance would risk
     # matching the wrong exon in compact gene structures. Cases where DP_AL
-    # or DP_DL lands interior to the affected exon fall through to the
-    # sai10k_annotate_frameshift fallback (single-exon skipping of the
-    # affected exon).
+    # or DP_DL lands interior to the affected exon — or only one of the two
+    # lands at a native site, with the other on a cryptic position — fall
+    # through to the sai10k_annotate_frameshift fallback (single-exon
+    # skipping of the affected exon, for both exonic AND intronic variants).
     # On '+' strand: acceptor_loss is at exon_start (1-based closed), donor_loss
     # at exon_end. On '-' strand: acceptor_loss is at exon_end, donor_loss at
     # exon_start.
@@ -795,16 +802,48 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
 
     if aberration_type == 'exon_skipping':
         result = _find_exons_between_loss_positions(geo_al, geo_dl, strand, exon_starts, exon_ends)
-        # Reference-parser fallback: the Canson algorithm (spliceAI_parser.R:239,
-        # spliceai_parser.py:312-329) requires BOTH geo_al and geo_dl to sit exactly
-        # at exon boundaries. When SpliceAI's DP_AL/DP_DL peak lands interior to the
-        # affected exon (e.g. donor-site variants where acceptor-loss peaks inside the
-        # same exon), that exact-match lookup returns NA|NA. If the variant is exonic
-        # and at least one of geo_al/geo_dl still matches the affected exon's own
-        # splice site, treat that single exon as the skipped one.
-        if not result['match'] and affected_region and affected_region.get('region_type') == 'exon':
+        # Deliberate deviation from the reference parser. Both
+        # spliceAI_parser.R:227-246 and spliceai_parser.py:293-334 require
+        # BOTH geo_al and geo_dl to sit exactly at exon boundaries; when
+        # SpliceAI's DP_AL/DP_DL peak lands interior to the affected exon, or
+        # one peak lands on a cryptic position while the other matches a
+        # native site, the reference's exact-match lookup returns "NA|NA".
+        # We instead anchor on whichever Δ-score position lands on a
+        # canonical native site of the variant's affected exon and treat
+        # that single exon as the skipped one (per developer reply to
+        # PDF feedback comment #6: "anchor on whichever Δ-score position
+        # lands on a canonical native site and ignore the cryptic position
+        # for localization purposes"). Covers both exonic variants
+        # (e.g. RAD51C c.404G>A — DP_DL=0 anchors on exon 2's native donor)
+        # and intronic splice-site variants (e.g. RAD51C c.404+2T>C —
+        # DP_DL=-2 anchors on exon 2's native donor while DP_AL points to
+        # a cryptic acceptor position).
+        if not result['match'] and affected_region:
             is_reverse = strand == '-'
-            idx = affected_region.get('_genomic_index')
+            region_type = affected_region.get('region_type')
+            if region_type == 'exon':
+                idx = affected_region.get('_genomic_index')
+            elif region_type == 'intron':
+                # _genomic_index is the upstream-genomic-exon index for the
+                # intron containing the variant. nearest_boundary names the
+                # transcript-orientation splice site the variant is closest
+                # to. Map (strand, nearest_boundary) -> affected exon index:
+                #   + strand, donor    -> intron_idx     (upstream exon i)
+                #   + strand, acceptor -> intron_idx + 1 (downstream exon i+1)
+                #   - strand, donor    -> intron_idx + 1 (donor of exon i+1 sits at exon_starts[i+1])
+                #   - strand, acceptor -> intron_idx     (acceptor of exon i sits at exon_ends[i])
+                intron_idx = affected_region.get('_genomic_index')
+                nearest = affected_region.get('nearest_boundary')
+                if intron_idx is None:
+                    idx = None
+                elif nearest == 'donor':
+                    idx = intron_idx if not is_reverse else intron_idx + 1
+                elif nearest == 'acceptor':
+                    idx = intron_idx + 1 if not is_reverse else intron_idx
+                else:
+                    idx = None
+            else:
+                idx = None
             if idx is not None and 0 <= idx < len(exon_starts):
                 acc_pos = exon_ends[idx] if is_reverse else exon_starts[idx]
                 don_pos = exon_starts[idx] if is_reverse else exon_ends[idx]

@@ -232,6 +232,25 @@ class TestFindAffectedRegion(unittest.TestCase):
         self.assertEqual(result["region_number"], 2)
         self.assertEqual(result["_genomic_index"], 1)
 
+    def test_intronic_variant_at_intron_midpoint_picks_upstream_exon(self):
+        """Equidistant intronic variant: upstream exon wins on a tie.
+
+        BRCA2 intron 5 (between genomic exons 5 and 6) spans 32900288..32900378
+        (length 91). The integer midpoint 32900333 is exactly 46 bp from each
+        flanking exon. With the `<=` tie-break in sai10k_find_affected_region,
+        the variant is associated with the upstream exon's donor side, matching
+        `_get_native_splice_sites`'s tie-break and avoiding cross-branch
+        disagreement.
+        """
+        exon_starts = BRCA2_TRANSCRIPT_HG19["EXON_STARTS"]
+        exon_ends = BRCA2_TRANSCRIPT_HG19["EXON_ENDS"]
+        # Sanity-check distances are equal at this position.
+        self.assertEqual(32900333 - exon_ends[4], exon_starts[5] - 32900333)
+        result = sai10k_find_affected_region(32900333, exon_starts, exon_ends, strand="+")
+        self.assertEqual(result["region_type"], "intron")
+        self.assertEqual(result["nearest_boundary"], "donor")
+        self.assertEqual(result["_genomic_index"], 4)
+
 
 class TestDetermineAberrations(unittest.TestCase):
     """Test the sai10k_determine_aberrations function (returns a list)."""
@@ -965,12 +984,21 @@ class TestExonSkippingFallback(unittest.TestCase):
     """Fallback path in sai10k_annotate_frameshift for exon_skipping when the
     reference exact-match lookup (_find_exons_between_loss_positions) fails.
 
-    Motivated by cases like CHEK2 22:28695127 C>T where the variant is at the
-    native donor but SpliceAI's DP_AL peak lands interior to the exon, so
-    GEO_AL doesn't match any exon boundary and the reference parser returns
-    NA|NA. The fallback declares single-exon skipping of the affected exon
-    whenever the variant is exonic AND at least one of GEO_AL/GEO_DL matches
-    the affected exon's own native splice site.
+    The fallback declares single-exon skipping of the variant's affected exon
+    whenever at least one of GEO_AL/GEO_DL matches that exon's own native
+    splice site. Covers two reachable cases:
+
+    * Exonic variants where SpliceAI's DP_AL/DP_DL peak lands interior to the
+      affected exon (e.g. CHEK2 22:28695127 C>T, where DP_DL=0 anchors at the
+      native donor but DP_AL points 50bp inside the exon).
+    * Intronic splice-site variants where one peak lands at a native site and
+      the other on a cryptic position (e.g. RAD51C c.404+2T>C, where DP_DL=-2
+      anchors at exon 2's native donor but DP_AL points to a cryptic acceptor
+      well inside the upstream exon).
+
+    The four (strand, nearest_boundary) cells of the intronic case are each
+    exercised by their own dedicated test below so the strand × side mapping
+    in the fallback can't drift.
     """
 
     def test_fallback_uses_affected_exon_when_geo_al_interior(self):
@@ -999,12 +1027,13 @@ class TestExonSkippingFallback(unittest.TestCase):
         self.assertTrue(es[0]["frameshift"])
         self.assertEqual(es[0]["frameshift_description"], "Exon 4 skipping (109bp coding seq.) - frameshift")
 
-    def test_no_fallback_when_variant_intronic(self):
-        """Variant in intron with both GEO_AL/GEO_DL interior should still
-        produce the 'could not be mapped' message (fallback requires exonic)."""
+    def test_no_fallback_when_intronic_variant_has_no_native_anchor(self):
+        """Intronic variant where neither GEO_AL nor GEO_DL lands on a native
+        splice site of any flanking exon — fallback should NOT fire and the
+        'could not be mapped' message should be emitted."""
         # BRCA2 intron 1 (between exon 1 end 32889804 and exon 2 start 32890559).
-        # Place variant at 32890000 and make both GEO_AL / GEO_DL land
-        # somewhere that doesn't match any exon boundary.
+        # Variant 40bp into intron 1; DP_AL/DP_DL chosen so neither GEO_AL nor
+        # GEO_DL hits any exon boundary.
         transcript_scores = {
             "DS_AG": 0.00, "DS_AL": 0.30, "DS_DG": 0.00, "DS_DL": 0.80,
             "DP_AG": 0, "DP_AL": 100, "DP_DG": 0, "DP_DL": 200,
@@ -1015,7 +1044,6 @@ class TestExonSkippingFallback(unittest.TestCase):
             "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
             "STRAND": "+",
         }
-        # Variant 40bp into intron 1 — within d_50bp so loss branch still fires.
         result = sai10k_compute_predictions(transcript_scores, variant_pos=32889844)
         es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
         self.assertEqual(len(es), 1)
@@ -1023,6 +1051,119 @@ class TestExonSkippingFallback(unittest.TestCase):
             es[0]["frameshift_description"],
             "Exon skipping predicted but skipped exon(s) could not be mapped",
         )
+
+    def test_fallback_uses_affected_exon_when_intronic_variant_donor_at_native_plus_strand(self):
+        """`+` strand intronic variant +2 from the native donor (RAD51C
+        c.404+2T>C analogue). Exercises the `idx = intron_idx` branch on
+        `+` strand."""
+        # BRCA2 intron 4 (between exon 4 and exon 5): genomic_index 3,
+        # spans 32899322..32900237. Variant at 32899323 (=exon_ends[3] + 2).
+        # DP_DL = -2 -> GEO_DL = 32899321 == exon_ends[3]  (native donor of exon 4)
+        # DP_AL = -100 -> GEO_AL = 32899223 (interior of exon 4, no native match)
+        # nearest_boundary='donor', intron_idx=3, idx=3 -> exon 4 (1-based).
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.30, "DS_DG": 0.00, "DS_DL": 0.80,
+            "DP_AG": 0, "DP_AL": -100, "DP_DG": 0, "DP_DL": -2,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32899323)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        # Exon 4 is fully coding (109 bp); 109 % 3 = 1 -> frameshift.
+        self.assertEqual(es[0]["size"], 109)
+        self.assertTrue(es[0]["frameshift"])
+        self.assertEqual(es[0]["frameshift_description"], "Exon 4 skipping (109bp coding seq.) - frameshift")
+
+    def test_fallback_uses_affected_exon_when_intronic_variant_acceptor_at_native_plus_strand(self):
+        """`+` strand intronic variant -2 from the native acceptor of the
+        downstream exon. Exercises the `idx = intron_idx + 1` branch on
+        `+` strand."""
+        # BRCA2 intron 3 (between exon 3 and exon 4): genomic_index 2,
+        # spans 32893463..32899212. Variant at 32899211 (=exon_starts[3] - 2).
+        # DP_AL = +2  -> GEO_AL = 32899213 == exon_starts[3]  (native acceptor of exon 4)
+        # DP_DL = +100 -> GEO_DL = 32899311 (interior of exon 4, no native match)
+        # nearest_boundary='acceptor', intron_idx=2, idx=3 -> exon 4 (1-based).
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.30, "DS_DG": 0.00, "DS_DL": 0.80,
+            "DP_AG": 0, "DP_AL": 2, "DP_DG": 0, "DP_DL": 100,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32899211)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        self.assertEqual(es[0]["size"], 109)
+        self.assertTrue(es[0]["frameshift"])
+        self.assertEqual(es[0]["frameshift_description"], "Exon 4 skipping (109bp coding seq.) - frameshift")
+
+    def test_fallback_uses_affected_exon_when_intronic_variant_acceptor_at_native_minus_strand(self):
+        """`-` strand intronic variant near a transcript-acceptor (which sits
+        on the genomic-upstream side of the intron). Exercises the
+        `idx = intron_idx` branch on `-` strand."""
+        # BRCA1 intron between genomic exons 5 and 6: genomic_index 5, spans
+        # 41215391..41215890. Variant at 41215392 (=exon_ends[5] + 2; 2bp into
+        # the intron from genomic exon 5, which is transcript exon 18).
+        # On '-' strand the native ACCEPTOR of genomic exon 5 sits at
+        # exon_ends[5] = 41215390.
+        # DP_AL = -2  -> GEO_AL = 41215390 == exon_ends[5]  (native acceptor)
+        # DP_DL = -50 -> GEO_DL = 41215342 (no native match)
+        # nearest_boundary='acceptor' on '-' strand maps to idx = intron_idx,
+        # i.e. genomic exon 5 = biological exon 23-5 = 18.
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.30, "DS_DG": 0.00, "DS_DL": 0.80,
+            "DP_AG": 0, "DP_AL": -2, "DP_DG": 0, "DP_DL": -50,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA1_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA1_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "-",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=41215392)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        # Genomic exon 5: [41215350, 41215390], 41 bp, fully coding. 41 % 3 = 2 -> frameshift.
+        self.assertEqual(es[0]["size"], 41)
+        self.assertTrue(es[0]["frameshift"])
+        self.assertEqual(es[0]["frameshift_description"], "Exon 18 skipping (41bp coding seq.) - frameshift")
+
+    def test_fallback_uses_affected_exon_when_intronic_variant_donor_at_native_minus_strand(self):
+        """`-` strand intronic variant near a transcript-donor (which sits on
+        the genomic-downstream side of the intron). Exercises the
+        `idx = intron_idx + 1` branch on `-` strand."""
+        # Same BRCA1 intron (genomic_index 5, 41215391..41215890). Variant at
+        # 41215889 (=exon_starts[6] - 2). On '-' strand the native DONOR of
+        # genomic exon 6 sits at exon_starts[6] = 41215891.
+        # DP_DL = +2  -> GEO_DL = 41215891 == exon_starts[6]  (native donor)
+        # DP_AL = +50 -> GEO_AL = 41215939 (interior of exon 6, no native match)
+        # nearest_boundary='donor' on '-' strand maps to idx = intron_idx + 1,
+        # i.e. genomic exon 6 = biological exon 23-6 = 17.
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.30, "DS_DG": 0.00, "DS_DL": 0.80,
+            "DP_AG": 0, "DP_AL": 50, "DP_DG": 0, "DP_DL": 2,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA1_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA1_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "-",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=41215889)
+        es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
+        self.assertEqual(len(es), 1)
+        # Genomic exon 6: [41215891, 41215968], 78 bp, fully coding. 78 % 3 = 0 -> in-frame.
+        self.assertEqual(es[0]["size"], 78)
+        self.assertFalse(es[0]["frameshift"])
+        self.assertEqual(es[0]["frameshift_description"], "Exon 17 skipping (78bp coding seq.) - in-frame")
 
 
 class TestDeltaType(unittest.TestCase):
