@@ -411,6 +411,10 @@ def main():
                 concurrency = 6    # if genome_version == '37' else 2
                 min_instances = 0  # if tool == 'pangolin' else 2
                 max_instances = 3
+                # Keep dev image digests separate from prod so a stray non-dev
+                # deploy from the same checkout can't accidentally promote the
+                # dev image.
+                sha256_path = f"docker/{tool}/sha256_grch{genome_version}{'_dev' if args.dev else ''}.txt"
                 if not args.command or args.command == "build":
                     if args.docker_command == "podman":
                         run(f"gcloud --project {GCLOUD_PROJECT} auth print-access-token | podman login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev")
@@ -420,14 +424,14 @@ def main():
                     run(f"{args.docker_command} push {dockerhub_tag}:latest")
 
                     run(f"{args.docker_command} pull {tag}:latest")
-                    run(f"{args.docker_command} inspect --format='{{{{range .RepoDigests}}}}{{{{println .}}}}{{{{end}}}}' {tag}:latest | grep 'us-central1-docker.pkg.dev' | cut -f 2 -d @ > docker/{tool}/sha256_grch{genome_version}.txt")  # record the image's sha256
+                    run(f"{args.docker_command} inspect --format='{{{{range .RepoDigests}}}}{{{{println .}}}}{{{{end}}}}' {tag}:latest | grep 'us-central1-docker.pkg.dev' | cut -f 2 -d @ > {sha256_path}")  # record the image's sha256
 
                 if not args.command or args.command == "deploy":
-                    with open(f"docker/{tool}/sha256_grch{genome_version}.txt") as f:
+                    with open(sha256_path) as f:
                         sha256 = f.read().strip()
 
                     if not re.match("^sha256:[a-f0-9]{64}$", sha256):
-                        raise ValueError(f"Invalid sha256 value found in docker/{tool}/sha256_grch{genome_version}.txt: {sha256}")
+                        raise ValueError(f"Invalid sha256 value found in {sha256_path}: {sha256}")
 
                     print(f"Deploying {service} with image sha256 {sha256}{' (dev revision, no traffic)' if args.dev else ''}")
 
