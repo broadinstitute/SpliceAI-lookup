@@ -31,6 +31,14 @@ from sai10k_predictions import (
     sai10k_select_transcript,
     sai10k_get_transcript_predictions,
     MIN_DELTA_SCORE,
+    _translate_dna,
+    _reverse_complement,
+    _find_difference_point,
+    _format_aa_change_and_detect,
+    _apply_variant_to_altered_exon_seqs,
+    _consensus_filtered_in_tx_order,
+    _build_altered_exon_spans,
+    EXTENDS_PAST_NATIVE_STOP,
 )
 
 
@@ -956,7 +964,8 @@ class TestIncreasedExonInclusion(unittest.TestCase):
 
     def test_increased_exon_inclusion_frameshift_annotation(self):
         """Increased exon inclusion should get proper frameshift annotation:
-        frameshift=None (no frame change), affects_coding if exon overlaps CDS."""
+        frameshift=False for coding events (no frame change),
+        frameshift=None for non-coding events, affects_coding if exon overlaps CDS."""
         transcript_scores = {
             "DS_AG": 0.3, "DS_AL": 0.0, "DS_DG": 0.3, "DS_DL": 0.0,
             "DP_AG": 19, "DP_AL": 0, "DP_DG": 124, "DP_DL": 0,
@@ -975,7 +984,7 @@ class TestIncreasedExonInclusion(unittest.TestCase):
         # BRCA2 exon 2 overlaps CDS (CDS_START=32890598 is within [32890559, 32890664])
         self.assertTrue(iei["affects_coding"])
         # Increased exon inclusion doesn't change reading frame
-        self.assertIsNone(iei["frameshift"])
+        self.assertFalse(iei["frameshift"])
         self.assertEqual(iei["size"], 106)
         self.assertIn("Increased exon inclusion", iei["frameshift_description"])
 
@@ -1339,13 +1348,11 @@ class TestStopCodonLost(unittest.TestCase):
         self.assertIn("stop codon lost", es[0]["frameshift_description"])
         self.assertIn("coding seq.", es[0]["frameshift_description"])
 
-    def test_partial_exon_deletion_containing_cds_end(self):
-        """Donor-side cryptic shift inside BRCA2 exon 27 that deletes past cds_end."""
-        # Exon 27: 32972299-32974405. Native donor at 32974405. Place variant near
-        # donor and shift cryptic donor upstream past cds_end=32972907.
-        # variant_pos = 32972500; DP_ND = 32974405 - 32972500 = 1905.
-        # Cryptic donor at 32972800 → DP_DG = 300 (inside exon, before cds_end).
-        # partial_size = DP_ND - DP_DG = 1905 - 300 = 1605 bp; crosses cds_end.
+    def test_no_partial_exon_deletion_in_terminal_exon(self):
+        """Donor-side cryptic shift inside BRCA2 exon 27 (the last exon) must NOT
+        produce partial_exon_deletion: there is no biological next exon, so the
+        R reference's Cryptic_Donor_orientation is NA and the partial event is
+        suppressed (spliceAI_parser.R:954, 963-968)."""
         transcript_scores = {
             "DS_AG": 0.00, "DS_AL": 0.00, "DS_DG": 0.30, "DS_DL": 0.00,
             "DP_AG": 0, "DP_AL": 0, "DP_DG": 300, "DP_DL": 0,
@@ -1358,11 +1365,7 @@ class TestStopCodonLost(unittest.TestCase):
         }
         result = sai10k_compute_predictions(transcript_scores, variant_pos=32972500)
         pd = [a for a in result["aberrations"] if a["aberration_type"] == "partial_exon_deletion"]
-        self.assertEqual(len(pd), 1)
-        self.assertTrue(pd[0]["stop_codon_lost"])
-        self.assertFalse(pd[0]["start_codon_lost"])
-        self.assertIsNone(pd[0]["frameshift"])
-        self.assertIn("stop codon lost", pd[0]["frameshift_description"])
+        self.assertEqual(len(pd), 0)
 
 
 class TestPseudoexonBoundaryMatchesRParser(unittest.TestCase):
@@ -1668,19 +1671,15 @@ class TestPartialExonDeletionMinusStrandMoreCases(unittest.TestCase):
       donor    shift × stop  codon.
     Only the acceptor × start case is pinned by TestPartialExonDeletionMinusStrandCodonLost."""
 
-    def test_minus_strand_donor_shift_loses_stop_codon(self):
-        """BRCA1 − strand. Biological stop codon lies at genomic CDS_START =
-        41197695, inside the genomically-first exon [41196312, 41197819]. On
-        − strand, 'donor' is biologically at exon_starts[0] = 41196312.
-        A cryptic donor shift INTO the exon (on − strand, moving toward higher
-        genomic coords) covers the stop codon."""
-        idx = 0
-        variant_pos = 41196312   # biological donor of exon 0 on − strand
+    def test_minus_strand_donor_shift_in_terminal_exon_suppressed(self):
+        """BRCA1 − strand. exon_starts[0] = 41196312 is the biologically LAST
+        exon (− strand reverses biological order). A donor shift in the last
+        biological exon has no downstream exon to align with, so the R
+        reference's Cryptic_Donor_orientation is NA (next_eEnd is NA) and the
+        partial event is suppressed (spliceAI_parser.R:954, 963-968)."""
+        variant_pos = 41196312
         exon_starts = BRCA1_TRANSCRIPT_HG19["EXON_STARTS"]
         exon_ends = BRCA1_TRANSCRIPT_HG19["EXON_ENDS"]
-        # On − strand donor-side partial_exon_deletion: deleted = [exon_start, cryptic-1].
-        # Put cryptic donor at 41197700 so the deleted range [41196312, 41197699]
-        # covers CDS_START = 41197695 (biological stop codon on − strand).
         geo_dg = 41197700
         transcript_scores = {
             "DS_AG": 0.00, "DS_AL": 0.00, "DS_DG": 0.30, "DS_DL": 0.00,
@@ -1695,11 +1694,7 @@ class TestPartialExonDeletionMinusStrandMoreCases(unittest.TestCase):
         }
         result = sai10k_compute_predictions(transcript_scores, variant_pos=variant_pos)
         ped = [a for a in result["aberrations"] if a["aberration_type"] == "partial_exon_deletion"]
-        self.assertEqual(len(ped), 1)
-        self.assertTrue(ped[0]["stop_codon_lost"],
-                        "− strand donor-shift crossing CDS_START must set stop_codon_lost=True")
-        self.assertFalse(ped[0]["start_codon_lost"])
-        self.assertIn("stop codon lost", ped[0]["frameshift_description"])
+        self.assertEqual(len(ped), 0)
 
 
 class TestUtrOnlyExonSkipping(unittest.TestCase):
@@ -2156,6 +2151,429 @@ class TestDeltaTypeTieBreak(unittest.TestCase):
         result = sai10k_compute_predictions(transcript_scores, variant_pos=32890600)
         self.assertTrue(result["aberrations"])
         self.assertEqual(result["aberrations"][0]["delta_type"], "acceptor loss")
+
+
+# ===========================================================================
+# Premature-stop detection tests (PDF feedback comment #5).
+# ===========================================================================
+
+# Path to a local hg38 FASTA. Used by integration tests below; tests that need
+# this file are skipped when it isn't present so the suite still runs in
+# environments without a reference genome.
+HG38_FASTA_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hg38.fa"
+)
+
+# RAD51C transcript ENST00000583539.5 in hg38 (extracted from
+# gencode.v49.GRCh38.txt). + strand, 8 exons. The motivating example for PDF
+# feedback comment #5 — variant chr17:58695191 T>C is c.404+2T>C, expected to
+# produce stop_codon_introduced=True with aa_change="TQL[WQNKVFSF*]".
+RAD51C_TRANSCRIPT_HG38 = {
+    "transcript_id": "ENST00000583539.5",
+    "gene_name": "RAD51C",
+    "STRAND": "+",
+    "TX_START": 58692573,
+    "TX_END": 58732766,
+    "CDS_START": 58692644,
+    "CDS_END": 58732559,
+    "EXON_STARTS": [58692573, 58694931, 58696693, 58703196, 58709859,
+                    58720746, 58724040, 58732484],
+    "EXON_ENDS":   [58692788, 58695189, 58696859, 58703329, 58709990,
+                    58720812, 58724100, 58732766],
+}
+
+
+class TestTranslateDna(unittest.TestCase):
+    def test_basic_translation(self):
+        self.assertEqual(_translate_dna("ATGAAATAA"), "MK*")
+
+    def test_lower_case_input(self):
+        self.assertEqual(_translate_dna("atgaaataa"), "MK*")
+
+    def test_partial_codon_at_end(self):
+        # Trailing non-multiple-of-3 bases are dropped (no padding).
+        self.assertEqual(_translate_dna("ATGAA"), "M")
+
+    def test_unknown_codon_yields_X(self):
+        self.assertEqual(_translate_dna("ATGNNN"), "MX")
+
+
+class TestReverseComplement(unittest.TestCase):
+    def test_basic(self):
+        self.assertEqual(_reverse_complement("ATCG"), "CGAT")
+
+    def test_n_passthrough(self):
+        self.assertEqual(_reverse_complement("ATNCG"), "CGNAT")
+
+
+class TestFindDifferencePoint(unittest.TestCase):
+    def test_identical(self):
+        self.assertEqual(_find_difference_point("ABC", "ABC", "forward"), "identical")
+
+    def test_first_position_differs(self):
+        self.assertEqual(_find_difference_point("XBC", "ABC", "forward"), 1)
+
+    def test_third_position_differs(self):
+        self.assertEqual(_find_difference_point("ABXY", "ABCD", "forward"), 3)
+
+    def test_prefix(self):
+        # Shorter sequence is a prefix of the longer one: returns len(shorter)+1.
+        self.assertEqual(_find_difference_point("ABC", "ABCDE", "forward"), 4)
+
+    def test_reverse_walk(self):
+        # Walk from the end. seq_a "ABCDX" vs seq_b "ABCDY": last char differs.
+        # Reversed: "XDCBA" vs "YDCBA", differs at position 1 in reversed coords,
+        # which back-translates to position len-1+1 = len = 5 in forward coords.
+        self.assertEqual(_find_difference_point("ABCDX", "ABCDY", "reverse"), 5)
+
+
+class TestFormatAaChangeAndDetect(unittest.TestCase):
+    """Unit tests for the AA-comparison / divergence-window logic.
+
+    These hand-craft altered/consensus AA strings to exercise the algorithm
+    independent of FASTA / transcript inputs.
+    """
+
+    def test_identical_returns_no_change(self):
+        # Both proteins end in '*' (the natural terminal stop); after the
+        # trailing-* strip the strings are identical.
+        result = _format_aa_change_and_detect("ABCDEFG*", "ABCDEFG*")
+        self.assertEqual(result, (False, None))
+
+    def test_premature_stop_introduced(self):
+        # Forward divergence at AA 4. Altered hits a premature stop a few AAs
+        # in. Both end with the natural '*' which is stripped first.
+        altered = "ABC*XYZ*"
+        consensus = "ABCDEFGHIJK*"
+        stop_introduced, formatted = _format_aa_change_and_detect(altered, consensus)
+        self.assertTrue(stop_introduced)
+        # The formatted string should contain the prefix "ABC" and a bracketed segment ending in "*".
+        self.assertTrue(formatted.startswith("ABC["))
+        self.assertTrue(formatted.endswith("*]"))
+
+    def test_native_stop_shifted_earlier_not_misclassified(self):
+        # Critical regression: an in-frame deletion that shifts the native stop
+        # earlier in transcription order leaves a trailing '*' in the altered
+        # protein. Without the trailing-* strip, .find('*') would misclassify
+        # the natural stop as introduced.
+        altered = "ABCDEFG*"           # native stop just shifted earlier in position
+        consensus = "ABCDEFGHIJ*"      # consensus with the natural stop at the end
+        stop_introduced, _ = _format_aa_change_and_detect(altered, consensus)
+        self.assertFalse(stop_introduced)
+
+    def test_frameshift_introduces_stop(self):
+        # Frameshift case: altered translation diverges at AA 4 and hits a PTC
+        # a few residues later. The consensus carries its natural terminal '*'
+        # (always stripped); the altered '*' must be detected as introduced.
+        altered = "ABCXY*"               # frameshift garbage, then PTC
+        consensus = "ABCDEFGHIJK*"
+        stop_introduced, formatted = _format_aa_change_and_detect(
+            altered, consensus, frameshift=True,
+        )
+        self.assertTrue(stop_introduced)
+        self.assertTrue(formatted.startswith("ABC["))
+        self.assertTrue(formatted.endswith("*]"))
+
+    def test_frameshift_extends_past_native_stop(self):
+        # Frameshift case: altered translation diverges and never hits a PTC
+        # within the translated CDS-clamped spans. Mirrors reference's
+        # "protein sequence extends beyond native stop site".
+        altered = "ABCXYZUVW"            # no '*' anywhere
+        consensus = "ABCDEFGHIJK*"
+        stop_introduced, formatted = _format_aa_change_and_detect(
+            altered, consensus, frameshift=True,
+        )
+        self.assertFalse(stop_introduced)
+        self.assertEqual(formatted, EXTENDS_PAST_NATIVE_STOP)
+
+    def test_frameshift_natural_stop_in_altered_is_real_ptc(self):
+        # Sanity check: for frameshift, the trailing-`*` strip must NOT apply
+        # to altered_aa. If altered_aa happens to end in '*' (because the PTC
+        # lands at the very end of the translated spans), it must be detected
+        # as introduced. Without the strip-disable, the PTC would be silenced.
+        altered = "ABCXYZ*"
+        consensus = "ABCDEFGHIJK*"
+        stop_introduced, _ = _format_aa_change_and_detect(
+            altered, consensus, frameshift=True,
+        )
+        self.assertTrue(stop_introduced)
+
+    def test_in_frame_default_unchanged(self):
+        # Defaulting frameshift=False keeps existing in-frame behavior intact:
+        # both natural stops are stripped, divergence-window logic runs.
+        altered = "ABCDEFG*"
+        consensus = "ABCDEFGHIJ*"
+        stop_introduced, _ = _format_aa_change_and_detect(altered, consensus)
+        self.assertFalse(stop_introduced)
+
+
+class TestApplyVariantToAlteredExonSeqs(unittest.TestCase):
+    """The variant-application helper supports indels and indel-vs-splice
+    boundary detection. These tests use a stub fasta object — no real genome
+    file required."""
+
+    class _StubFasta:
+        def __init__(self, sequences):
+            # sequences: dict of chrom -> sequence string (1-based, supports slicing).
+            self._seqs = sequences
+
+        def keys(self):
+            return list(self._seqs.keys())
+
+        def __getitem__(self, chrom):
+            return self._StubChrom(self._seqs[chrom])
+
+        class _StubChrom:
+            def __init__(self, seq):
+                self._seq = seq
+
+            def __getitem__(self, slc):
+                return self._seq[slc]
+
+    def _stub(self, **kwargs):
+        return self._StubFasta(kwargs)
+
+    def test_snv_substitution(self):
+        # Spans = [(11, 20)], exon_seqs = ["ACGTACGTAC"], variant at pos 13 T>G.
+        spans = [(11, 20)]
+        exon_seqs = ["ACGTACGTAC"]  # bases at genomic 11..20
+        # Stub fasta returns the same sequence so reference matches.
+        # FASTA contains a region [10..20] -> "_ACGTACGTAC" (1-based: pos 11 = "A").
+        # We supply 0-based slice indexing: pos[10:11] = "A".
+        # Build a "chr1" sequence such that 1-based pos 13 = "G". Our exon string starts at pos 11.
+        # exon[0]=A(pos11), exon[1]=C(pos12), exon[2]=G(pos13), exon[3]=T(pos14),...
+        # ref at pos 13 should be "G".
+        # The stub exposes the chromosome as a string indexed 0-based, so we
+        # need bases [0..20] with pos11=A, pos12=C, pos13=G, etc.
+        chrom_seq = "X" * 10 + "ACGTACGTAC"  # pos 11..20
+        fasta = self._stub(chr1=chrom_seq)
+        # 1-based variant: pos 13 ref=G alt=T. cds_start/cds_end far away.
+        result = _apply_variant_to_altered_exon_seqs(
+            spans, list(exon_seqs), 13, "G", "T",
+            fasta, "1", cds_start=1, cds_end=10000,
+        )
+        self.assertEqual(result, "0_AC" + "T" + "TACGTAC")  # pos 13 G -> T at offset 2
+
+    def test_reference_mismatch(self):
+        chrom_seq = "X" * 10 + "ACGTACGTAC"
+        fasta = self._stub(chr1=chrom_seq)
+        # Claim pos 13 = "A", but actual genome has "G".
+        result = _apply_variant_to_altered_exon_seqs(
+            [(11, 20)], ["ACGTACGTAC"], 13, "A", "T",
+            fasta, "1", cds_start=1, cds_end=10000,
+        )
+        self.assertEqual(result, "reference mismatch")
+
+    def test_variant_outside_kept_spans(self):
+        # variant footprint at pos 30 (outside [(11, 20)]).
+        chrom_seq = "X" * 30 + "G"
+        fasta = self._stub(chr1=chrom_seq)
+        result = _apply_variant_to_altered_exon_seqs(
+            [(11, 20)], ["ACGTACGTAC"], 31, "G", "T",
+            fasta, "1", cds_start=1, cds_end=10000,
+        )
+        self.assertEqual(result, "cannot determine")
+
+    def test_indel_straddles_splice_boundary(self):
+        # 3-base ref starting at pos 19, footprint = [19, 20, 21]. Span ends at 20.
+        chrom_seq = "X" * 10 + "ACGTACGTAC" + "TGA"  # pos 21 = "T"
+        fasta = self._stub(chr1=chrom_seq)
+        result = _apply_variant_to_altered_exon_seqs(
+            [(11, 20)], ["ACGTACGTAC"], 19, "ACT", "G",
+            fasta, "1", cds_start=1, cds_end=10000,
+        )
+        self.assertEqual(result, "variant straddles splice boundary")
+
+    def test_anchored_insertion_at_trailing_edge_treated_as_straddle(self):
+        # VCF-anchored insertion at the last base of a kept span: ref='C', alt='CTAA' at
+        # pos=20 in span (11, 20). The anchor 'C' is the last exonic base; by VCF
+        # convention the inserted "TAA" sits past the donor in the intron and must NOT
+        # be spliced into the exon sequence (which would falsely look like a 3-AA
+        # insertion that could carry a premature stop). Expected: straddle sentinel.
+        chrom_seq = "X" * 10 + "ACGTACGTAC"  # pos 20 = "C"
+        fasta = self._stub(chr1=chrom_seq)
+        result = _apply_variant_to_altered_exon_seqs(
+            [(11, 20)], ["ACGTACGTAC"], 20, "C", "CTAA",
+            fasta, "1", cds_start=1, cds_end=10000,
+        )
+        self.assertEqual(result, "variant straddles splice boundary")
+
+    def test_indel_substitution_inside_exon(self):
+        # 3-base deletion (in-frame): ref="GTA" alt="" at pos 13 (positions 13,14,15).
+        chrom_seq = "X" * 10 + "ACGTACGTAC"  # pos 13="G", 14="T", 15="A"
+        fasta = self._stub(chr1=chrom_seq)
+        result = _apply_variant_to_altered_exon_seqs(
+            [(11, 20)], ["ACGTACGTAC"], 13, "GTA", "",
+            fasta, "1", cds_start=1, cds_end=10000,
+        )
+        # pos 13 is at offset 2 in the exon. exon = "AC|GTA|CGTAC" — after
+        # deleting "GTA": exon[:2] + "" + exon[5:] = "AC" + "CGTAC" = "ACCGTAC".
+        self.assertEqual(result, "0_ACCGTAC")
+
+    def test_variant_at_start_codon(self):
+        # cds_start=13. A SNV at pos 14 (cds_start+1) lands on the start codon.
+        chrom_seq = "X" * 10 + "ACGTACGTAC"
+        fasta = self._stub(chr1=chrom_seq)
+        result = _apply_variant_to_altered_exon_seqs(
+            [(11, 20)], ["ACGTACGTAC"], 14, "T", "C",
+            fasta, "1", cds_start=13, cds_end=10000,
+        )
+        self.assertEqual(result, "impacts native start or stop site")
+
+
+class TestConsensusFilteredInTxOrder(unittest.TestCase):
+    def test_plus_strand_drops_utr_only(self):
+        # 3-exon transcript on + strand. CDS = [101, 200]. Exon 1 fully UTR (1-100),
+        # exon 2 partially CDS (50-150), exon 3 fully CDS (180-200).
+        scores = {
+            "EXON_STARTS": [1, 50, 180],
+            "EXON_ENDS":   [100, 150, 200],
+            "CDS_START": 101,
+            "CDS_END": 200,
+            "STRAND": "+",
+        }
+        out = _consensus_filtered_in_tx_order(scores)
+        self.assertEqual(len(out), 2)  # UTR-only exon 1 dropped
+        self.assertEqual(out[0]["cds_lo"], 101)  # exon 2 clamped to cds_start
+        self.assertEqual(out[0]["cds_hi"], 150)
+        self.assertEqual(out[0]["eNum"], 2)
+        self.assertEqual(out[1]["eNum"], 3)
+
+    def test_minus_strand_tx_order_reversed(self):
+        # Same transcript but on - strand; tx-order index 0 is the highest-coord exon.
+        scores = {
+            "EXON_STARTS": [1, 50, 180],
+            "EXON_ENDS":   [100, 150, 200],
+            "CDS_START": 1,
+            "CDS_END": 200,
+            "STRAND": "-",
+        }
+        out = _consensus_filtered_in_tx_order(scores)
+        self.assertEqual(len(out), 3)
+        self.assertEqual(out[0]["orig_start"], 180)  # genomically-highest = first in tx order
+        self.assertEqual(out[0]["eNum"], 1)
+        self.assertEqual(out[2]["orig_start"], 1)
+        self.assertEqual(out[2]["eNum"], 3)
+
+
+class TestPrematureStopBackwardCompat(unittest.TestCase):
+    """When fasta is None (or chrom/ref/alt aren't passed), detection is
+    silently skipped: stop_codon_introduced and aa_change are None on every
+    aberration, and frameshift_description is unchanged."""
+
+    def test_no_fasta_yields_none(self):
+        # BRCA2 c.67+1G>A — known to produce an exon_skipping aberration.
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.81, "DS_DG": 0.17, "DS_DL": 0.98,
+            "DP_AG": -221, "DP_AL": -106, "DP_DG": -137, "DP_DL": -1,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": BRCA2_TRANSCRIPT_HG19["STRAND"],
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32890665)
+        self.assertTrue(result["aberrations"])
+        for ab in result["aberrations"]:
+            self.assertIsNone(ab["stop_codon_introduced"])
+            self.assertIsNone(ab["aa_change"])
+            # The description must NOT have been extended.
+            self.assertNotIn("but introduces a stop codon", ab["frameshift_description"])
+
+    def test_no_fasta_skips_frameshift_aberration_too(self):
+        # When fasta=None, detection short-circuits regardless of aberration
+        # frame status (frameshift aberrations are now handled when fasta is
+        # available — see _format_aa_change_and_detect).
+        # Construct a frameshift exon_skipping: BRCA2 exon 5 (32900238..32900287,
+        # size 50, 50 % 3 == 2). Variant at the acceptor splice site.
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.95, "DS_DG": 0.00, "DS_DL": 0.95,
+            "DP_AG": 0, "DP_AL": -1, "DP_DG": 0, "DP_DL": 49,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(
+            transcript_scores, variant_pos=32900238,
+            chrom="13", ref="G", alt="A", fasta=None,
+        )
+        # At least one frameshift aberration must be present so this test
+        # actually exercises the no-FASTA short-circuit on a frameshift case.
+        self.assertTrue(any(ab.get("frameshift") is True for ab in result["aberrations"]),
+                        "expected at least one frameshift aberration in this fixture")
+        for ab in result["aberrations"]:
+            self.assertIsNone(ab["stop_codon_introduced"])
+            self.assertIsNone(ab["aa_change"])
+
+
+@unittest.skipUnless(os.path.exists(HG38_FASTA_PATH),
+                     f"hg38 FASTA not found at {HG38_FASTA_PATH}")
+class TestPrematureStopRad51c(unittest.TestCase):
+    """Integration test for the motivating PDF example: NM_058216.3(RAD51C):c.404+2T>C
+    (chr17:58695191 T>C, hg38). + strand transcript. Expected:
+        stop_codon_introduced = True
+        aa_change             = "TQL[WQNKVFSF*]"
+    Also serves as the X4 chr-prefix regression test (chrom arrives as "17"
+    while the FASTA's contigs are "chr*")."""
+
+    @classmethod
+    def setUpClass(cls):
+        import pyfastx
+        cls.fasta = pyfastx.Fasta(HG38_FASTA_PATH)
+
+    def _build_scores(self):
+        # SpliceAI scores chosen to trigger the partial_intron_retention
+        # cryptic-donor branch:
+        #   - DS_DG = 0.9 (>= MIN_DELTA_SCORE; ds_ag < ds_dg, geo_dg != native donor).
+        #   - DP_DG = 25 -> cryptic donor at chr17:58695216 (27 bp past native donor at 58695189).
+        #   - DP_DL = -2 -> native donor at chr17:58695189; partial_size = -27.
+        #   - DS_DG_ALT >= ALT_SCORE_STRONG; donor_diff > ALT_DIFF_LOW.
+        return {
+            "DS_AG": 0.0, "DS_AL": 0.0, "DS_DG": 0.9, "DS_DL": 0.0,
+            "DP_AG": 0, "DP_AL": 0, "DP_DG": 25, "DP_DL": -2,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0,
+            "DS_DG_ALT": 0.95, "DS_DL_ALT": 0.05,
+            "EXON_STARTS": RAD51C_TRANSCRIPT_HG38["EXON_STARTS"],
+            "EXON_ENDS": RAD51C_TRANSCRIPT_HG38["EXON_ENDS"],
+            "CDS_START": RAD51C_TRANSCRIPT_HG38["CDS_START"],
+            "CDS_END": RAD51C_TRANSCRIPT_HG38["CDS_END"],
+            "STRAND": "+",
+        }
+
+    def test_rad51c_c404_2t_c_introduces_stop(self):
+        result = sai10k_compute_predictions(
+            self._build_scores(), variant_pos=58695191,
+            chrom="17", ref="T", alt="C", fasta=self.fasta,
+        )
+        partials = [a for a in result["aberrations"]
+                    if a["aberration_type"] == "partial_intron_retention"]
+        self.assertEqual(len(partials), 1, f"expected 1 partial_intron_retention, "
+                                            f"got {[a['aberration_type'] for a in result['aberrations']]}")
+        ab = partials[0]
+        self.assertEqual(ab["size"], 27)
+        self.assertTrue(ab["affects_coding"])
+        self.assertFalse(ab["frameshift"])
+        self.assertEqual(ab["stop_codon_introduced"], True,
+                         f"aa_change={ab['aa_change']}, desc={ab['frameshift_description']}")
+        self.assertEqual(ab["aa_change"], "TQL[WQNKVFSF*]")
+        self.assertIn("but introduces a stop codon", ab["frameshift_description"])
+
+    def test_reference_mismatch_skipped(self):
+        # Same variant but claim ref='A' (genome has 'T'). Detection must be
+        # skipped: stop_codon_introduced=None and description unchanged.
+        result = sai10k_compute_predictions(
+            self._build_scores(), variant_pos=58695191,
+            chrom="17", ref="A", alt="C", fasta=self.fasta,
+        )
+        partials = [a for a in result["aberrations"]
+                    if a["aberration_type"] == "partial_intron_retention"]
+        self.assertEqual(len(partials), 1)
+        ab = partials[0]
+        self.assertIsNone(ab["stop_codon_introduced"])
+        self.assertIsNone(ab["aa_change"])
+        self.assertNotIn("but introduces a stop codon", ab["frameshift_description"])
 
 
 if __name__ == "__main__":

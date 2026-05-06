@@ -157,6 +157,8 @@ VARIANT_SOURCES = [
     ("16-23652432-T-C",        "37", "PALB2 hg19 liftover"),
     ("17-58696687-T-A",        "38", "RAD51C partial intron retention"),
     ("17-56774048-T-A",        "37", "RAD51C partial intron retention hg19 liftover"),
+    ("17-58695191-T-C",        "38", "RAD51C c.404+2T>C exon 2 skipping (intronic, PDF feedback #6)"),
+    ("17-56772552-T-C",        "37", "RAD51C c.404+2T>C hg19 liftover"),
     ("22-28741768-C-A",        "38", "CHEK2 non-coding partial exon deletion"),
     ("22-29137756-C-A",        "37", "CHEK2 non-coding partial exon deletion hg19 liftover"),
     ("13-32345247-T-G",        "38", "BRCA2 pseudoexon"),

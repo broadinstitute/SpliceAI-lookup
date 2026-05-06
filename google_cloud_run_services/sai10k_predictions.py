@@ -20,6 +20,17 @@ are no longer emitted.
 The flowchart's three branches evaluate independently so a single variant can
 produce combinations (e.g. exon_skipping + partial_intron_retention per
 Canson Figure 1 D/E).
+
+Divergence from the reference parser - "Potential" loss labels:
+    The reference parser (spliceAI_parser.R / spliceai_parser.py) emits a
+    binary PASS/FAIL on the loss pair using fixed MIN/MAX thresholds. This
+    module additionally flags loss calls where min(DS_AL, DS_DL) is above
+    DS_ALDL_MIN but below DS_ALDL_MAX as "Potential" (e.g. "Potential exon
+    skipping", "Potential whole intron retention") in the user-visible
+    `frameshift_description`. The aberration_type field itself is unchanged.
+    This third tier was added at reviewer request (2026-04-17) to surface
+    asymmetric loss-pair calls where one delta score is weak; it is not
+    present in the reference implementation.
 """
 
 
@@ -66,11 +77,13 @@ GEX_SIZE_MAX = 500
 DISTANCE_EXON_MAX_LOSS = 50
 DISTANCE_NATIVE_SITE_MIN_PSEUDOEXON = 50
 # The pseudoexon branch also requires AG and DG to sit comfortably inside the
-# host intron. spliceAI_parser.R lines 211-214 check `intronStart + 50 < AGpos`
-# (and the symmetric condition for DG), where `intronStart` is the first
-# intronic base. Translated to a distance from the flanking exon boundary
-# (last exonic base), R's check is effectively `dist > 51`. We mirror that
-# here so Python and R produce identical pseudoexon calls at the boundary.
+# host intron. spliceAI_parser.R lines 211-214 (find_pseudoexon_position) use
+# directional checks against the host intron's two boundaries: on + strand,
+# `intronStart + 50 < AGpos` (AG vs the 5' boundary) and
+# `intronEndAdj - 50 > DGpos` (DG vs the 3' boundary); on - strand the roles
+# are swapped (DG vs 5', AG vs 3'). `intronStart` is the first intronic base,
+# so a distance measured from the flanking exon boundary (last exonic base)
+# is one larger and the threshold becomes `> 51`.
 DISTANCE_AG_DG_MIN_FROM_INTRON_BOUNDARY = 51
 # Partial intron retention requires both the variant and the retained segment
 # to be within 250 bp of an exon-intron junction.
@@ -101,11 +114,14 @@ def _coerce_int(value):
 
 def sai10k_find_affected_region(variant_pos, exon_starts, exon_ends, strand='+'):
     """
-    Locate the variant in an exon or intron, with biological (transcript-order)
-    numbering on reverse-strand genes.
+    Locate the variant in an exon, intron, or transcript-flanking region, with
+    biological (transcript-order) numbering on reverse-strand genes.
 
     Returns dict with:
-        region_type: 'exon' or 'intron'
+        region_type: 'exon', 'intron', or 'flank'
+                     ('flank' = upstream of first exon or downstream of last;
+                      matches the R reference's behavior of associating
+                      out-of-bounds variants with the closest exon, R:851-874)
         region_number: 1-based biological exon/intron number
         _genomic_index: 0-based index into exon_starts/exon_ends (internal use)
         distance_to_boundary: bp to nearest exon-intron junction
@@ -167,7 +183,34 @@ def sai10k_find_affected_region(variant_pos, exon_starts, exon_ends, strand='+')
                 'nearest_boundary': nearest,
             }
 
-    return None
+    # Variant is outside the transcript span (5' or 3' flank). The R reference
+    # (spliceAI_parser.R:851-874) computes d_from_exon against the closest exon
+    # regardless of containment, so loss / pseudoexon / partial gates can still
+    # fire near terminal exons. Associate the variant with the nearest exon.
+    if variant_pos < exon_starts[0]:
+        idx = 0
+        dist = exon_starts[0] - variant_pos
+        # Variant is on the genomic-low side of exon 0. On + strand this is
+        # 5'-flank: variant precedes the exon's acceptor (at exon_starts[0]).
+        # On - strand this is 3'-flank: variant lies past the exon's biological
+        # donor (also at exon_starts[0]).
+        nearest = 'donor' if is_reverse else 'acceptor'
+        exon_num = num_exons if is_reverse else 1
+    else:
+        idx = num_exons - 1
+        dist = variant_pos - exon_ends[idx]
+        # Genomic-high side of last exon. On + strand: 3'-flank past donor at
+        # exon_ends[-1]. On - strand: 5'-flank before biological acceptor at
+        # exon_ends[-1].
+        nearest = 'acceptor' if is_reverse else 'donor'
+        exon_num = 1 if is_reverse else num_exons
+    return {
+        'region_type': 'flank',
+        'region_number': exon_num,
+        '_genomic_index': idx,
+        'distance_to_boundary': dist,
+        'nearest_boundary': nearest,
+    }
 
 
 def _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_ends, strand):
@@ -177,8 +220,12 @@ def _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_end
 
     For an exonic variant, the associated exon is the containing exon.
     For an intronic variant, the associated exon is the CLOSEST flanking exon
-    (smaller distance_to_boundary). The reference parser iterates per-exon and
-    checks each; this simplification picks one exon per variant.
+    (smaller distance_to_boundary), matching the reference parser's behavior
+    of filtering to the single closest exon (spliceAI_parser.R:865-867,
+    spliceai_parser.py:1218 — both keep `dist_exon_closest_abs == min(...)`).
+    The actual difference from the reference is containment-based selection
+    (this module locates the variant inside an exon or internal intron) vs.
+    the reference's distance-only selection over all exons.
 
     Both acceptor and donor come from the SAME exon, so the increased_exon_inclusion
     condition (DP_AG == DP_NA AND DP_DG == DP_ND) is geometrically satisfiable.
@@ -203,7 +250,10 @@ def _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_end
     is_reverse = strand == '-'
     num_exons = len(exon_starts)
 
-    if affected_region['region_type'] == 'exon':
+    region_type = affected_region['region_type']
+    if region_type == 'exon' or region_type == 'flank':
+        # 'flank' variants (outside the transcript span) are already associated
+        # with the single closest exon in sai10k_find_affected_region.
         assoc_idx = idx
     else:
         # Intronic: pick the closer flanking exon. Measure distance from each
@@ -312,6 +362,18 @@ def _find_exons_between_loss_positions(geo_al, geo_dl, strand, exon_starts, exon
         return {'genomic_indices': [], 'biological_numbers': [], 'total_size': 0, 'match': False}
 
     _, lo, hi = best
+    # Divergence from reference parser: this implementation enumerates EVERY
+    # exon between the bracketing acceptor and donor (range(lo, hi + 1)) and
+    # sums their sizes for cds_size / frameshift / displayed exon list. The
+    # reference's find_exon_lost_gain (spliceAI_parser.R:227-246,
+    # spliceai_parser.py:293-329) instead applies a disjunctive boundary
+    # filter (eStartAdj == ALAGposition | eEnd == DLDGposition), which only
+    # matches the two boundary exons. For 3+-exon skips this means the
+    # reference shows e.g. "2,4" while this module shows "2,3,4", and the
+    # two parsers can disagree on the frameshift call when the omitted
+    # middle exons' summed size mod 3 != 0. The full-bracket sum is
+    # biologically more correct (the entire skipped block is removed from
+    # the mature transcript); this divergence is intentional.
     genomic_indices = list(range(lo, hi + 1))
     biological_numbers = [num_exons - i if is_reverse else i + 1 for i in genomic_indices]
     biological_numbers.sort()
@@ -358,6 +420,7 @@ def sai10k_determine_aberrations(
         dp_ag, dp_al, dp_dg, dp_dl,
         ds_ag_alt, ds_al_alt, ds_dg_alt, ds_dl_alt,
         variant_pos, exon_starts, exon_ends, strand,
+        has_alt_scores=True,
 ):
     """
     Classify splice aberration(s) per Canson et al. 2023 flowchart v1.1.
@@ -372,6 +435,14 @@ def sai10k_determine_aberrations(
             acceptor-gain, acceptor-loss, donor-gain, donor-loss sites.
         _branch: internal tag ('loss', 'gain_A', 'gain_B_acceptor', 'gain_B_donor')
         _native: dict with geo_na/geo_nd/dp_na/dp_nd/native_exon_size (or None)
+
+    Args:
+        has_alt_scores: True when the caller supplied real DS_*_ALT site scores
+            (matches the reference parser's --include flag); False when only
+            standard SpliceAI delta scores are available. With False, cryptic
+            acceptor/donor activation falls back to the reference's simpler
+            DS_AG/DS_DG dominance logic (spliceai_parser.py:1331-1338) instead
+            of the ALT-score side-selection logic.
 
     The paper flowchart's three branches (LOSS, GAIN Subflow A, GAIN Subflow B)
     evaluate INDEPENDENTLY; a single variant can produce up to one aberration
@@ -413,6 +484,7 @@ def sai10k_determine_aberrations(
     if affected_region and affected_region['region_type'] == 'exon':
         d_from_exon = 0
     elif affected_region:
+        # Both 'intron' and 'flank' regions store distance-to-nearest-exon-edge.
         d_from_exon = affected_region['distance_to_boundary']
     else:
         d_from_exon = None  # couldn't locate variant
@@ -491,25 +563,22 @@ def sai10k_determine_aberrations(
         ag_intron = intron_of(geo_ag)
         dg_intron = intron_of(geo_dg)
 
-        # Distances from AG and DG to the boundaries of their host intron.
-        # The reference parser checks distance from the intron boundaries
-        # (i.e. the flanking exon edges), not from all splice sites in the
-        # transcript. Using only the host intron avoids false negatives in
-        # compact gene structures where a non-flanking exon boundary
-        # happens to be within 50 bp.
-        if ag_intron is not None:
-            ag_dist_to_native = min(
-                abs(geo_ag - exon_ends[ag_intron]),
-                abs(geo_ag - exon_starts[ag_intron + 1]),
-            )
+        # Directional distance check matching reference find_pseudoexon_position
+        # (spliceai_parser.py:270-279): on + strand AG is checked against the 5'
+        # (genomically-upstream) intron boundary and DG against the 3' boundary;
+        # on - strand the roles are swapped. Only meaningful when AG and DG are
+        # in the same intron.
+        if ag_intron is not None and dg_intron is not None and ag_intron == dg_intron:
+            host_5p_exon_end = exon_ends[ag_intron]          # last exonic base before intron
+            host_3p_exon_start = exon_starts[ag_intron + 1]  # first exonic base after intron
+            if strand_sign > 0:
+                ag_dist_to_native = geo_ag - host_5p_exon_end
+                dg_dist_to_native = host_3p_exon_start - geo_dg
+            else:
+                ag_dist_to_native = host_3p_exon_start - geo_ag
+                dg_dist_to_native = geo_dg - host_5p_exon_end
         else:
             ag_dist_to_native = None
-        if dg_intron is not None:
-            dg_dist_to_native = min(
-                abs(geo_dg - exon_ends[dg_intron]),
-                abs(geo_dg - exon_starts[dg_intron + 1]),
-            )
-        else:
             dg_dist_to_native = None
 
         pseudoexon_conditions = (
@@ -520,9 +589,6 @@ def sai10k_determine_aberrations(
             and ag_dist_to_native > DISTANCE_AG_DG_MIN_FROM_INTRON_BOUNDARY
             and dg_dist_to_native is not None
             and dg_dist_to_native > DISTANCE_AG_DG_MIN_FROM_INTRON_BOUNDARY
-            and ag_intron is not None
-            and dg_intron is not None
-            and ag_intron == dg_intron
         )
 
         if pseudoexon_conditions:
@@ -551,40 +617,50 @@ def sai10k_determine_aberrations(
         dg_native_match = geo_dg == native['geo_nd']
         dg_acceptor_match = geo_ag == native['geo_na']
 
-        acceptor_diff = ds_ag_alt - ds_al_alt
-        donor_diff = ds_dg_alt - ds_dl_alt
+        if has_alt_scores:
+            acceptor_diff = ds_ag_alt - ds_al_alt
+            donor_diff = ds_dg_alt - ds_dl_alt
 
-        # ALT-score conditions — two-branch OR, one for "cryptic overwhelms a
-        # weak native" and one for "strong delta with no native suppression".
-        cryptic_acceptor_check = (
-            (ds_ag < MIN_DELTA_SCORE and ds_al > LOSS_PARTNER_MIN
-             and ds_ag_alt >= ALT_SCORE_STRONG and acceptor_diff >= ALT_DIFF_HIGH)
-            or
-            (ds_ag >= MIN_DELTA_SCORE and acceptor_diff > ALT_DIFF_LOW)
-        )
-        cryptic_donor_check = (
-            (ds_dg < MIN_DELTA_SCORE and ds_dl > LOSS_PARTNER_MIN
-             and ds_dg_alt >= ALT_SCORE_STRONG and donor_diff >= ALT_DIFF_HIGH)
-            or
-            (ds_dg >= MIN_DELTA_SCORE and donor_diff > ALT_DIFF_LOW)
-        )
+            # ALT-score conditions — two-branch OR, one for "cryptic overwhelms a
+            # weak native" and one for "strong delta with no native suppression".
+            cryptic_acceptor_check = (
+                (ds_ag < MIN_DELTA_SCORE and ds_al > LOSS_PARTNER_MIN
+                 and ds_ag_alt >= ALT_SCORE_STRONG and acceptor_diff >= ALT_DIFF_HIGH)
+                or
+                (ds_ag >= MIN_DELTA_SCORE and acceptor_diff > ALT_DIFF_LOW)
+            )
+            cryptic_donor_check = (
+                (ds_dg < MIN_DELTA_SCORE and ds_dl > LOSS_PARTNER_MIN
+                 and ds_dg_alt >= ALT_SCORE_STRONG and donor_diff >= ALT_DIFF_HIGH)
+                or
+                (ds_dg >= MIN_DELTA_SCORE and donor_diff > ALT_DIFF_LOW)
+            )
 
-        # Reference parser's side-selection logic (spliceai_parser.py:1312-1328):
-        #   Cryptic acceptor fires iff:
-        #       (DG_native_match=PASS AND DG_acceptor_match=FAIL)            # donor at native, acceptor is cryptic
-        #     OR (DG_native_match=FAIL AND DG_acceptor_match=FAIL AND DS_AG > DS_DG)
-        #   Cryptic donor fires iff:
-        #       (DG_native_match=FAIL AND DG_acceptor_match=PASS)            # acceptor at native, donor is cryptic
-        #     OR (DG_native_match=FAIL AND DG_acceptor_match=FAIL AND DS_AG < DS_DG)
-        #   Neither fires when both positions match native (=,=) or when DS_AG == DS_DG at (≠,≠).
-        activate_acceptor = cryptic_acceptor_check and (
-            (dg_native_match and not dg_acceptor_match)
-            or (not dg_native_match and not dg_acceptor_match and ds_ag > ds_dg)
-        )
-        activate_donor = cryptic_donor_check and (
-            (not dg_native_match and dg_acceptor_match)
-            or (not dg_native_match and not dg_acceptor_match and ds_ag < ds_dg)
-        )
+            # Reference parser's side-selection logic (spliceai_parser.py:1312-1328):
+            #   Cryptic acceptor fires iff:
+            #       (DG_native_match=PASS AND DG_acceptor_match=FAIL)            # donor at native, acceptor is cryptic
+            #     OR (DG_native_match=FAIL AND DG_acceptor_match=FAIL AND DS_AG > DS_DG)
+            #   Cryptic donor fires iff:
+            #       (DG_native_match=FAIL AND DG_acceptor_match=PASS)            # acceptor at native, donor is cryptic
+            #     OR (DG_native_match=FAIL AND DG_acceptor_match=FAIL AND DS_AG < DS_DG)
+            #   Neither fires when both positions match native (=,=) or when DS_AG == DS_DG at (≠,≠).
+            activate_acceptor = cryptic_acceptor_check and (
+                (dg_native_match and not dg_acceptor_match)
+                or (not dg_native_match and not dg_acceptor_match and ds_ag > ds_dg)
+            )
+            activate_donor = cryptic_donor_check and (
+                (not dg_native_match and dg_acceptor_match)
+                or (not dg_native_match and not dg_acceptor_match and ds_ag < ds_dg)
+            )
+        else:
+            # No DS_*_ALT scores supplied (standard SpliceAI output). Mirror the
+            # reference parser's --include=False path (spliceai_parser.py:1331-1338):
+            # simple dominance — a side activates only if its DS_*G score is over
+            # threshold AND strictly greater than the other side's DS_*G. This
+            # prevents the include-mode side-selection logic from firing donor
+            # activation when DS_AG actually dominates DS_DG (or vice versa).
+            activate_acceptor = ds_ag >= MIN_DELTA_SCORE and ds_ag > ds_dg
+            activate_donor = ds_dg >= MIN_DELTA_SCORE and ds_dg > ds_ag
 
         dp_na = native['dp_na']
         dp_nd = native['dp_nd']
@@ -592,10 +668,17 @@ def sai10k_determine_aberrations(
         if activate_acceptor and _cryptic_acceptor_orientation_ok(geo_ag, native, is_reverse=strand == '-'):
             # partial_size = (DP_AG*Strand) - (DP_NA*Strand)
             partial_size = (dp_ag - dp_na) * strand_sign
-            if (partial_size > 0 and partial_size < native['native_exon_size']
-                    and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
+            if partial_size > 0 and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS:
                 aberrations.append(make('partial_exon_deletion', 'gain_B_acceptor'))
                 aberrations[-1]['_partial_size'] = partial_size
+                # When the cryptic site lands past the opposite native exon
+                # boundary, the reference parser still emits Partial_exon_deletion
+                # but its sequence step records "deletion greater than exon size"
+                # (spliceai_parser.py:552-554). Flag here so the annotation step
+                # surfaces the same outcome instead of computing a misleading
+                # cds_size against a segment that overruns the exon.
+                if partial_size >= native['native_exon_size']:
+                    aberrations[-1]['_oversize_partial_deletion'] = True
             elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
                   and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
                 aberrations.append(make('partial_intron_retention', 'gain_B_acceptor'))
@@ -605,10 +688,11 @@ def sai10k_determine_aberrations(
         if activate_donor and _cryptic_donor_orientation_ok(geo_dg, native, is_reverse=strand == '-'):
             # partial_size = (DP_ND*Strand) - (DP_DG*Strand)
             partial_size = (dp_nd - dp_dg) * strand_sign
-            if (partial_size > 0 and partial_size < native['native_exon_size']
-                    and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
+            if partial_size > 0 and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS:
                 aberrations.append(make('partial_exon_deletion', 'gain_B_donor'))
                 aberrations[-1]['_partial_size'] = partial_size
+                if partial_size >= native['native_exon_size']:
+                    aberrations[-1]['_oversize_partial_deletion'] = True
             elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
                   and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
                 aberrations.append(make('partial_intron_retention', 'gain_B_donor'))
@@ -627,19 +711,24 @@ def _cryptic_acceptor_orientation_ok(geo_ag, native, is_reverse):
     `prev_` / `next_` follow transcript (biological) order. Our `native` dict
     stores adjacent exon coords in ASCENDING GENOMIC order. Therefore on '-'
     strand we must swap: use `next_*` (genomically next = biologically previous).
+
+    Returns False when the biological previous exon is absent (variant's
+    associated exon is the first biological exon). This matches the R
+    reference's NA-propagation, which suppresses partial events at the 5' end
+    of the transcript.
     """
     if native is None:
-        return True
+        return False
     if is_reverse:
         # Biologically "prev" = genomically "next" for - strand.
         bio_prev_estart = native.get('next_estart')
         if bio_prev_estart is None:
-            return True
+            return False
         return geo_ag - bio_prev_estart < 0
     else:
         prev_eend = native.get('prev_eend')
         if prev_eend is None:
-            return True
+            return False
         return prev_eend - geo_ag < 0
 
 
@@ -649,20 +738,23 @@ def _cryptic_donor_orientation_ok(geo_dg, native, is_reverse):
         + strand: GEO_DG - next_eStart < 0    (GEO_DG before next exon's acceptor)
         - strand: next_eEnd - GEO_DG < 0       (in R biological order)
 
-    Same prev/next swap as _cryptic_acceptor_orientation_ok.
+    Same prev/next swap as _cryptic_acceptor_orientation_ok. Returns False when
+    the biological next exon is absent (variant's associated exon is the last
+    biological exon), matching the R reference's NA-propagation suppression of
+    partial events at the 3' end of the transcript.
     """
     if native is None:
-        return True
+        return False
     if is_reverse:
         # Biologically "next" = genomically "prev" for - strand.
         bio_next_eend = native.get('prev_eend')
         if bio_next_eend is None:
-            return True
+            return False
         return bio_next_eend - geo_dg < 0
     else:
         next_estart = native.get('next_estart')
         if next_estart is None:
-            return True
+            return False
         return geo_dg - next_estart < 0
 
 
@@ -857,6 +949,11 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
                         'match': True,
                     }
         if result['match']:
+            # Persist the skipped genomic indices so the post-annotation premature-stop
+            # detector in sai10k_compute_predictions can rebuild the altered mRNA. The
+            # _* prefix marks this as internal — the strip block at the end of
+            # sai10k_compute_predictions removes it before the response is serialized.
+            aberration['_skipped_indices'] = list(result['genomic_indices'])
             total_size = result['total_size']
             cds_size = sum(
                 cds_overlap_size(exon_starts[i], exon_ends[i])
@@ -930,6 +1027,10 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
         return
 
     if aberration_type == 'increased_exon_inclusion':
+        # Mirrors the reference parser's Exon_with_increased_inclusion column
+        # (spliceAI_parser.R / spliceai_parser.py). Default to None and override
+        # below when assoc_idx is in range.
+        aberration['included_exon_number'] = None
         native = aberration.get('_native') or {}
         native_exon_size = native.get('native_exon_size')
         if native_exon_size is not None:
@@ -941,11 +1042,15 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             # frameshift based on cds_size % 3, which is irrelevant for IEI).
             idx = native.get('assoc_idx')
             if idx is not None and 0 <= idx < len(exon_starts):
+                num_exons = len(exon_starts)
+                aberration['included_exon_number'] = (
+                    num_exons - idx if strand == '-' else idx + 1
+                )
                 cds_size = cds_overlap_size(exon_starts[idx], exon_ends[idx])
                 affects_coding = cds_size > 0
                 aberration['affects_coding'] = affects_coding
                 aberration['cds_size'] = cds_size
-                aberration['frameshift'] = None                      # frame unchanged
+                aberration['frameshift'] = False if affects_coding else None
                 aberration['start_codon_lost'] = False if affects_coding else None
                 aberration['stop_codon_lost'] = False if affects_coding else None
                 label_status = 'coding' if affects_coding else 'non-coding'
@@ -970,6 +1075,23 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             aberration['affects_coding'] = None
             aberration['frameshift'] = None
             aberration['frameshift_description'] = f'{aberration_type.replace("_", " ")} - size unclear'
+            return
+        # Cryptic acceptor/donor site lands past the opposite native exon
+        # boundary. The reference parser still emits the call but its
+        # get_partial_seq step returns "deletion greater than exon size"
+        # (spliceai_parser.py:552-554), nullifying the cds_size/frameshift
+        # downstream. Mirror that behavior here.
+        if aberration.get('_oversize_partial_deletion'):
+            aberration['size'] = abs(partial_size)
+            aberration['size_type'] = 'partial'
+            aberration['affects_coding'] = None
+            aberration['frameshift'] = None
+            aberration['start_codon_lost'] = None
+            aberration['stop_codon_lost'] = None
+            shift_type = 'Acceptor' if aberration.get('_branch') == 'gain_B_acceptor' else 'Donor'
+            aberration['frameshift_description'] = (
+                f'{shift_type} shift ({abs(partial_size)}bp partial exon deletion) '
+                f'- deletion greater than exon size')
             return
         display_size = abs(partial_size)
         # Identify the native site and the predicted cryptic site for the active side.
@@ -1030,7 +1152,7 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
     aberration['frameshift_description'] = f'{aberration_type} - frameshift status unclear'
 
 
-def sai10k_compute_predictions(transcript_scores, variant_pos):
+def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=None, alt=None, fasta=None):
     """
     Compute splice aberration predictions for a single transcript.
 
@@ -1038,6 +1160,15 @@ def sai10k_compute_predictions(transcript_scores, variant_pos):
         transcript_scores: dict with SpliceAI delta scores, delta positions,
             raw alt-allele site scores, and transcript structure.
         variant_pos: 1-based genomic position of the variant.
+        chrom: variant chromosome (e.g. "17"). Optional; required for premature-
+            stop detection.
+        ref: variant reference allele. Optional; required for premature-stop
+            detection.
+        alt: variant alternate allele. Optional; required for premature-stop
+            detection.
+        fasta: pyfastx Fasta handle for the reference genome. Optional; when
+            None, premature-stop detection is skipped and stop_codon_introduced
+            / aa_change are set to None on every aberration.
 
     Returns:
         dict {
@@ -1055,6 +1186,16 @@ def sai10k_compute_predictions(transcript_scores, variant_pos):
     dp_dg = transcript_scores.get('DP_DG', 0)
     dp_dl = transcript_scores.get('DP_DL', 0)
 
+    # Standard SpliceAI output omits raw alt-allele site scores (DS_*_ALT);
+    # they're only present when the caller supplies the pre-computed ALT
+    # annotations. When absent, `sai10k_determine_aberrations` falls back to
+    # the reference parser's --include=False dominance logic instead of
+    # treating the missing values as zeros (which would silently route through
+    # the ALT-score side-selection branch).
+    has_alt_scores = all(
+        k in transcript_scores
+        for k in ('DS_AG_ALT', 'DS_AL_ALT', 'DS_DG_ALT', 'DS_DL_ALT')
+    )
     ds_ag_alt = transcript_scores.get('DS_AG_ALT', 0)
     ds_al_alt = transcript_scores.get('DS_AL_ALT', 0)
     ds_dg_alt = transcript_scores.get('DS_DG_ALT', 0)
@@ -1081,6 +1222,7 @@ def sai10k_compute_predictions(transcript_scores, variant_pos):
         dp_ag, dp_al, dp_dg, dp_dl,
         ds_ag_alt, ds_al_alt, ds_dg_alt, ds_dl_alt,
         variant_pos, exon_starts, exon_ends, strand,
+        has_alt_scores=has_alt_scores,
     )
 
     # Pick the overall delta_type (the Δ branch with the highest Δ score). This
@@ -1100,6 +1242,36 @@ def sai10k_compute_predictions(transcript_scores, variant_pos):
             exon_starts, exon_ends,
         )
         aberration['delta_type'] = overall_delta_type
+
+    # Premature-stop detection (PDF feedback comment #5). Runs after annotation
+    # so it can read affects_coding / frameshift / start_codon_lost /
+    # stop_codon_lost from the annotation step. Mutates each aberration:
+    #   stop_codon_introduced: True | False | None
+    #   aa_change:             formatted "ABC[XYZ*]" string, the
+    #                          EXTENDS_PAST_NATIVE_STOP sentinel for a
+    #                          frameshift extension, or None.
+    # When the detector signals a PTC, we extend frameshift_description inline.
+    # The detector silently returns (None, None) when fasta=None (no genome
+    # FASTA available) or when chrom/ref/alt aren't supplied — preserves
+    # backward compatibility for any caller that doesn't supply them.
+    for aberration in aberrations:
+        if (aberration.get('affects_coding') is True
+                and not aberration.get('start_codon_lost')
+                and not aberration.get('stop_codon_lost')):
+            stop_introduced, aa_change = _detect_premature_stop(
+                transcript_scores, aberration, fasta, chrom, ref, alt, variant_pos,
+            )
+            aberration['stop_codon_introduced'] = stop_introduced
+            aberration['aa_change'] = aa_change
+            if aberration.get('frameshift_description'):
+                if stop_introduced is True:
+                    aberration['frameshift_description'] += ' but introduces a stop codon'
+                elif (aberration.get('frameshift') is True
+                        and aa_change == EXTENDS_PAST_NATIVE_STOP):
+                    aberration['frameshift_description'] += ' and extends past the native stop'
+        else:
+            aberration['stop_codon_introduced'] = None
+            aberration['aa_change'] = None
 
     # Strip internal-only fields before returning to callers (and ultimately the
     # client). Keys prefixed with '_' are implementation details.
@@ -1160,13 +1332,688 @@ def sai10k_select_transcript(scores_list):
     return best
 
 
-def sai10k_get_transcript_predictions(transcript_scores, variant_pos):
-    """Compute predictions for one transcript and attach its metadata."""
+def sai10k_get_transcript_predictions(transcript_scores, variant_pos, chrom=None, ref=None, alt=None, fasta=None):
+    """Compute predictions for one transcript and attach its metadata.
+
+    Optional chrom/ref/alt/fasta enable the premature-stop detector. When fasta
+    is None the detector is skipped (stop_codon_introduced / aa_change set to
+    None on every aberration), preserving behavior for callers that don't
+    supply a genome FASTA.
+    """
     if not transcript_scores:
         return None
 
-    predictions = sai10k_compute_predictions(transcript_scores, variant_pos)
+    predictions = sai10k_compute_predictions(
+        transcript_scores, variant_pos, chrom=chrom, ref=ref, alt=alt, fasta=fasta,
+    )
     predictions['transcript_id'] = transcript_scores.get('t_id') or transcript_scores.get('NAME')
     predictions['transcript_priority'] = transcript_scores.get('t_priority', 'N')
     predictions['gene_name'] = transcript_scores.get('g_name')
     return predictions
+
+
+# ===========================================================================
+# Premature-stop detection helpers (PDF feedback comment #5).
+#
+# These mirror the reference parser at
+#   ~/code/SpliceAI-lookup-dev/SAI-10k-calc/spliceai_parser.py
+# (functions add_variant, find_difference_point, determine_aa_seq, and the
+# per-type get_*_seq functions). The reference operates on pandas DataFrames
+# with refseq-specific columns; here we work directly off the existing
+# EXON_STARTS / EXON_ENDS / CDS_START / CDS_END / STRAND fields plus the
+# variant chrom/pos/ref/alt and a pyfastx FASTA handle.
+#
+# See also ~/code/SpliceAI-lookup-dev/.memory/PLAN_stop_codon_introduced.md.
+# ===========================================================================
+
+_CODON_TABLE = {
+    'TTT': 'F', 'TTC': 'F', 'TTA': 'L', 'TTG': 'L',
+    'TCT': 'S', 'TCC': 'S', 'TCA': 'S', 'TCG': 'S',
+    'TAT': 'Y', 'TAC': 'Y', 'TAA': '*', 'TAG': '*',
+    'TGT': 'C', 'TGC': 'C', 'TGA': '*', 'TGG': 'W',
+    'CTT': 'L', 'CTC': 'L', 'CTA': 'L', 'CTG': 'L',
+    'CCT': 'P', 'CCC': 'P', 'CCA': 'P', 'CCG': 'P',
+    'CAT': 'H', 'CAC': 'H', 'CAA': 'Q', 'CAG': 'Q',
+    'CGT': 'R', 'CGC': 'R', 'CGA': 'R', 'CGG': 'R',
+    'ATT': 'I', 'ATC': 'I', 'ATA': 'I', 'ATG': 'M',
+    'ACT': 'T', 'ACC': 'T', 'ACA': 'T', 'ACG': 'T',
+    'AAT': 'N', 'AAC': 'N', 'AAA': 'K', 'AAG': 'K',
+    'AGT': 'S', 'AGC': 'S', 'AGA': 'R', 'AGG': 'R',
+    'GTT': 'V', 'GTC': 'V', 'GTA': 'V', 'GTG': 'V',
+    'GCT': 'A', 'GCC': 'A', 'GCA': 'A', 'GCG': 'A',
+    'GAT': 'D', 'GAC': 'D', 'GAA': 'E', 'GAG': 'E',
+    'GGT': 'G', 'GGC': 'G', 'GGA': 'G', 'GGG': 'G',
+}
+
+_COMPLEMENT_TABLE = {
+    'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G',
+    'a': 't', 't': 'a', 'g': 'c', 'c': 'g',
+    'N': 'N', 'n': 'n',
+}
+
+
+def _translate_dna(dna_seq):
+    """Translate DNA to single-letter AA. Stop codons -> '*', unknowns -> 'X'."""
+    dna_seq = dna_seq.upper()
+    protein = []
+    for i in range(0, len(dna_seq) - 2, 3):
+        protein.append(_CODON_TABLE.get(dna_seq[i:i+3], 'X'))
+    return ''.join(protein)
+
+
+def _reverse_complement(seq):
+    """Reverse-complement a DNA sequence (preserves case, passes 'N' through)."""
+    return ''.join(_COMPLEMENT_TABLE.get(b, b) for b in reversed(seq))
+
+
+def _find_difference_point(seq_a, seq_b, direction):
+    """Return 1-based position of the first differing character, or 'identical'.
+
+    direction='forward' walks from the start; direction='reverse' walks from the
+    end and returns the position back-translated into forward coordinates of
+    seq_a. When one sequence is a prefix of the other, returns the length of
+    the shorter sequence + 1. Mirrors spliceai_parser.py:136-173.
+    """
+    if seq_a == seq_b:
+        return 'identical'
+
+    a, b = seq_a, seq_b
+    if direction == 'reverse':
+        a = a[::-1]
+        b = b[::-1]
+
+    min_len = min(len(a), len(b))
+    point = None
+    for i in range(min_len):
+        if a[i] != b[i]:
+            point = i + 1
+            break
+    if point is None:
+        point = min_len + 1
+
+    if direction == 'reverse':
+        point = len(seq_a) - point + 1
+
+    return point
+
+
+# Cache: id(fasta_handle) -> bool. True = FASTA contigs are named with a "chr"
+# prefix; False = bare numeric / X / Y. Probed once per handle on first fetch.
+# Keyed by id() so we don't accidentally hold a strong reference that prevents
+# the FASTA handle from being garbage-collected; the cache entries leak with
+# the handle but that's fine — these are long-lived singletons in server.py.
+_FASTA_CHROM_PREFIX_CACHE = {}
+
+
+def _fetch_seq(fasta, chrom, start, end):
+    """Fetch [start, end] (1-based, inclusive) from the FASTA, normalizing chrom prefix.
+
+    server.py's VARIANT_RE strips the leading 'chr' from incoming variants, but
+    the hg19/hg38 FASTAs in the container index contigs as 'chr1..chrX'. This
+    helper probes the FASTA's keys once on first call and caches whether
+    'chr' should be prepended; all FASTA reads in the new helpers must go
+    through this function.
+    """
+    fasta_id = id(fasta)
+    if fasta_id not in _FASTA_CHROM_PREFIX_CACHE:
+        try:
+            sample_keys = list(fasta.keys())[:5]
+        except Exception:
+            sample_keys = []
+        _FASTA_CHROM_PREFIX_CACHE[fasta_id] = any(str(k).startswith('chr') for k in sample_keys)
+
+    needs_chr = _FASTA_CHROM_PREFIX_CACHE[fasta_id]
+    chrom_str = str(chrom)
+    if needs_chr and not chrom_str.startswith('chr'):
+        chrom_str = 'chr' + chrom_str
+    elif not needs_chr and chrom_str.startswith('chr'):
+        chrom_str = chrom_str[3:]
+    return str(fasta[chrom_str][start - 1:end])
+
+
+def _apply_variant_to_altered_exon_seqs(altered_exon_spans, exon_seqs, var_pos, ref, alt,
+                                        fasta, chrom, cds_start, cds_end):
+    """Apply variant to the affected exon sequence (in genomic orientation).
+
+    Returns one of:
+        "<exon_idx>_<modified_seq>"      — success; caller writes back into exon_seqs.
+        "reference mismatch"             — `ref` doesn't match the genome.
+        "impacts native start or stop site" — variant footprint hits the 6 bp of
+                                             the start codon or stop codon.
+        "variant straddles splice boundary" — footprint partially overlaps a
+                                             kept span (indels only). Caller skips.
+        "cannot determine"               — footprint is entirely outside every
+                                             kept span (variant in a non-retained
+                                             intron). Caller proceeds with the
+                                             unmodified altered sequences.
+
+    Generalizes spliceai_parser.py:89-133 to support indels: spliceing
+        `affected_exon[:adjustment_size] + alt + affected_exon[adjustment_size + len(ref):]`
+    instead of hardcoding `len(ref) == 1`.
+    """
+    var_end = var_pos + len(ref) - 1
+
+    # Reference check.
+    genome_ref = _fetch_seq(fasta, chrom, var_pos, var_end).upper()
+    if genome_ref != ref.upper():
+        return 'reference mismatch'
+
+    # Native start / stop codon footprint check (6 bp total).
+    if cds_start is not None and cds_end is not None:
+        start_lo, start_hi = cds_start, cds_start + 2
+        stop_lo, stop_hi = cds_end - 2, cds_end
+        if not (var_end < start_lo or var_pos > start_hi):
+            return 'impacts native start or stop site'
+        if not (var_end < stop_lo or var_pos > stop_hi):
+            return 'impacts native start or stop site'
+
+    # Find a kept span that fully contains the variant footprint.
+    fully_contained_idx = None
+    partial_overlap = False
+    for i, (span_start, span_end) in enumerate(altered_exon_spans):
+        if var_pos >= span_start and var_end <= span_end:
+            fully_contained_idx = i
+            break
+        if not (var_end < span_start or var_pos > span_end):
+            partial_overlap = True
+
+    if fully_contained_idx is None:
+        if partial_overlap:
+            return 'variant straddles splice boundary'
+        return 'cannot determine'
+
+    span_start, span_end = altered_exon_spans[fully_contained_idx]
+
+    # VCF-anchored insertion at the trailing edge of a kept span (e.g.
+    # `pos=20, ref='C', alt='CTAA'` for a span ending at 20): the anchor
+    # is the last exonic base, so by VCF convention the inserted bases sit
+    # AFTER position 20 — i.e., past the splice donor in the intron. We
+    # cannot faithfully apply that to the altered mRNA without modeling
+    # the splicing details, so treat it the same as an indel that
+    # straddles a splice boundary and skip detection.
+    if len(alt) > len(ref) and var_end == span_end:
+        return 'variant straddles splice boundary'
+
+    affected_exon = exon_seqs[fully_contained_idx]
+    adjustment_size = var_pos - span_start
+    adjusted = affected_exon[:adjustment_size] + alt + affected_exon[adjustment_size + len(ref):]
+    return f'{fully_contained_idx}_{adjusted}'
+
+
+def _consensus_filtered_in_tx_order(transcript_scores):
+    """Return the consensus exon list in transcription order, CDS-clamped, sans UTR-only exons.
+
+    Each entry is a dict {orig_start, orig_end, cds_lo, cds_hi, eNum} with the
+    biological (1-based, transcription-order) exon number. UTR-only exons
+    (those with zero CDS overlap) are dropped — matches the reference's
+    `eFrame != -1` filter at spliceai_parser.py:208.
+    """
+    exon_starts = transcript_scores.get('EXON_STARTS', [])
+    exon_ends = transcript_scores.get('EXON_ENDS', [])
+    cds_start = transcript_scores.get('CDS_START')
+    cds_end = transcript_scores.get('CDS_END')
+    strand = transcript_scores.get('STRAND') or transcript_scores.get('t_strand')
+
+    if not exon_starts or cds_start is None or cds_end is None:
+        return []
+
+    n = len(exon_starts)
+    out = []
+    for gi in range(n):
+        cds_lo = max(exon_starts[gi], cds_start)
+        cds_hi = min(exon_ends[gi], cds_end)
+        if cds_lo > cds_hi:
+            continue
+        e_num = (n - gi) if strand == '-' else (gi + 1)
+        out.append({
+            'orig_start': exon_starts[gi],
+            'orig_end': exon_ends[gi],
+            'cds_lo': cds_lo,
+            'cds_hi': cds_hi,
+            'eNum': e_num,
+        })
+
+    if strand == '-':
+        out.sort(key=lambda x: -x['orig_start'])
+    else:
+        out.sort(key=lambda x: x['orig_start'])
+    return out
+
+
+def _build_consensus_exon_spans(transcript_scores, row_anchor):
+    """Consensus CDS-clamped (start, end) spans for the tail starting at row_anchor (tx order)."""
+    consensus = _consensus_filtered_in_tx_order(transcript_scores)
+    if row_anchor is None or row_anchor < 0 or row_anchor >= len(consensus):
+        return []
+    return [(ex['cds_lo'], ex['cds_hi']) for ex in consensus[row_anchor:]]
+
+
+def _build_altered_exon_spans(transcript_scores, aberration):
+    """Build the per-type altered exon list for premature-stop detection.
+
+    Returns (altered_spans, row_anchor, first_eframe), where altered_spans is
+    a list of (1-based, inclusive, CDS-clamped) genomic exon spans for the slice
+    starting at row_anchor in transcription order, OR None to signal "skip
+    detection" (caller leaves stop_codon_introduced = None).
+
+    Mirrors per-type table builders in spliceai_parser.py — see the per-type
+    table in PLAN_stop_codon_introduced.md.
+    """
+    consensus = _consensus_filtered_in_tx_order(transcript_scores)
+    if not consensus:
+        return None
+
+    aberration_type = aberration.get('aberration_type')
+    cds_start = transcript_scores.get('CDS_START')
+    cds_end = transcript_scores.get('CDS_END')
+    strand = transcript_scores.get('STRAND') or transcript_scores.get('t_strand')
+
+    altered_full = None
+    row_anchor = None
+
+    if aberration_type == 'exon_skipping':
+        skipped_indices = aberration.get('_skipped_indices')
+        if not skipped_indices:
+            return None
+        n_total = len(transcript_scores.get('EXON_STARTS', []))
+        skipped_eNums = set()
+        for gi in skipped_indices:
+            if strand == '-':
+                skipped_eNums.add(n_total - gi)
+            else:
+                skipped_eNums.add(gi + 1)
+        altered_full = [ex for ex in consensus if ex['eNum'] not in skipped_eNums]
+        if not altered_full:
+            return None
+        anchor_eNum = min(skipped_eNums) - 1
+        if anchor_eNum < 1:
+            row_anchor = 0
+        else:
+            row_anchor = next(
+                (i for i, ex in enumerate(altered_full) if ex['eNum'] == anchor_eNum),
+                None,
+            )
+            if row_anchor is None:
+                row_anchor = 0
+
+    elif aberration_type == 'whole_intron_retention':
+        geo_al = aberration.get('geo_al')
+        geo_dl = aberration.get('geo_dl')
+        if geo_al is None or geo_dl is None:
+            return None
+        intron_lo = min(geo_al, geo_dl) + 1
+        intron_hi = max(geo_al, geo_dl) - 1
+        if intron_lo > intron_hi:
+            return None
+        # CDS-clamp the retained intron; non-coding intron retention -> None.
+        intron_cds_lo = max(intron_lo, cds_start)
+        intron_cds_hi = min(intron_hi, cds_end)
+        if intron_cds_lo > intron_cds_hi:
+            return None
+        # Find the consensus exon pair that flanks the retained intron in tx order.
+        flanking_idx = None
+        for i in range(len(consensus) - 1):
+            cur, nxt = consensus[i], consensus[i + 1]
+            if strand == '-':
+                if cur['orig_start'] == intron_hi + 1 and nxt['orig_end'] == intron_lo - 1:
+                    flanking_idx = i
+                    break
+            else:
+                if cur['orig_end'] == intron_lo - 1 and nxt['orig_start'] == intron_hi + 1:
+                    flanking_idx = i
+                    break
+        if flanking_idx is None:
+            return None
+        intron_row = {
+            'orig_start': intron_lo,
+            'orig_end': intron_hi,
+            'cds_lo': intron_cds_lo,
+            'cds_hi': intron_cds_hi,
+            'eNum': None,
+        }
+        altered_full = consensus[:flanking_idx + 1] + [intron_row] + consensus[flanking_idx + 1:]
+        # row_number = flanking_idx + 1 (position of intron_row); row_anchor = max(0, row_number - 1).
+        row_anchor = flanking_idx
+
+    elif aberration_type in ('partial_intron_retention', 'partial_exon_deletion'):
+        native = aberration.get('_native') or {}
+        branch = aberration.get('_branch', '')
+        if branch == 'gain_B_acceptor':
+            native_site = native.get('geo_na')
+            cryptic_site = aberration.get('geo_ag')
+        elif branch == 'gain_B_donor':
+            native_site = native.get('geo_nd')
+            cryptic_site = aberration.get('geo_dg')
+        else:
+            return None
+        if native_site is None or cryptic_site is None:
+            return None
+        # Find the affected exon by matching native_site to a tx-orientation boundary.
+        affected_idx = None
+        for i, ex in enumerate(consensus):
+            if branch == 'gain_B_acceptor':
+                target = ex['orig_end'] if strand == '-' else ex['orig_start']
+            else:
+                target = ex['orig_start'] if strand == '-' else ex['orig_end']
+            if target == native_site:
+                affected_idx = i
+                break
+        if affected_idx is None:
+            return None
+        ex = consensus[affected_idx]
+        new_orig_start = ex['orig_start']
+        new_orig_end = ex['orig_end']
+        if branch == 'gain_B_acceptor':
+            if strand == '-':
+                new_orig_end = cryptic_site
+            else:
+                new_orig_start = cryptic_site
+        else:
+            if strand == '-':
+                new_orig_start = cryptic_site
+            else:
+                new_orig_end = cryptic_site
+        new_cds_lo = max(new_orig_start, cds_start)
+        new_cds_hi = min(new_orig_end, cds_end)
+        if new_cds_lo > new_cds_hi:
+            return None
+        altered_full = list(consensus)
+        altered_full[affected_idx] = {
+            'orig_start': new_orig_start,
+            'orig_end': new_orig_end,
+            'cds_lo': new_cds_lo,
+            'cds_hi': new_cds_hi,
+            'eNum': ex['eNum'],
+        }
+        row_anchor = max(0, affected_idx - 1)
+
+    elif aberration_type == 'pseudoexon':
+        geo_ag = aberration.get('geo_ag')
+        geo_dg = aberration.get('geo_dg')
+        if geo_ag is None or geo_dg is None:
+            return None
+        pseudo_lo = min(geo_ag, geo_dg)
+        pseudo_hi = max(geo_ag, geo_dg)
+        # Stricter than the upstream affects_coding check: pseudoexon must lie
+        # entirely within CDS, otherwise translation of the inserted bases is
+        # ill-defined.
+        if pseudo_lo < cds_start or pseudo_hi > cds_end:
+            return None
+        flanking_idx = None
+        for i in range(len(consensus) - 1):
+            cur, nxt = consensus[i], consensus[i + 1]
+            if strand == '-':
+                if cur['orig_start'] > pseudo_hi and nxt['orig_end'] < pseudo_lo:
+                    flanking_idx = i
+                    break
+            else:
+                if cur['orig_end'] < pseudo_lo and nxt['orig_start'] > pseudo_hi:
+                    flanking_idx = i
+                    break
+        if flanking_idx is None:
+            return None
+        pseudo_row = {
+            'orig_start': pseudo_lo,
+            'orig_end': pseudo_hi,
+            'cds_lo': pseudo_lo,
+            'cds_hi': pseudo_hi,
+            'eNum': None,
+        }
+        altered_full = consensus[:flanking_idx + 1] + [pseudo_row] + consensus[flanking_idx + 1:]
+        row_anchor = flanking_idx
+
+    elif aberration_type == 'increased_exon_inclusion':
+        native = aberration.get('_native') or {}
+        assoc_idx = native.get('assoc_idx')
+        if assoc_idx is None:
+            return None
+        n_total = len(transcript_scores.get('EXON_STARTS', []))
+        target_eNum = (n_total - assoc_idx) if strand == '-' else (assoc_idx + 1)
+        included_row = next(
+            (i for i, ex in enumerate(consensus) if ex['eNum'] == target_eNum),
+            None,
+        )
+        if included_row is None:
+            return None
+        altered_full = list(consensus)
+        row_anchor = max(0, included_row - 1)
+
+    else:
+        return None
+
+    if not altered_full or row_anchor is None or row_anchor >= len(altered_full):
+        return None
+
+    altered_spans = [(ex['cds_lo'], ex['cds_hi']) for ex in altered_full[row_anchor:]]
+
+    # first_eframe: cumulative CDS bases of consensus entries strictly preceding
+    # row_anchor, mod 3. Walking the consensus list (vs. altered_full) is
+    # equivalent — for every aberration type, the entries strictly preceding
+    # row_anchor are unchanged from consensus by construction.
+    first_eframe = sum(ex['cds_hi'] - ex['cds_lo'] + 1 for ex in consensus[:row_anchor]) % 3
+
+    return (altered_spans, row_anchor, first_eframe)
+
+
+def _translate_spans(spans, first_eframe, fasta, chrom, strand, apply_variant_args=None):
+    """Translate a list of (1-based, inclusive) genomic spans to a single-letter AA string.
+
+    Order of operations (must match spliceai_parser.py:374-434 — applying the
+    variant after reverse-complement would mutate the wrong base on - strand):
+        1. Fetch each span in genomic orientation.
+        2. If apply_variant_args is given, apply the variant to the genomic-
+           orientation sequences. On a non-success sentinel the sentinel is
+           returned unchanged.
+        3. Reverse-complement per-exon for - strand.
+        4. Trim leading bases off the first exon to align reading frame.
+        5. Join and translate.
+
+    apply_variant_args, when supplied, is the tuple
+    (var_pos, ref, alt, cds_start, cds_end). Returns the AA string on success,
+    or one of the sentinels {"reference mismatch", "impacts native start or
+    stop site", "variant straddles splice boundary"} when variant application
+    fails in a way the caller should skip.
+    """
+    if not spans:
+        return ''
+
+    exon_seqs = [_fetch_seq(fasta, chrom, s, e) for s, e in spans]
+
+    if apply_variant_args is not None:
+        var_pos, ref, alt, cds_start, cds_end = apply_variant_args
+        result = _apply_variant_to_altered_exon_seqs(
+            spans, exon_seqs, var_pos, ref, alt, fasta, chrom, cds_start, cds_end,
+        )
+        if result in ('reference mismatch', 'impacts native start or stop site',
+                      'variant straddles splice boundary'):
+            return result
+        if result != 'cannot determine':
+            parts = result.split('_', 1)
+            if len(parts) == 2:
+                exon_seqs[int(parts[0])] = parts[1]
+
+    if strand == '-':
+        exon_seqs = [_reverse_complement(s) for s in exon_seqs]
+
+    # eFrame 1 -> trim 2 leading bases; eFrame 2 -> trim 1; eFrame 0 -> no trim.
+    # (Reference convention from spliceai_parser.py:417-426.)
+    if exon_seqs and first_eframe == 1 and len(exon_seqs[0]) >= 2:
+        exon_seqs[0] = exon_seqs[0][2:]
+    elif exon_seqs and first_eframe == 2 and len(exon_seqs[0]) >= 1:
+        exon_seqs[0] = exon_seqs[0][1:]
+
+    return _translate_dna(''.join(exon_seqs))
+
+
+EXTENDS_PAST_NATIVE_STOP = 'protein sequence extends beyond native stop site'
+
+
+def _format_aa_change_and_detect(altered_aa, consensus_aa, frameshift=False):
+    """Return (stop_introduced, formatted_aa_change) for an aberration.
+
+    Mirrors spliceai_parser.py:436-518. Handles both in-frame (frameshift=False)
+    and frameshift (frameshift=True) cases.
+
+    For frameshift=True with no `*` in the altered translation, returns
+    (False, EXTENDS_PAST_NATIVE_STOP) — matches the reference's
+    "protein sequence extends beyond native stop site" sentinel.
+
+    Trailing-`*` strip: for in-frame, strip from BOTH proteins so that
+    `find('*')` uniquely signals a premature stop (without the strip, an
+    in-frame deletion that shifts the natural stop earlier would be
+    misclassified as introduced). For frameshift, only the consensus is
+    stripped — the altered translation reads the natural stop's 3 bp out of
+    frame, so any '*' in altered_aa is necessarily a PTC.
+    """
+    if consensus_aa.endswith('*'):
+        consensus_aa = consensus_aa[:-1]
+    if not frameshift and altered_aa.endswith('*'):
+        altered_aa = altered_aa[:-1]
+
+    forward_diff = _find_difference_point(altered_aa, consensus_aa, 'forward')
+    if forward_diff == 'identical':
+        return (False, None)
+
+    # diff_length must be computed BEFORE altered_aa is trimmed, mirroring the
+    # reference's :438-:445 ordering. Computing it after the trim flips a
+    # net-gain insertion into the net-loss branch and corrupts the output.
+    diff_length = len(altered_aa) - len(consensus_aa)
+
+    if isinstance(forward_diff, int) and forward_diff >= 4:
+        altered_aa = altered_aa[forward_diff - 4:]
+
+    if not frameshift:
+        if diff_length <= 0:
+            # Net loss / equal-length divergence.
+            reverse_diff = _find_difference_point(altered_aa, consensus_aa, 'reverse')
+            if reverse_diff == 'identical':
+                return (False, None)
+            if isinstance(reverse_diff, int):
+                if reverse_diff < 3:
+                    altered_aa = altered_aa[:6]
+                else:
+                    altered_aa = altered_aa[:reverse_diff + 3]
+        else:
+            # Net gain. Mirrors :459-:484.
+            altered_seq_check = altered_aa[3:3 + diff_length] if len(altered_aa) > 3 else ''
+            uniq_chars = set(altered_seq_check)
+            if len(uniq_chars) == 1 and altered_seq_check:
+                altered_seq_check = altered_seq_check[0]
+                consensus_seq_check = (
+                    consensus_aa[forward_diff - 2:forward_diff - 1]
+                    if isinstance(forward_diff, int) else ''
+                )
+            else:
+                start_pos = forward_diff - 2 if isinstance(forward_diff, int) else 0
+                end_pos = start_pos + diff_length
+                if end_pos > len(consensus_aa):
+                    consensus_seq_check = consensus_aa[start_pos:]
+                else:
+                    consensus_seq_check = consensus_aa[start_pos:end_pos]
+            if altered_seq_check == consensus_seq_check:
+                altered_aa = altered_aa[:3 + diff_length + 3]
+            else:
+                reverse_diff = _find_difference_point(altered_aa, consensus_aa, 'reverse')
+                if reverse_diff == 'identical':
+                    return (False, None)
+                if isinstance(reverse_diff, int):
+                    if reverse_diff < 3:
+                        altered_aa = altered_aa[:6]
+                    else:
+                        altered_aa = altered_aa[:reverse_diff + 3]
+
+    stop_pos = altered_aa.find('*')
+
+    # Frameshift extension: no PTC reached within the translated CDS-clamped
+    # spans. Mirrors spliceai_parser.py:489-490.
+    if frameshift and stop_pos == -1:
+        return (False, EXTENDS_PAST_NATIVE_STOP)
+
+    stop_introduced = stop_pos != -1
+    if stop_introduced:
+        altered_aa = altered_aa[:stop_pos + 1]
+
+    pre_out_info = altered_aa
+    length_out_info = len(pre_out_info)
+    if isinstance(forward_diff, int) and forward_diff <= 3:
+        prefix_stop = forward_diff - 1
+        suffix_start = prefix_stop
+    else:
+        prefix_stop = 3
+        suffix_start = 3
+
+    if not stop_introduced:
+        prefix = pre_out_info[:prefix_stop]
+        if length_out_info >= 6:
+            suffix = pre_out_info[length_out_info - 3:]
+            middle = pre_out_info[suffix_start:length_out_info - 3]
+        else:
+            suffix = pre_out_info[3:] if length_out_info > 3 else ''
+            middle = ''
+        formatted = f'{prefix}[{middle}]{suffix}'
+    else:
+        formatted = f'{pre_out_info[:prefix_stop]}[{pre_out_info[suffix_start:]}]'
+
+    return (stop_introduced, formatted)
+
+
+def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt, var_pos):
+    """Detect whether an aberration introduces a premature stop codon.
+
+    Handles both in-frame and frameshift aberrations (reads
+    aberration['frameshift'] to decide). For frameshift cases without a PTC
+    in the translated CDS-clamped spans, returns
+    (False, EXTENDS_PAST_NATIVE_STOP).
+
+    Returns (stop_introduced, aa_change_string), where stop_introduced is
+    True/False/None (None = detection skipped, e.g. mitochondrial transcript,
+    missing FASTA, indel straddling a splice boundary, reference mismatch).
+    """
+    # Mitochondrial guard: mt transcripts use a non-standard codon table and
+    # the chrM/chrMT contig naming differs across FASTAs. Skip rather than
+    # mis-translate.
+    if chrom is not None:
+        chrom_normalized = str(chrom).upper()
+        if chrom_normalized.startswith('CHR'):
+            chrom_normalized = chrom_normalized[3:]
+        if chrom_normalized in ('M', 'MT'):
+            return (None, None)
+
+    if fasta is None or chrom is None or ref is None or alt is None or var_pos is None:
+        return (None, None)
+
+    cds_start = transcript_scores.get('CDS_START')
+    cds_end = transcript_scores.get('CDS_END')
+    strand = transcript_scores.get('STRAND') or transcript_scores.get('t_strand')
+
+    try:
+        built = _build_altered_exon_spans(transcript_scores, aberration)
+        if built is None:
+            return (None, None)
+        altered_spans, row_anchor, first_eframe = built
+
+        consensus_spans = _build_consensus_exon_spans(transcript_scores, row_anchor)
+        if not altered_spans or not consensus_spans:
+            return (None, None)
+
+        consensus_aa = _translate_spans(
+            consensus_spans, first_eframe, fasta, chrom, strand, apply_variant_args=None,
+        )
+        altered_aa = _translate_spans(
+            altered_spans, first_eframe, fasta, chrom, strand,
+            apply_variant_args=(var_pos, ref, alt, cds_start, cds_end),
+        )
+
+        if altered_aa in ('reference mismatch', 'impacts native start or stop site',
+                          'variant straddles splice boundary'):
+            print(f'WARNING: SAI-10k stop-codon detection skipped: {altered_aa}')
+            return (None, None)
+
+        return _format_aa_change_and_detect(
+            altered_aa, consensus_aa, frameshift=(aberration.get('frameshift') is True),
+        )
+    except Exception as exc:
+        # Defensive: detection must never break the rest of the SAI-10k response.
+        print(f'WARNING: SAI-10k stop-codon detection raised '
+              f'{type(exc).__name__}: {exc}')
+        return (None, None)

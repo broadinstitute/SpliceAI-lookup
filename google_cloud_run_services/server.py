@@ -67,6 +67,32 @@ FASTA_PATH = {
     "38": "/hg38.fa.gz",
 }
 
+# Lazy pyfastx Fasta singletons keyed by genome_version, used by SAI-10k-calc's
+# premature-stop detection. Mirrors the SPLICEAI_ANNOTATOR cache pattern below.
+# pyfastx (already in the container's spliceai/requirements.txt) handles
+# bgzipped .fa.gz natively. Init failures are tolerated: detection silently
+# falls back to None on every aberration, leaving the rest of the SAI-10k
+# response intact.
+SAI10K_FASTA = {}
+_SAI10K_FASTA_LOCK = threading.Lock()
+
+
+def _get_sai10k_fasta(genome_version):
+    if genome_version in SAI10K_FASTA:
+        return SAI10K_FASTA[genome_version]
+    with _SAI10K_FASTA_LOCK:
+        if genome_version in SAI10K_FASTA:
+            return SAI10K_FASTA[genome_version]
+        try:
+            import pyfastx
+            SAI10K_FASTA[genome_version] = pyfastx.Fasta(FASTA_PATH[genome_version])
+        except Exception as e:
+            print(f"WARNING: Failed to open FASTA for hg{genome_version} "
+                  f"(SAI-10k premature-stop detection disabled): "
+                  f"{type(e).__name__}: {e}")
+            SAI10K_FASTA[genome_version] = None
+    return SAI10K_FASTA[genome_version]
+
 GENCODE_VERSION = "v49"
 
 SHARED_TRANSCRIPT_ANNOTATIONS = {}
@@ -159,7 +185,7 @@ def error_response(error_message, source=None, status=400):
 
 
 def parse_variant(variant_str):
-    match = VARIANT_RE.match(variant_str)
+    match = VARIANT_RE.fullmatch(variant_str)
     if not match:
         raise ValueError(f"Unable to parse variant: {variant_str}")
 
@@ -495,7 +521,7 @@ def exceeds_rate_limit(conn, user_ip, params):
 # Bump SAI10K_VERSION whenever sai10k_predictions.py changes its classification
 # logic or output shape, so cached responses from older algorithm versions are
 # invalidated and recomputed.
-SAI10K_VERSION = "v14"
+SAI10K_VERSION = "v16"
 
 
 def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
@@ -618,12 +644,11 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
     # to return to the client and (b) which transcript to feed into SAI-10k-calc.
     selected_transcript = sai10k_select_transcript(candidate_transcripts)
     all_non_zero_scores = selected_transcript["ALL_NON_ZERO_SCORES"] if selected_transcript else None
-    # Fall back to STRAND (from the SpliceAI annotator, structurally guaranteed)
-    # if t_strand is missing from the external transcript-annotations JSON, mirroring
-    # sai10k_predictions.py's own fallback. Without this, an annotation file missing
-    # t_strand for a transcript would surface as a 500 via the generic exception
-    # wrapper in run_splice_prediction_tool.
-    all_non_zero_scores_strand = (selected_transcript.get("t_strand") or selected_transcript.get("STRAND")) if selected_transcript else None
+    # Prefer STRAND (from the SpliceAI annotator, structurally guaranteed) and
+    # fall back to t_strand from the external transcript-annotations JSON. This
+    # matches sai10k_predictions.py:1150 so the strand reported in the JSON
+    # response matches the strand used to compute the SAI-10k aberrations.
+    all_non_zero_scores_strand = (selected_transcript.get("STRAND") or selected_transcript.get("t_strand")) if selected_transcript else None
     all_non_zero_scores_transcript_id = selected_transcript["t_id"] if selected_transcript else None
 
     # Compute SAI-10k-calc predictions for the selected transcript (before we
@@ -631,8 +656,19 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
     sai10k_predictions = None
     sai10k_predictions_error = None
     if selected_transcript:
+        sai10k_fasta = _get_sai10k_fasta(genome_version)
+        # Premature-stop detection requires the FASTA. When it failed to open,
+        # the resulting predictions have null stop_codon_introduced / aa_change
+        # fields — don't cache that degraded response, otherwise it would
+        # persist past FASTA recovery until SAI10K_VERSION is bumped.
+        if sai10k_fasta is None:
+            skip_cache = True
         try:
-            sai10k_predictions = sai10k_get_transcript_predictions(selected_transcript, pos)
+            sai10k_predictions = sai10k_get_transcript_predictions(
+                selected_transcript, pos,
+                chrom=chrom, ref=ref, alt=alt,
+                fasta=sai10k_fasta,
+            )
         except Exception as e:
             # Log the full exception server-side; return a generic message to the
             # client so internal details (file paths, transcript IDs, dict-key
@@ -641,6 +677,10 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
             print(f"WARNING: Error computing SAI-10k predictions for {variant}: {type(e).__name__}: {e}")
             traceback.print_exc()
             sai10k_predictions_error = "Internal error computing SAI-10k predictions."
+            # Don't cache responses where SAI-10k bailed mid-request — the
+            # exception may have been a transient DB / FASTA / parser hiccup,
+            # and the client would otherwise see the error message forever.
+            skip_cache = True
 
     for transcript_scores in candidate_transcripts:
         for redundant_key in ("ALLELE", "NAME", "STRAND", "ALL_NON_ZERO_SCORES"):
@@ -663,9 +703,13 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
         "sai10kPredictions": sai10k_predictions,
         "sai10kPredictionsError": sai10k_predictions_error,
         # Internal sentinel: stripped by run_splice_prediction_tool before the
-        # response is returned to the client. True if the per-request DB
-        # connection couldn't be acquired and transcript-structure enrichment
-        # was skipped — see the get_db_connection block above.
+        # response is returned to the client. True when any of the following
+        # produced a degraded response that should not be cached past the
+        # underlying recovery:
+        #   - per-request DB connection couldn't be acquired (transcript-
+        #     structure enrichment skipped — see the get_db_connection block).
+        #   - SAI-10k FASTA failed to open (premature-stop detection skipped).
+        #   - SAI-10k computation raised an exception.
         "_skip_cache": skip_cache,
     }
 
