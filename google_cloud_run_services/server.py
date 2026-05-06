@@ -15,7 +15,7 @@ from psycopg2.pool import ThreadedConnectionPool
 from contextlib import contextmanager
 
 # flask imports
-from flask import Flask, g, request, Response, send_from_directory
+from flask import Flask, g, request, Response
 from flask_cors import CORS
 from flask_talisman import Talisman
 
@@ -355,70 +355,62 @@ def run_sql(conn, sql_query, *params):
     return results
 
 
-def get_transcript_structure(conn, transcript_id, genome_version):
-    """Retrieve transcript structure from the database.
+def get_transcript_structures(conn, transcript_ids, genome_version):
+    """Batch-fetch transcript structure for many transcripts in one round trip.
 
     Args:
-        conn: Database connection
-        transcript_id: Transcript ID (with or without version, e.g., "ENST00000123456" or "ENST00000123456.5")
-        genome_version: "37" or "38"
+        conn: Database connection.
+        transcript_ids: iterable of transcript IDs WITHOUT version suffix
+            (e.g. "ENST00000123456"). Caller is responsible for stripping ".N".
+        genome_version: "37" or "38".
 
     Returns:
-        dict with transcript structure fields, or None if not found:
+        dict mapping transcript_id -> structure dict (same fields the prior
+        per-row helper produced):
             - EXON_STARTS: list of 1-based exon start positions
             - EXON_ENDS: list of 1-based exon end positions
             - CDS_START: 1-based CDS start position (or None if non-coding)
             - CDS_END: 1-based CDS end position (or None if non-coding)
             - STRAND: '+' or '-'
+        Transcripts absent from the DB are simply missing from the result dict
+        (caller distinguishes via `id in result`). Returns {} when conn is
+        None or the input is empty. Returns None when the query raises so the
+        caller can distinguish "DB unreachable mid-query" from "query
+        succeeded with zero matches" and suppress per-row "not found"
+        warnings.
     """
-    if conn is None:
-        return None
+    if conn is None or not transcript_ids:
+        return {}
 
-    # Remove version suffix if present
-    transcript_id_without_version = transcript_id.split(".")[0]
-
+    transcript_ids = list(transcript_ids)
     table_name = f"transcripts_hg{genome_version}"
     try:
         rows = run_sql(
             conn,
-            f"""SELECT strand, cds_start, cds_end, exon_starts, exon_ends
-               FROM {table_name} WHERE transcript_id = %s""",
-            (transcript_id_without_version,)
+            f"""SELECT transcript_id, strand, cds_start, cds_end, exon_starts, exon_ends
+               FROM {table_name} WHERE transcript_id = ANY(%s)""",
+            (transcript_ids,)
         )
     except psycopg2.Error as e:
-        # A transient OperationalError (e.g. broken connection mid-query) used
-        # to be swallowed by run_sql's bare except; that bare except is gone, so
-        # catch here and return None (the same shape as "transcript not found").
-        # SAI-10k will fall back to its annotation-based defaults instead of
-        # bubbling a 500 to the client.
-        print(f"DB error fetching transcript structure for {transcript_id_without_version}: {e}", flush=True)
+        # A transient OperationalError (e.g. broken connection mid-query)
+        # returns None so SAI-10k falls back to annotation-based defaults
+        # without spamming N per-transcript "not found" warnings.
+        print(f"DB error fetching transcript structures for hg{genome_version}: {e}", flush=True)
         return None
 
-    if not rows:
-        return None
-
-    strand, cds_start, cds_end, exon_starts_str, exon_ends_str = rows[0]
-
-    # Parse comma-separated values and convert from 0-based to 1-based coordinates
-    # genePred format uses 0-based start and 0-based half-open end
-    exon_starts_0based = [int(s) for s in exon_starts_str.rstrip(",").split(",") if s]
-    exon_ends_0based = [int(s) for s in exon_ends_str.rstrip(",").split(",") if s]
-
-    # Convert to 1-based coordinates (start +1, end stays same since half-open becomes closed)
-    exon_starts_1based = [s + 1 for s in exon_starts_0based]
-    exon_ends_1based = exon_ends_0based  # Already correct for 1-based closed interval
-
-    # Convert CDS coordinates (0-based half-open to 1-based closed)
-    cds_start_1based = cds_start + 1 if cds_start is not None else None
-    cds_end_1based = cds_end if cds_end is not None else None
-
-    return {
-        "EXON_STARTS": exon_starts_1based,
-        "EXON_ENDS": exon_ends_1based,
-        "CDS_START": cds_start_1based,
-        "CDS_END": cds_end_1based,
-        "STRAND": strand,
-    }
+    result = {}
+    for transcript_id, strand, cds_start, cds_end, exon_starts_str, exon_ends_str in rows:
+        # genePred uses 0-based half-open coordinates. Convert to 1-based closed.
+        exon_starts_1based = [int(s) + 1 for s in exon_starts_str.rstrip(",").split(",") if s]
+        exon_ends_1based = [int(s) for s in exon_ends_str.rstrip(",").split(",") if s]
+        result[transcript_id] = {
+            "EXON_STARTS": exon_starts_1based,
+            "EXON_ENDS": exon_ends_1based,
+            "CDS_START": cds_start + 1 if cds_start is not None else None,
+            "CDS_END": cds_end if cds_end is not None else None,
+            "STRAND": strand,
+        }
+    return result
 
 
 #def does_table_exist(table_name):
@@ -609,39 +601,59 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
         candidate_transcripts.append(transcript_scores)
 
     # Brief DB scope: enrich every candidate with transcript structure (used by
-    # SAI-10k-calc and returned in the response). Held only for the structure
-    # SELECTs — not across model inference, which the caller already ran outside
-    # any pooled connection.
+    # SAI-10k-calc and returned in the response) via a single batched SELECT.
+    # Held only for that one query — not across model inference, which the
+    # caller already ran outside any pooled connection.
     skip_cache = False
+    db_enrich_t0 = time.perf_counter()
+    structures = {}
+    db_unavailable = False
     if candidate_transcripts:
+        candidate_ids = [
+            transcript_scores.get("NAME", "").split(".")[0]
+            for transcript_scores in candidate_transcripts
+        ]
         with get_db_connection() as conn:
             if conn is None:
-                # DB unavailable: get_transcript_structure would return None for
-                # every candidate, SAI-10k-calc would silently fall back to its
-                # annotation defaults instead of EXON_STARTS/EXON_ENDS/CDS_*/STRAND,
-                # and the degraded result would be cached under the same key.
-                # Log loudly and skip the cache write so the next request retries.
+                # DB unavailable: structures dict stays empty, SAI-10k-calc
+                # silently falls back to its annotation defaults instead of
+                # EXON_STARTS/EXON_ENDS/CDS_*/STRAND, and the degraded result
+                # would be cached under the same key. Log loudly and skip the
+                # cache write so the next request retries.
                 print(f"WARNING: DB unavailable for transcript-structure lookup for {variant}; "
                       f"SAI-10k will use annotation defaults and the result will not be cached.", flush=True)
                 skip_cache = True
+                db_unavailable = True
             else:
-                for transcript_scores in candidate_transcripts:
-                    transcript_id_without_version = transcript_scores.get("NAME", "").split(".")[0]
-                    transcript_structure = get_transcript_structure(conn, transcript_id_without_version, genome_version)
-                    if transcript_structure:
-                        transcript_scores.update(transcript_structure)
-                    else:
-                        # DB is up but this row is missing. Without skip_cache, the
-                        # degraded result (SAI-10k falling back to annotation defaults)
-                        # would be cached permanently and re-served forever.
-                        print(f"WARNING: transcript {transcript_id_without_version} not found in "
-                              f"transcripts_hg{genome_version} for {variant}; "
-                              f"SAI-10k will use annotation defaults and the result will not be cached.", flush=True)
-                        skip_cache = True
+                structures = get_transcript_structures(conn, candidate_ids, genome_version)
+                if structures is None:
+                    # Query failed mid-flight. Treat the same as a missing
+                    # connection: log once, skip the cache, and suppress the
+                    # per-row "not found" warnings below.
+                    print(f"WARNING: DB query for transcript-structure lookup failed for {variant}; "
+                          f"SAI-10k will use annotation defaults and the result will not be cached.", flush=True)
+                    structures = {}
+                    skip_cache = True
+                    db_unavailable = True
+
+        for transcript_scores, transcript_id_without_version in zip(candidate_transcripts, candidate_ids):
+            transcript_structure = structures.get(transcript_id_without_version)
+            if transcript_structure:
+                transcript_scores.update(transcript_structure)
+            elif not db_unavailable:
+                # DB was reachable but this row is missing. Without skip_cache,
+                # the degraded result (SAI-10k falling back to annotation
+                # defaults) would be cached permanently and re-served forever.
+                print(f"WARNING: transcript {transcript_id_without_version} not found in "
+                      f"transcripts_hg{genome_version} for {variant}; "
+                      f"SAI-10k will use annotation defaults and the result will not be cached.", flush=True)
+                skip_cache = True
+    db_enrich_ms = (time.perf_counter() - db_enrich_t0) * 1000
 
     # Single source of truth for canonical-transcript selection (priority, then
     # sum of |DS_*|). Used for both (a) which transcript's ALL_NON_ZERO_SCORES
     # to return to the client and (b) which transcript to feed into SAI-10k-calc.
+    sai10k_t0 = time.perf_counter()
     selected_transcript = sai10k_select_transcript(candidate_transcripts)
     all_non_zero_scores = selected_transcript["ALL_NON_ZERO_SCORES"] if selected_transcript else None
     # Prefer STRAND (from the SpliceAI annotator, structurally guaranteed) and
@@ -655,8 +667,11 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
     # delete ALL_NON_ZERO_SCORES / STRAND from the scores dicts below).
     sai10k_predictions = None
     sai10k_predictions_error = None
+    fasta_open_ms = 0.0
     if selected_transcript:
+        fasta_t0 = time.perf_counter()
         sai10k_fasta = _get_sai10k_fasta(genome_version)
+        fasta_open_ms = (time.perf_counter() - fasta_t0) * 1000
         # Premature-stop detection requires the FASTA. When it failed to open,
         # the resulting predictions have null stop_codon_introduced / aa_change
         # fields — don't cache that degraded response, otherwise it would
@@ -681,6 +696,32 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
             # exception may have been a transient DB / FASTA / parser hiccup,
             # and the client would otherwise see the error message forever.
             skip_cache = True
+
+    sai10k_total_ms = (time.perf_counter() - sai10k_t0) * 1000
+
+    # Strip the internal timing dict before serializing predictions to the
+    # client; emit a single SAI10K_TIMING log line so processing times can be
+    # derived from the Cloud Run logs (filter prefix: "SAI10K_TIMING ").
+    inner_timing = sai10k_predictions.pop('_timing_ms', None) if sai10k_predictions else None
+    n_exons = len(selected_transcript.get('EXON_STARTS', []) or []) if selected_transcript else 0
+    selected_t_id = selected_transcript.get('t_id') if selected_transcript else None
+    breakdown = ''
+    if inner_timing:
+        breakdown = (
+            f" determine={inner_timing['determine']:.1f}ms"
+            f" annotate={inner_timing['annotate']:.1f}ms"
+            f" premature_stop={inner_timing['premature_stop']:.1f}ms"
+            f" n_aberrations={inner_timing['n_aberrations']}"
+            f" n_premature_stop_calls={inner_timing['n_premature_stop_calls']}"
+        )
+    print(
+        f"SAI10K_TIMING variant={variant} hg{genome_version} "
+        f"total={sai10k_total_ms:.1f}ms db_enrich={db_enrich_ms:.1f}ms "
+        f"fasta_open={fasta_open_ms:.1f}ms{breakdown} "
+        f"n_candidates={len(candidate_transcripts)} n_exons={n_exons} "
+        f"selected_transcript={selected_t_id} error={bool(sai10k_predictions_error)}",
+        flush=True,
+    )
 
     for transcript_scores in candidate_transcripts:
         for redundant_key in ("ALLELE", "NAME", "STRAND", "ALL_NON_ZERO_SCORES"):

@@ -29,15 +29,14 @@ from sai10k_predictions import (
     sai10k_annotate_frameshift,
     sai10k_compute_predictions,
     sai10k_select_transcript,
-    sai10k_get_transcript_predictions,
-    MIN_DELTA_SCORE,
     _translate_dna,
     _reverse_complement,
     _find_difference_point,
     _format_aa_change_and_detect,
     _apply_variant_to_altered_exon_seqs,
     _consensus_filtered_in_tx_order,
-    _build_altered_exon_spans,
+    _compute_consensus_context,
+    _translate_spans,
     EXTENDS_PAST_NATIVE_STOP,
 )
 
@@ -83,15 +82,20 @@ def get_db_connection():
 def get_transcript_structure_from_db(conn, transcript_id, genome_version):
     """Retrieve transcript structure from the database.
 
-    This mirrors the function in server.py.
+    Mirrors the batched query pattern in server.get_transcript_structures
+    (`WHERE transcript_id = ANY(%s)`) but unpacks the single-id result —
+    server.py can't be imported here because its module-level startup runs
+    GENOME_VERSION validation. The query SQL is kept in lockstep with
+    production so an integration-test pass is meaningful evidence the
+    production code path is also wiring up correctly.
 
     Args:
-        conn: Database connection
-        transcript_id: Transcript ID (e.g., "ENST00000357654" or "NM_000059.4")
-        genome_version: "37" or "38"
+        conn: Database connection.
+        transcript_id: Transcript ID (e.g., "ENST00000357654" or "NM_000059.4").
+        genome_version: "37" or "38".
 
     Returns:
-        dict with transcript structure fields, or None if not found
+        dict with transcript structure fields, or None if not found.
     """
     if conn is None:
         return None
@@ -101,9 +105,9 @@ def get_transcript_structure_from_db(conn, transcript_id, genome_version):
 
     cursor = conn.cursor()
     cursor.execute(
-        f"""SELECT strand, cds_start, cds_end, exon_starts, exon_ends
-           FROM {table_name} WHERE transcript_id = %s""",
-        (transcript_id_without_version,),
+        f"""SELECT transcript_id, strand, cds_start, cds_end, exon_starts, exon_ends
+           FROM {table_name} WHERE transcript_id = ANY(%s)""",
+        ([transcript_id_without_version],),
     )
     rows = cursor.fetchall()
     cursor.close()
@@ -111,24 +115,17 @@ def get_transcript_structure_from_db(conn, transcript_id, genome_version):
     if not rows:
         return None
 
-    strand, cds_start, cds_end, exon_starts_str, exon_ends_str = rows[0]
+    _, strand, cds_start, cds_end, exon_starts_str, exon_ends_str = rows[0]
 
-    # Parse comma-separated values and convert from 0-based to 1-based coordinates
-    exon_starts_0based = [int(s) for s in exon_starts_str.rstrip(",").split(",") if s]
-    exon_ends_0based = [int(s) for s in exon_ends_str.rstrip(",").split(",") if s]
-
-    # Convert to 1-based coordinates
-    exon_starts_1based = [s + 1 for s in exon_starts_0based]
-    exon_ends_1based = exon_ends_0based
-
-    cds_start_1based = cds_start + 1 if cds_start is not None else None
-    cds_end_1based = cds_end if cds_end is not None else None
+    # genePred uses 0-based half-open coordinates. Convert to 1-based closed.
+    exon_starts_1based = [int(s) + 1 for s in exon_starts_str.rstrip(",").split(",") if s]
+    exon_ends_1based = [int(s) for s in exon_ends_str.rstrip(",").split(",") if s]
 
     return {
         "EXON_STARTS": exon_starts_1based,
         "EXON_ENDS": exon_ends_1based,
-        "CDS_START": cds_start_1based,
-        "CDS_END": cds_end_1based,
+        "CDS_START": cds_start + 1 if cds_start is not None else None,
+        "CDS_END": cds_end if cds_end is not None else None,
         "STRAND": strand,
     }
 
@@ -2419,6 +2416,143 @@ class TestApplyVariantToAlteredExonSeqs(unittest.TestCase):
             fasta, "1", cds_start=13, cds_end=10000,
         )
         self.assertEqual(result, "impacts native start or stop site")
+
+    def test_variant_at_high_cds_codon(self):
+        # Locks in the high-window (cds_end - 2 .. cds_end) branch. On a
+        # '-' strand transcript this 3 bp window holds the biological ATG;
+        # on '+' strand it holds the stop codon. Either way the function
+        # must return the same sentinel — proves detection is symmetric
+        # and not strand-dependent.
+        chrom_seq = "X" * 10 + "ACGTACGTAC"  # pos 17 = "G"
+        fasta = self._stub(chr1=chrom_seq)
+        result = _apply_variant_to_altered_exon_seqs(
+            [(11, 20)], ["ACGTACGTAC"], 17, "G", "A",
+            fasta, "1", cds_start=1, cds_end=18,
+        )
+        self.assertEqual(result, "impacts native start or stop site")
+
+
+class TestComputeConsensusContextSliceIdentity(unittest.TestCase):
+    """Lock down the invariant the Tier 1 hoist depends on:
+
+        consensus_aa_full[(cum_cds_bases[i] + 2) // 3:]
+            == _translate_spans(consensus[i:], cum_cds_bases[i] % 3, ...)
+
+    for every row_anchor i and for all three first_eframe residues. If anyone
+    changes the eFrame leading-base trim in _translate_spans without updating
+    the slice formula in _compute_consensus_context, this test catches it.
+    """
+
+    class _StubChrom:
+        def __init__(self, seq): self._seq = seq
+        def __getitem__(self, slc): return self._seq[slc]
+
+    class _StubFasta:
+        def __init__(self, seq): self._seq = seq
+        def keys(self): return ["chr1"]
+        def __getitem__(self, _): return TestComputeConsensusContextSliceIdentity._StubChrom(self._seq)
+
+    def _check(self, exon_starts, exon_ends, cds_start, cds_end, strand, seq):
+        scores = {
+            "EXON_STARTS": exon_starts,
+            "EXON_ENDS": exon_ends,
+            "CDS_START": cds_start,
+            "CDS_END": cds_end,
+            "STRAND": strand,
+        }
+        fasta = self._StubFasta(seq)
+        ctx = _compute_consensus_context(scores, fasta, "1")
+        self.assertIsNotNone(ctx)
+        consensus = ctx["consensus"]
+        cum = ctx["cum_cds_bases"]
+        full = ctx["consensus_aa_full"]
+        for i in range(len(consensus)):
+            spans = [(ex["cds_lo"], ex["cds_hi"]) for ex in consensus[i:]]
+            expected = _translate_spans(spans, cum[i] % 3, fasta, "1", strand)
+            sliced = full[(cum[i] + 2) // 3:]
+            self.assertEqual(sliced, expected,
+                f"slice mismatch at row_anchor={i}, eframe={cum[i] % 3}")
+
+    def test_plus_strand_all_eframe_residues(self):
+        # 4 CDS-only exons with sizes 10, 11, 12, 13 -> cumulative 0,10,21,33,46.
+        # Residues mod 3 at the boundaries: 0, 1, 0, 0, 1 -- covers eframe 0 and 1.
+        # Pad with one more exon of size 14 to reach a residue-2 anchor.
+        # cum -> 0, 10, 21, 33, 46, 60 -> mod 3: 0, 1, 0, 0, 1, 0. Need a size that
+        # makes a residue-2: e.g. sizes 10, 11, 13 give cum 0,10,21,34 -> mod 3: 0,1,0,1.
+        # Use sizes 11, 11, 11 -> cum 0,11,22,33 -> mod 3: 0,2,1,0. All three residues hit.
+        # Place exons at 101..111, 201..211, 301..311. CDS = whole.
+        seq = "X" * 100 + "ACGTACGTACG" + "X" * 89 + "TTTAAACCCGG" + "X" * 89 + "GGGCCCAAATT"
+        self._check([101, 201, 301], [111, 211, 311], 101, 311, "+", seq)
+
+    def test_minus_strand_all_eframe_residues(self):
+        # Same exon layout on - strand; tx order reverses, so row_anchor 0 = highest-coord exon.
+        seq = "X" * 100 + "ACGTACGTACG" + "X" * 89 + "TTTAAACCCGG" + "X" * 89 + "GGGCCCAAATT"
+        self._check([101, 201, 301], [111, 211, 311], 101, 311, "-", seq)
+
+    def test_cds_clamped_first_and_last_exon(self):
+        # First and last exons partly UTR; verify clamping doesn't break the identity.
+        # Exon sizes (after clamp): 5, 11, 8 -> cum 0, 5, 16, 24 -> mod 3: 0, 2, 1, 0.
+        seq = "X" * 100 + "ACGTACGTACG" + "X" * 89 + "TTTAAACCCGG" + "X" * 89 + "GGGCCCAAATT"
+        # CDS_START=107 (clip exon1's first 6 bases), CDS_END=308 (clip exon3's last 3 bases).
+        self._check([101, 201, 301], [111, 211, 311], 107, 308, "+", seq)
+
+    def test_context_built_when_tiny_interior_exon_does_not_become_anchor(self):
+        # CDS exon sizes [4, 1, 30] → cum [0, 4, 5, 35] → mod 3 [0, 1, 2, 2].
+        # An interior 1-bp exon at cum%3==1 is fine for the *consensus* (the
+        # full translation is computed at eFrame=0, no trim). It is only the
+        # per-aberration altered translation that has trouble when the
+        # row_anchor lands on that 1-bp exon — and that's guarded inside
+        # _detect_premature_stop, not here.
+        scores = {
+            "EXON_STARTS": [101, 201, 301],
+            "EXON_ENDS":   [104, 201, 330],
+            "CDS_START": 101,
+            "CDS_END":   330,
+            "STRAND": "+",
+        }
+        seq = "X" * 100 + "ACGT" + "X" * 96 + "A" + "X" * 99 + ("ACGT" * 8)[:30]
+        ctx = _compute_consensus_context(scores, self._StubFasta(seq), "1")
+        self.assertIsNotNone(ctx)
+        self.assertEqual(ctx["cum_cds_bases"], [0, 4, 5, 35])
+
+    def test_whole_intron_retention_with_tiny_downstream_exon_detects_stop(self):
+        # Regression for the over-broad 1-bp guard. whole_intron_retention
+        # anchors at flanking_idx=0 (the consensus exon BEFORE the retained
+        # intron), so first_eframe=0 and the trim hazard is not in play —
+        # detection should produce M[*]. Constructed so the retained intron
+        # contains TAA in-frame after ATG.
+        seq = list("C" * 330)
+        # exon 1 (101..104) = "ATGT"
+        for pos, base in zip(range(101, 105), "ATGT"):
+            seq[pos - 1] = base
+        # intron contributes "AAC..." after the variant (pos 105 C→A makes
+        # the codon TAA across the splice junction in the altered transcript).
+        seq[104] = "C"   # genome pos 105 ref C
+        seq[105] = "A"   # genome pos 106
+        # tiny exon at pos 201, 1bp 'G'
+        seq[200] = "G"
+        # exon 3 (301..330) repeating "CAG" -> Q codons, no extra stop
+        for i, pos in enumerate(range(301, 331)):
+            seq[pos - 1] = "CAG"[i % 3]
+        scores = {
+            "DS_AG": 0.0, "DS_AL": 0.8, "DS_DG": 0.0, "DS_DL": 0.8,
+            "DP_AG": 0, "DP_AL": 96, "DP_DG": 0, "DP_DL": -1,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": [101, 201, 301],
+            "EXON_ENDS":   [104, 201, 330],
+            "CDS_START": 101, "CDS_END": 330, "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(
+            scores, variant_pos=105, chrom="1", ref="C", alt="A",
+            fasta=self._StubFasta("".join(seq)),
+        )
+        wirs = [a for a in result["aberrations"]
+                if a["aberration_type"] == "whole_intron_retention"]
+        self.assertEqual(len(wirs), 1)
+        ab = wirs[0]
+        self.assertEqual(ab["stop_codon_introduced"], True,
+                         f"aa_change={ab.get('aa_change')}")
+        self.assertEqual(ab["aa_change"], "M[*]")
 
 
 class TestConsensusFilteredInTxOrder(unittest.TestCase):

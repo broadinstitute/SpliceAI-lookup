@@ -33,6 +33,8 @@ Divergence from the reference parser - "Potential" loss labels:
     present in the reference implementation.
 """
 
+import time
+
 
 # Reference-parser defaults (spliceai_parser.py: --DS_ALDL_MIN_T,
 # --DS_ALDL_MAX_T, --DS_AGDG_MIN_T, --DS_AGDG_MAX_T, all default 0.02 / 0.2).
@@ -1217,6 +1219,7 @@ def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=N
         )
         strand = '+'
 
+    t0 = time.perf_counter()
     aberrations = sai10k_determine_aberrations(
         ds_ag, ds_al, ds_dg, ds_dl,
         dp_ag, dp_al, dp_dg, dp_dl,
@@ -1224,6 +1227,7 @@ def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=N
         variant_pos, exon_starts, exon_ends, strand,
         has_alt_scores=has_alt_scores,
     )
+    determine_ms = (time.perf_counter() - t0) * 1000
 
     # Pick the overall delta_type (the Δ branch with the highest Δ score). This
     # is constant per variant and labels which SpliceAI score drove the call.
@@ -1235,6 +1239,7 @@ def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=N
         key=lambda item: item[0],
     )
 
+    t1 = time.perf_counter()
     for aberration in aberrations:
         sai10k_annotate_frameshift(
             aberration,
@@ -1242,6 +1247,7 @@ def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=N
             exon_starts, exon_ends,
         )
         aberration['delta_type'] = overall_delta_type
+    annotate_ms = (time.perf_counter() - t1) * 1000
 
     # Premature-stop detection (PDF feedback comment #5). Runs after annotation
     # so it can read affects_coding / frameshift / start_codon_lost /
@@ -1254,12 +1260,25 @@ def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=N
     # The detector silently returns (None, None) when fasta=None (no genome
     # FASTA available) or when chrom/ref/alt aren't supplied — preserves
     # backward compatibility for any caller that doesn't supply them.
+    t2 = time.perf_counter()
+    n_premature_stop_calls = 0
+    # Compute the per-transcript consensus context lazily on the first
+    # qualifying aberration, then reuse for the rest. Avoids re-fetching the
+    # consensus CDS sequence and re-translating the full consensus K times for
+    # transcripts with K aberrations (e.g. TTN with K=4).
+    consensus_ctx = None
+    consensus_ctx_computed = False
     for aberration in aberrations:
         if (aberration.get('affects_coding') is True
                 and not aberration.get('start_codon_lost')
                 and not aberration.get('stop_codon_lost')):
+            if not consensus_ctx_computed:
+                consensus_ctx = _compute_consensus_context(transcript_scores, fasta, chrom)
+                consensus_ctx_computed = True
+            n_premature_stop_calls += 1
             stop_introduced, aa_change = _detect_premature_stop(
                 transcript_scores, aberration, fasta, chrom, ref, alt, variant_pos,
+                consensus_ctx=consensus_ctx,
             )
             aberration['stop_codon_introduced'] = stop_introduced
             aberration['aa_change'] = aa_change
@@ -1272,6 +1291,7 @@ def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=N
         else:
             aberration['stop_codon_introduced'] = None
             aberration['aa_change'] = None
+    premature_stop_ms = (time.perf_counter() - t2) * 1000
 
     # Strip internal-only fields before returning to callers (and ultimately the
     # client). Keys prefixed with '_' are implementation details.
@@ -1297,6 +1317,16 @@ def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=N
             'is_coding': (
                 cds_start is not None and cds_end is not None and cds_start < cds_end
             ),
+        },
+        # Internal timing breakdown for the server's SAI10K_TIMING log line.
+        # Stripped by sai10k_get_transcript_predictions' caller before the
+        # response is serialized to the client.
+        '_timing_ms': {
+            'determine': determine_ms,
+            'annotate': annotate_ms,
+            'premature_stop': premature_stop_ms,
+            'n_aberrations': len(aberrations),
+            'n_premature_stop_calls': n_premature_stop_calls,
         },
     }
 
@@ -1385,11 +1415,7 @@ _CODON_TABLE = {
     'GGT': 'G', 'GGC': 'G', 'GGA': 'G', 'GGG': 'G',
 }
 
-_COMPLEMENT_TABLE = {
-    'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G',
-    'a': 't', 't': 'a', 'g': 'c', 'c': 'g',
-    'N': 'N', 'n': 'n',
-}
+_COMPLEMENT_TRANS = str.maketrans('ACGTacgt', 'TGCAtgca')
 
 
 def _translate_dna(dna_seq):
@@ -1402,8 +1428,8 @@ def _translate_dna(dna_seq):
 
 
 def _reverse_complement(seq):
-    """Reverse-complement a DNA sequence (preserves case, passes 'N' through)."""
-    return ''.join(_COMPLEMENT_TABLE.get(b, b) for b in reversed(seq))
+    """Reverse-complement a DNA sequence (preserves case, passes through any non-ACGT base)."""
+    return seq.translate(_COMPLEMENT_TRANS)[::-1]
 
 
 def _find_difference_point(seq_a, seq_b, direction):
@@ -1498,13 +1524,17 @@ def _apply_variant_to_altered_exon_seqs(altered_exon_spans, exon_seqs, var_pos, 
     if genome_ref != ref.upper():
         return 'reference mismatch'
 
-    # Native start / stop codon footprint check (6 bp total).
+    # Native start / stop codon footprint check (6 bp total). The two 3-bp
+    # CDS-terminal windows are checked symmetrically: on + strand the low
+    # window is the start codon and the high window is the stop, on - strand
+    # the roles flip. Since both branches return the same sentinel, the
+    # naming stays strand-neutral so the symmetry is obvious.
     if cds_start is not None and cds_end is not None:
-        start_lo, start_hi = cds_start, cds_start + 2
-        stop_lo, stop_hi = cds_end - 2, cds_end
-        if not (var_end < start_lo or var_pos > start_hi):
+        cds_lo_codon_lo, cds_lo_codon_hi = cds_start, cds_start + 2
+        cds_hi_codon_lo, cds_hi_codon_hi = cds_end - 2, cds_end
+        if not (var_end < cds_lo_codon_lo or var_pos > cds_lo_codon_hi):
             return 'impacts native start or stop site'
-        if not (var_end < stop_lo or var_pos > stop_hi):
+        if not (var_end < cds_hi_codon_lo or var_pos > cds_hi_codon_hi):
             return 'impacts native start or stop site'
 
     # Find a kept span that fully contains the variant footprint.
@@ -1580,15 +1610,60 @@ def _consensus_filtered_in_tx_order(transcript_scores):
     return out
 
 
-def _build_consensus_exon_spans(transcript_scores, row_anchor):
-    """Consensus CDS-clamped (start, end) spans for the tail starting at row_anchor (tx order)."""
-    consensus = _consensus_filtered_in_tx_order(transcript_scores)
-    if row_anchor is None or row_anchor < 0 or row_anchor >= len(consensus):
-        return []
-    return [(ex['cds_lo'], ex['cds_hi']) for ex in consensus[row_anchor:]]
+def _compute_consensus_context(transcript_scores, fasta, chrom):
+    """Precompute per-transcript state shared across all aberrations.
+
+    Returns a dict with:
+        consensus:         _consensus_filtered_in_tx_order list (CDS-clamped, tx order).
+        cum_cds_bases:     prefix-sum array; cum_cds_bases[i] = total CDS bases in
+                           consensus[:i]. Length len(consensus)+1.
+        consensus_aa_full: full consensus AA translated from row_anchor=0 (eFrame=0).
+                           None if `fasta` or `chrom` is missing.
+        seq_cache:         {(start, end): genomic_seq} populated by the consensus
+                           translation. Threaded into the per-aberration altered
+                           translation so unchanged exon spans aren't re-fetched.
+
+    For any per-aberration row_anchor `i`, the consensus AA tail equals
+    consensus_aa_full[(cum_cds_bases[i] + 2) // 3:] (integer ceil(cum/3) — accounts
+    for the (3 - first_eframe) % 3 leading-base trim that the eFrame block of
+    `_translate_spans` applies). Hoisting this out of the per-aberration loop
+    avoids re-fetching the consensus CDS sequence and re-translating it K times
+    (where K is the number of qualifying aberrations on the transcript).
+
+    Returns None if the transcript has no consensus exons (e.g. non-coding) or
+    if a FASTA fetch raises — detection is then silently skipped.
+    """
+    try:
+        consensus = _consensus_filtered_in_tx_order(transcript_scores)
+        if not consensus:
+            return None
+
+        cum = [0]
+        for ex in consensus:
+            cum.append(cum[-1] + ex['cds_hi'] - ex['cds_lo'] + 1)
+
+        consensus_aa_full = None
+        seq_cache = {}
+        if fasta is not None and chrom is not None:
+            strand = transcript_scores.get('STRAND') or transcript_scores.get('t_strand')
+            consensus_spans = [(ex['cds_lo'], ex['cds_hi']) for ex in consensus]
+            consensus_aa_full = _translate_spans(
+                consensus_spans, 0, fasta, chrom, strand, seq_cache=seq_cache,
+            )
+
+        return {
+            'consensus': consensus,
+            'cum_cds_bases': cum,
+            'consensus_aa_full': consensus_aa_full,
+            'seq_cache': seq_cache,
+        }
+    except Exception as exc:
+        print(f'WARNING: SAI-10k consensus precompute raised '
+              f'{type(exc).__name__}: {exc}')
+        return None
 
 
-def _build_altered_exon_spans(transcript_scores, aberration):
+def _build_altered_exon_spans(transcript_scores, aberration, consensus=None):
     """Build the per-type altered exon list for premature-stop detection.
 
     Returns (altered_spans, row_anchor, first_eframe), where altered_spans is
@@ -1598,8 +1673,13 @@ def _build_altered_exon_spans(transcript_scores, aberration):
 
     Mirrors per-type table builders in spliceai_parser.py — see the per-type
     table in PLAN_stop_codon_introduced.md.
+
+    `consensus`, when provided, is a precomputed _consensus_filtered_in_tx_order
+    result; passing it in avoids redundant rebuilds when this is called for
+    multiple aberrations on the same transcript.
     """
-    consensus = _consensus_filtered_in_tx_order(transcript_scores)
+    if consensus is None:
+        consensus = _consensus_filtered_in_tx_order(transcript_scores)
     if not consensus:
         return None
 
@@ -1795,7 +1875,8 @@ def _build_altered_exon_spans(transcript_scores, aberration):
     return (altered_spans, row_anchor, first_eframe)
 
 
-def _translate_spans(spans, first_eframe, fasta, chrom, strand, apply_variant_args=None):
+def _translate_spans(spans, first_eframe, fasta, chrom, strand, apply_variant_args=None,
+                      seq_cache=None):
     """Translate a list of (1-based, inclusive) genomic spans to a single-letter AA string.
 
     Order of operations (must match spliceai_parser.py:374-434 — applying the
@@ -1813,11 +1894,26 @@ def _translate_spans(spans, first_eframe, fasta, chrom, strand, apply_variant_ar
     or one of the sentinels {"reference mismatch", "impacts native start or
     stop site", "variant straddles splice boundary"} when variant application
     fails in a way the caller should skip.
+
+    seq_cache, when supplied, is a write-through dict {(start, end): genomic_seq}
+    that lets repeated calls on the same transcript skip pyfastx slices for
+    spans already fetched. Only genomic-orientation sequences are stored — the
+    reverse-complement, eFrame trim, and variant application all happen on
+    per-call copies so cache entries are not mutated.
     """
     if not spans:
         return ''
 
-    exon_seqs = [_fetch_seq(fasta, chrom, s, e) for s, e in spans]
+    if seq_cache is None:
+        exon_seqs = [_fetch_seq(fasta, chrom, s, e) for s, e in spans]
+    else:
+        exon_seqs = []
+        for span in spans:
+            seq = seq_cache.get(span)
+            if seq is None:
+                seq = _fetch_seq(fasta, chrom, span[0], span[1])
+                seq_cache[span] = seq
+            exon_seqs.append(seq)
 
     if apply_variant_args is not None:
         var_pos, ref, alt, cds_start, cds_end = apply_variant_args
@@ -1957,7 +2053,8 @@ def _format_aa_change_and_detect(altered_aa, consensus_aa, frameshift=False):
     return (stop_introduced, formatted)
 
 
-def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt, var_pos):
+def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt, var_pos,
+                            consensus_ctx=None):
     """Detect whether an aberration introduces a premature stop codon.
 
     Handles both in-frame and frameshift aberrations (reads
@@ -1968,6 +2065,10 @@ def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt
     Returns (stop_introduced, aa_change_string), where stop_introduced is
     True/False/None (None = detection skipped, e.g. mitochondrial transcript,
     missing FASTA, indel straddling a splice boundary, reference mismatch).
+
+    `consensus_ctx`, when provided, is a `_compute_consensus_context` result;
+    callers detecting over multiple aberrations on the same transcript should
+    compute it once and pass it in. When omitted, it is computed lazily here.
     """
     # Mitochondrial guard: mt transcripts use a non-standard codon table and
     # the chrM/chrMT contig naming differs across FASTAs. Skip rather than
@@ -1987,21 +2088,37 @@ def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt
     strand = transcript_scores.get('STRAND') or transcript_scores.get('t_strand')
 
     try:
-        built = _build_altered_exon_spans(transcript_scores, aberration)
+        if consensus_ctx is None:
+            consensus_ctx = _compute_consensus_context(transcript_scores, fasta, chrom)
+        if consensus_ctx is None or consensus_ctx.get('consensus_aa_full') is None:
+            return (None, None)
+
+        built = _build_altered_exon_spans(
+            transcript_scores, aberration, consensus=consensus_ctx['consensus'],
+        )
         if built is None:
             return (None, None)
         altered_spans, row_anchor, first_eframe = built
-
-        consensus_spans = _build_consensus_exon_spans(transcript_scores, row_anchor)
-        if not altered_spans or not consensus_spans:
+        if not altered_spans:
             return (None, None)
 
-        consensus_aa = _translate_spans(
-            consensus_spans, first_eframe, fasta, chrom, strand, apply_variant_args=None,
-        )
+        # eFrame=1 wants to trim 2 leading bases off the first altered span,
+        # but `_translate_spans` only does so when the span has >= 2 bases. A
+        # 1-bp first altered span at first_eframe=1 silently skips the trim,
+        # so the altered tail comes out frame-shifted relative to the
+        # consensus slice (which the slice formula assumes was trimmed).
+        # Bail just for this aberration. eFrame=2 trims a single base, which
+        # is always available since CDS-clamped spans are non-empty.
+        if first_eframe == 1 and (altered_spans[0][1] - altered_spans[0][0] + 1) < 2:
+            return (None, None)
+
+        cum = consensus_ctx['cum_cds_bases']
+        consensus_aa = consensus_ctx['consensus_aa_full'][(cum[row_anchor] + 2) // 3:]
+
         altered_aa = _translate_spans(
             altered_spans, first_eframe, fasta, chrom, strand,
             apply_variant_args=(var_pos, ref, alt, cds_start, cds_end),
+            seq_cache=consensus_ctx.get('seq_cache'),
         )
 
         if altered_aa in ('reference mismatch', 'impacts native start or stop site',
