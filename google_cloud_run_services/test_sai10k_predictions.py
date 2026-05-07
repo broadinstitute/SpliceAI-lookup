@@ -1318,6 +1318,57 @@ class TestPartialShiftDescriptions(unittest.TestCase):
             "Acceptor shift (2bp coding seq. partial exon 2 deletion) - start codon lost",
         )
 
+    def test_acceptor_shift_partial_intron_retention(self):
+        """gain_B_acceptor on a + strand transcript: cryptic acceptor in the
+        intron upstream of the affected biological exon, so the retained intron
+        number = bio_exon - 1."""
+        # BRCA2 (+ strand): variant just before exon 3 acceptor (32893214) with
+        # a cryptic acceptor 50bp upstream → partial_intron_retention on intron 2.
+        transcript_scores = {
+            "DS_AG": 0.80, "DS_AL": 0.30, "DS_DG": 0.00, "DS_DL": 0.00,
+            "DS_AG_ALT": 0.95, "DS_AL_ALT": 0.05, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "DP_AG": -50, "DP_AL": 1, "DP_DG": 0, "DP_DL": 0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=32893213)
+        pir = [a for a in result["aberrations"] if a["aberration_type"] == "partial_intron_retention"]
+        self.assertEqual(len(pir), 1)
+        self.assertEqual(pir[0]["affected_intron_number"], 2)
+        self.assertEqual(
+            pir[0]["frameshift_description"],
+            "Acceptor shift (51bp coding seq. partial intron 2 retention) - in-frame",
+        )
+
+    def test_donor_shift_partial_intron_retention(self):
+        """gain_B_donor on a - strand transcript: cryptic donor in the intron
+        downstream (in transcript order) of the affected biological exon, so
+        the retained intron number = bio_exon."""
+        # BRCA1 c.5467+1G>A fixture (- strand): variant at 41199659 produces
+        # a partial_intron_retention on intron 22 via the donor branch.
+        transcript_scores = {
+            "DS_AG": 0.00, "DS_AL": 0.40, "DS_DG": 0.36, "DS_DL": 0.93,
+            "DS_AG_ALT": 0, "DS_AL_ALT": 0,
+            "DS_DG_ALT": 0.95, "DS_DL_ALT": 0.05,
+            "DP_AG": -4, "DP_AL": 61, "DP_DG": -4, "DP_DL": 1,
+            "EXON_STARTS": BRCA1_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA1_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA1_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA1_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": BRCA1_TRANSCRIPT_HG19["STRAND"],
+        }
+        result = sai10k_compute_predictions(transcript_scores, variant_pos=41199659)
+        pir = [a for a in result["aberrations"] if a["aberration_type"] == "partial_intron_retention"]
+        self.assertEqual(len(pir), 1)
+        self.assertEqual(pir[0]["affected_intron_number"], 22)
+        self.assertEqual(
+            pir[0]["frameshift_description"],
+            "Donor shift (5bp coding seq. partial intron 22 retention) - frameshift",
+        )
+
 
 class TestStopCodonLost(unittest.TestCase):
     """Skipping or partially deleting an exon that contains cds_end should

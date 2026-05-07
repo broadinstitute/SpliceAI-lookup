@@ -1005,11 +1005,12 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             aberration['size'] = intron_size
             aberration['size_type'] = 'intron'
             # affected_intron_number is set at emission (loss branch) when the
-            # geo_dl/geo_al pair matches the native sites of a single intron.
-            intron_num = aberration.get('affected_intron_number')
+            # geo_dl/geo_al pair matches the native sites of a single intron;
+            # the emit path in sai10k_determine_aberrations only appends the
+            # aberration when that match returns a non-None intron number.
+            intron_num = aberration['affected_intron_number']
             prefix = 'Potential intron' if is_potential else 'Intron'
-            label = f'{prefix} {intron_num} retention' if intron_num is not None else (
-                'Potential whole intron retention' if is_potential else 'Whole intron retention')
+            label = f'{prefix} {intron_num} retention'
             size_text = f'{cds_size}bp coding seq.' if aberration['affects_coding'] else f'{intron_size}bp'
             aberration['frameshift_description'] = f'{label} ({size_text}) - {status}'
         else:
@@ -2206,8 +2207,7 @@ def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt
     altered_protein_window). `stop_introduced` is True/False/None (None =
     detection skipped, e.g. mitochondrial transcript, missing FASTA, indel
     straddling a splice boundary, reference mismatch). The two window strings
-    are populated when a PTC is introduced (or in-frame change is detected)
-    and None otherwise.
+    are populated when a PTC is introduced and None otherwise.
 
     `consensus_ctx`, when provided, is a `_compute_consensus_context` result;
     callers detecting over multiple aberrations on the same transcript should
