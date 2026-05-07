@@ -137,6 +137,35 @@ def percentiles(client, metric, start, end, revisions=None):
     return out
 
 
+def sample_count(client, metric, start, end, revisions=None):
+    """Return {service: total_sample_count} for a DELTA+DISTRIBUTION metric over the window.
+
+    Sums the per-bucket counts across the distribution so we know how many raw observations
+    contributed to each percentile in `percentiles()` above.
+    """
+    span = max(60, int((end - start).total_seconds()))
+    f = f'metric.type="{metric}"'
+    if revisions:
+        f += f" AND {revision_filter_clause(revisions)}"
+    out = {}
+    for ts in client.list_time_series(request={
+        "name": f"projects/{PROJECT}",
+        "filter": f,
+        "interval": monitoring_v3.TimeInterval(end_time=end, start_time=start),
+        "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
+        "aggregation": monitoring_v3.Aggregation(
+            alignment_period={"seconds": span},
+            per_series_aligner=monitoring_v3.Aggregation.Aligner.ALIGN_DELTA,
+            cross_series_reducer=monitoring_v3.Aggregation.Reducer.REDUCE_SUM,
+            group_by_fields=["resource.label.service_name"],
+        ),
+    }):
+        svc = ts.resource.labels.get("service_name", "?")
+        for p in ts.points:
+            out[svc] = out.get(svc, 0) + int(p.value.distribution_value.count)
+    return out
+
+
 def request_counts(client, start, end, revisions=None):
     """Return {service: {2xx,3xx,4xx,5xx}} sums over the window."""
     span = max(60, int((end - start).total_seconds()))
@@ -164,11 +193,30 @@ def request_counts(client, start, end, revisions=None):
 
 
 def fmt_pct(x):
-    return f"{x*100:5.1f}%" if x is not None else "  ?  "
+    return f"{x*100:.1f}%" if x is not None else "?"
 
 
 def fmt_s(x):
-    return f"{x/1000:6.2f}s" if x is not None else "  ?  "
+    return f"{x/1000:.2f}s" if x is not None else "?"
+
+
+def print_table(rows, aligns=None, indent="  ", gap="  "):
+    """Print rows aligned by max column widths.
+
+    rows: list of lists of cell strings (first row treated as header — same alignment).
+    aligns: list of 'l' or 'r' per column (default: all 'l').
+    """
+    if not rows:
+        return
+    n_cols = len(rows[0])
+    aligns = aligns or ['l'] * n_cols
+    widths = [max(len(row[i]) for row in rows) for i in range(n_cols)]
+    for row in rows:
+        cells = [
+            row[i].ljust(widths[i]) if aligns[i] == 'l' else row[i].rjust(widths[i])
+            for i in range(n_cols)
+        ]
+        print((indent + gap.join(cells)).rstrip())
 
 
 def snapshot(client, args):
@@ -219,41 +267,55 @@ def snapshot(client, args):
     print()
 
     print("=== CPU / Memory utilization ===")
-    cpu = percentiles(client, "run.googleapis.com/container/cpu/utilizations", start, now, revisions=prod_revs)
-    mem = percentiles(client, "run.googleapis.com/container/memory/utilizations", start, now, revisions=prod_revs)
-    print(f"  {'service':<14}  {'CPU p95':<8} {'CPU p99':<8}  {'Mem p95':<8} {'Mem p99':<8}")
+    cpu_metric = "run.googleapis.com/container/cpu/utilizations"
+    mem_metric = "run.googleapis.com/container/memory/utilizations"
+    cpu = percentiles(client, cpu_metric, start, now, revisions=prod_revs)
+    mem = percentiles(client, mem_metric, start, now, revisions=prod_revs)
+    cpu_n = sample_count(client, cpu_metric, start, now, revisions=prod_revs)
+    mem_n = sample_count(client, mem_metric, start, now, revisions=prod_revs)
+    rows = [["service", "CPU n", "CPU p95", "CPU p99", "Mem n", "Mem p95", "Mem p99"]]
     for svc in SERVICES:
         cv = cpu.get(svc, {}); mv = mem.get(svc, {})
-        print(f"  {svc:<14}  {fmt_pct(cv.get('p95'))}  {fmt_pct(cv.get('p99'))}   {fmt_pct(mv.get('p95'))}  {fmt_pct(mv.get('p99'))}")
+        rows.append([
+            svc,
+            str(cpu_n.get(svc, 0)),
+            fmt_pct(cv.get('p95')),
+            fmt_pct(cv.get('p99')),
+            str(mem_n.get(svc, 0)),
+            fmt_pct(mv.get('p95')),
+            fmt_pct(mv.get('p99')),
+        ])
+    print_table(rows, aligns=['l', 'r', 'r', 'r', 'r', 'r', 'r'])
     print()
 
-    lat = percentiles(client, "run.googleapis.com/request_latencies", start, now, revisions=prod_revs)
+    lat_metric = "run.googleapis.com/request_latencies"
+    lat = percentiles(client, lat_metric, start, now, revisions=prod_revs)
+    lat_n = sample_count(client, lat_metric, start, now, revisions=prod_revs)
     if args.baseline_end:
         baseline_end = parse_iso(args.baseline_end)
         baseline_start = baseline_end - timedelta(days=args.baseline_days)
         # Baseline window predates current revisions; query unfiltered to capture pre-deploy traffic.
-        baseline_lat = percentiles(client, "run.googleapis.com/request_latencies", baseline_start, baseline_end)
+        baseline_lat = percentiles(client, lat_metric, baseline_start, baseline_end)
         print(f"=== Latency (p50/p95/p99 in s) — vs {args.baseline_days:g}d baseline ending {args.baseline_end} ===")
     else:
         baseline_lat = None
         print("=== Latency (p50/p95/p99 in s) ===")
 
-    header = f"  {'service':<14}  {'n':<5}  {'p50':<22}  {'p95':<22}  {'p99':<22}"
-    print(header)
+    rows = [["service", "n", "p50", "p95", "p99"]]
     for svc in SERVICES:
-        n = totals[svc]
-        cells = [f"{svc:<14}", f"{n:<5}"]
+        cells = [svc, str(lat_n.get(svc, 0))]
         for k in ("p50", "p95", "p99"):
             post = lat.get(svc, {}).get(k)
             if baseline_lat is None:
-                cells.append(f"{fmt_s(post)}")
+                cells.append(fmt_s(post))
             else:
                 pre = baseline_lat.get(svc, {}).get(k)
                 if pre is None or post is None or pre == 0:
                     cells.append(f"{fmt_s(pre)} → {fmt_s(post)}")
                 else:
-                    cells.append(f"{fmt_s(pre)} → {fmt_s(post)} ({(post-pre)/pre*100:+4.0f}%)")
-        print("  " + "  ".join(cells))
+                    cells.append(f"{fmt_s(pre)} → {fmt_s(post)} ({(post-pre)/pre*100:+.0f}%)")
+        rows.append(cells)
+    print_table(rows, aligns=['l', 'r', 'r', 'r', 'r'])
 
 
 def main():
