@@ -37,7 +37,6 @@ from sai10k_predictions import (
     _consensus_filtered_in_tx_order,
     _compute_consensus_context,
     _translate_spans,
-    EXTENDS_PAST_NATIVE_STOP,
 )
 
 
@@ -983,7 +982,7 @@ class TestIncreasedExonInclusion(unittest.TestCase):
         # Increased exon inclusion doesn't change reading frame
         self.assertFalse(iei["frameshift"])
         self.assertEqual(iei["size"], 106)
-        self.assertIn("Increased exon inclusion", iei["frameshift_description"])
+        self.assertEqual(iei["description"]["label"], "Increased exon inclusion")
 
 
 class TestExonSkippingFallback(unittest.TestCase):
@@ -1031,7 +1030,15 @@ class TestExonSkippingFallback(unittest.TestCase):
         # 109 bp exon 4, 109 % 3 = 1 -> frameshift.
         self.assertEqual(es[0]["size"], 109)
         self.assertTrue(es[0]["frameshift"])
-        self.assertEqual(es[0]["frameshift_description"], "Exon 4 skipping (109bp coding seq.) - frameshift")
+        self.assertEqual(es[0]["description"], {
+            "label": "Exon 4 skipping",
+            "size_bp": 109,
+            "size_is_coding": True,
+            "consequence": None,
+            "status": "frameshift",
+            "introduces_stop_codon": False,
+            "extends_past_native_stop": False,
+        })
 
     def test_no_fallback_when_intronic_variant_has_no_native_anchor(self):
         """Intronic variant where neither GEO_AL nor GEO_DL lands on a native
@@ -1053,10 +1060,15 @@ class TestExonSkippingFallback(unittest.TestCase):
         result = sai10k_compute_predictions(transcript_scores, variant_pos=32889844)
         es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
         self.assertEqual(len(es), 1)
-        self.assertEqual(
-            es[0]["frameshift_description"],
-            "Exon skipping predicted but skipped exon(s) could not be mapped",
-        )
+        self.assertEqual(es[0]["description"], {
+            "label": "Exon skipping",
+            "size_bp": None,
+            "size_is_coding": None,
+            "consequence": None,
+            "status": "could not be mapped",
+            "introduces_stop_codon": False,
+            "extends_past_native_stop": False,
+        })
 
     def test_fallback_uses_affected_exon_when_intronic_variant_donor_at_native_plus_strand(self):
         """`+` strand intronic variant +2 from the native donor (RAD51C
@@ -1083,7 +1095,15 @@ class TestExonSkippingFallback(unittest.TestCase):
         # Exon 4 is fully coding (109 bp); 109 % 3 = 1 -> frameshift.
         self.assertEqual(es[0]["size"], 109)
         self.assertTrue(es[0]["frameshift"])
-        self.assertEqual(es[0]["frameshift_description"], "Exon 4 skipping (109bp coding seq.) - frameshift")
+        self.assertEqual(es[0]["description"], {
+            "label": "Exon 4 skipping",
+            "size_bp": 109,
+            "size_is_coding": True,
+            "consequence": None,
+            "status": "frameshift",
+            "introduces_stop_codon": False,
+            "extends_past_native_stop": False,
+        })
 
     def test_fallback_uses_affected_exon_when_intronic_variant_acceptor_at_native_plus_strand(self):
         """`+` strand intronic variant -2 from the native acceptor of the
@@ -1109,7 +1129,15 @@ class TestExonSkippingFallback(unittest.TestCase):
         self.assertEqual(len(es), 1)
         self.assertEqual(es[0]["size"], 109)
         self.assertTrue(es[0]["frameshift"])
-        self.assertEqual(es[0]["frameshift_description"], "Exon 4 skipping (109bp coding seq.) - frameshift")
+        self.assertEqual(es[0]["description"], {
+            "label": "Exon 4 skipping",
+            "size_bp": 109,
+            "size_is_coding": True,
+            "consequence": None,
+            "status": "frameshift",
+            "introduces_stop_codon": False,
+            "extends_past_native_stop": False,
+        })
 
     def test_fallback_uses_affected_exon_when_intronic_variant_acceptor_at_native_minus_strand(self):
         """`-` strand intronic variant near a transcript-acceptor (which sits
@@ -1140,7 +1168,15 @@ class TestExonSkippingFallback(unittest.TestCase):
         # Genomic exon 5: [41215350, 41215390], 41 bp, fully coding. 41 % 3 = 2 -> frameshift.
         self.assertEqual(es[0]["size"], 41)
         self.assertTrue(es[0]["frameshift"])
-        self.assertEqual(es[0]["frameshift_description"], "Exon 18 skipping (41bp coding seq.) - frameshift")
+        self.assertEqual(es[0]["description"], {
+            "label": "Exon 18 skipping",
+            "size_bp": 41,
+            "size_is_coding": True,
+            "consequence": None,
+            "status": "frameshift",
+            "introduces_stop_codon": False,
+            "extends_past_native_stop": False,
+        })
 
     def test_fallback_uses_affected_exon_when_intronic_variant_donor_at_native_minus_strand(self):
         """`-` strand intronic variant near a transcript-donor (which sits on
@@ -1169,7 +1205,15 @@ class TestExonSkippingFallback(unittest.TestCase):
         # Genomic exon 6: [41215891, 41215968], 78 bp, fully coding. 78 % 3 = 0 -> in-frame.
         self.assertEqual(es[0]["size"], 78)
         self.assertFalse(es[0]["frameshift"])
-        self.assertEqual(es[0]["frameshift_description"], "Exon 17 skipping (78bp coding seq.) - in-frame")
+        self.assertEqual(es[0]["description"], {
+            "label": "Exon 17 skipping",
+            "size_bp": 78,
+            "size_is_coding": True,
+            "consequence": None,
+            "status": "in-frame",
+            "introduces_stop_codon": False,
+            "extends_past_native_stop": False,
+        })
 
 
 class TestDeltaType(unittest.TestCase):
@@ -1246,7 +1290,7 @@ class TestPotentialPrefix(unittest.TestCase):
 
     def test_potential_exon_skipping_on_weak_paired_loss(self):
         """BRCA2 Figure 8 profile: DS_AL=0.13 weak partner + DS_DL=0.93 strong.
-        Expect 'Potential exon N skipping...' in frameshift_description."""
+        Expect description.label = 'Potential exon N skipping'."""
         # BRCA2 exon 2 (1-based 2): [32890559, 32890664], 106 bp, frameshift.
         # Variant at 32890600 inside exon 2. DP_AL=-41 matches exon_starts[1],
         # DP_DL=64 matches exon_ends[1], so reference lookup succeeds directly.
@@ -1264,10 +1308,15 @@ class TestPotentialPrefix(unittest.TestCase):
         es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
         self.assertEqual(len(es), 1)
         # 106 bp, 106 % 3 = 1 -> frameshift.
-        self.assertEqual(
-            es[0]["frameshift_description"],
-            "Potential exon 2 skipping (67bp coding seq.) - start codon lost",
-        )
+        self.assertEqual(es[0]["description"], {
+            "label": "Potential exon 2 skipping",
+            "size_bp": 67,
+            "size_is_coding": True,
+            "consequence": None,
+            "status": "start codon lost",
+            "introduces_stop_codon": False,
+            "extends_past_native_stop": False,
+        })
 
     def test_no_potential_prefix_when_both_loss_scores_strong(self):
         """Both DS_AL and DS_DL ≥ 0.2 → no 'Potential' prefix."""
@@ -1284,11 +1333,16 @@ class TestPotentialPrefix(unittest.TestCase):
         result = sai10k_compute_predictions(transcript_scores, variant_pos=32890600)
         es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
         self.assertEqual(len(es), 1)
-        self.assertFalse(es[0]["frameshift_description"].startswith("Potential"))
-        self.assertEqual(
-            es[0]["frameshift_description"],
-            "Exon 2 skipping (67bp coding seq.) - start codon lost",
-        )
+        self.assertFalse(es[0]["description"]["label"].startswith("Potential"))
+        self.assertEqual(es[0]["description"], {
+            "label": "Exon 2 skipping",
+            "size_bp": 67,
+            "size_is_coding": True,
+            "consequence": None,
+            "status": "start codon lost",
+            "introduces_stop_codon": False,
+            "extends_past_native_stop": False,
+        })
 
 
 class TestPartialShiftDescriptions(unittest.TestCase):
@@ -1313,10 +1367,15 @@ class TestPartialShiftDescriptions(unittest.TestCase):
         self.assertEqual(len(pd), 1)
         # partial_size = dp_ag - dp_na = 20 - (-21) = 41 bp; 41 % 3 = 2 -> frameshift.
         self.assertEqual(pd[0]["size"], 41)
-        self.assertEqual(
-            pd[0]["frameshift_description"],
-            "Acceptor shift (2bp coding seq. partial exon 2 deletion) - start codon lost",
-        )
+        self.assertEqual(pd[0]["description"], {
+            "label": "Acceptor shift",
+            "size_bp": 2,
+            "size_is_coding": True,
+            "consequence": "partial exon 2 deletion",
+            "status": "start codon lost",
+            "introduces_stop_codon": False,
+            "extends_past_native_stop": False,
+        })
 
     def test_acceptor_shift_partial_intron_retention(self):
         """gain_B_acceptor on a + strand transcript: cryptic acceptor in the
@@ -1338,10 +1397,15 @@ class TestPartialShiftDescriptions(unittest.TestCase):
         pir = [a for a in result["aberrations"] if a["aberration_type"] == "partial_intron_retention"]
         self.assertEqual(len(pir), 1)
         self.assertEqual(pir[0]["affected_intron_number"], 2)
-        self.assertEqual(
-            pir[0]["frameshift_description"],
-            "Acceptor shift (51bp coding seq. partial intron 2 retention) - in-frame",
-        )
+        self.assertEqual(pir[0]["description"], {
+            "label": "Acceptor shift",
+            "size_bp": 51,
+            "size_is_coding": True,
+            "consequence": "partial intron 2 retention",
+            "status": "in-frame",
+            "introduces_stop_codon": False,
+            "extends_past_native_stop": False,
+        })
 
     def test_donor_shift_partial_intron_retention(self):
         """gain_B_donor on a - strand transcript: cryptic donor in the intron
@@ -1364,10 +1428,15 @@ class TestPartialShiftDescriptions(unittest.TestCase):
         pir = [a for a in result["aberrations"] if a["aberration_type"] == "partial_intron_retention"]
         self.assertEqual(len(pir), 1)
         self.assertEqual(pir[0]["affected_intron_number"], 22)
-        self.assertEqual(
-            pir[0]["frameshift_description"],
-            "Donor shift (5bp coding seq. partial intron 22 retention) - frameshift",
-        )
+        self.assertEqual(pir[0]["description"], {
+            "label": "Donor shift",
+            "size_bp": 5,
+            "size_is_coding": True,
+            "consequence": "partial intron 22 retention",
+            "status": "frameshift",
+            "introduces_stop_codon": False,
+            "extends_past_native_stop": False,
+        })
 
 
 class TestStopCodonLost(unittest.TestCase):
@@ -1393,8 +1462,8 @@ class TestStopCodonLost(unittest.TestCase):
         self.assertTrue(es[0]["stop_codon_lost"])
         self.assertFalse(es[0]["start_codon_lost"])
         self.assertIsNone(es[0]["frameshift"])  # suppressed when codon is lost
-        self.assertIn("stop codon lost", es[0]["frameshift_description"])
-        self.assertIn("coding seq.", es[0]["frameshift_description"])
+        self.assertEqual(es[0]["description"]["status"], "stop codon lost")
+        self.assertTrue(es[0]["description"]["size_is_coding"])
 
     def test_no_partial_exon_deletion_in_terminal_exon(self):
         """Donor-side cryptic shift inside BRCA2 exon 27 (the last exon) must NOT
@@ -1585,7 +1654,7 @@ class TestMinusStrandCodonLost(unittest.TestCase):
         self.assertTrue(es[0]["start_codon_lost"],
                         "skipping the exon containing the biological ATG must set start_codon_lost=True on − strand")
         self.assertFalse(es[0]["stop_codon_lost"])
-        self.assertIn("start codon lost", es[0]["frameshift_description"])
+        self.assertEqual(es[0]["description"]["status"], "start codon lost")
 
     def test_minus_strand_skip_exon_containing_biological_stop(self):
         """Biological stop codon lies at genomic CDS_START = 41197695, inside
@@ -1617,7 +1686,7 @@ class TestMinusStrandCodonLost(unittest.TestCase):
         self.assertTrue(es[0]["stop_codon_lost"],
                         "skipping the exon containing the biological stop codon must set stop_codon_lost=True on − strand")
         self.assertFalse(es[0]["start_codon_lost"])
-        self.assertIn("stop codon lost", es[0]["frameshift_description"])
+        self.assertEqual(es[0]["description"]["status"], "stop codon lost")
 
 
 class TestCodonInMiddleExonOfMultiExonSkip(unittest.TestCase):
@@ -1649,7 +1718,7 @@ class TestCodonInMiddleExonOfMultiExonSkip(unittest.TestCase):
         # reach the middle exon, not just the boundary ones.
         self.assertTrue(es[0]["start_codon_lost"])
         self.assertFalse(es[0]["stop_codon_lost"])
-        self.assertIn("start codon lost", es[0]["frameshift_description"])
+        self.assertEqual(es[0]["description"]["status"], "start codon lost")
 
 
 class TestCodonAtExonEndpoint(unittest.TestCase):
@@ -1708,7 +1777,7 @@ class TestPartialExonDeletionMinusStrandCodonLost(unittest.TestCase):
         self.assertTrue(ped[0]["start_codon_lost"],
                         "− strand partial_exon_deletion crossing CDS_END must report start codon lost")
         self.assertFalse(ped[0]["stop_codon_lost"])
-        self.assertIn("start codon lost", ped[0]["frameshift_description"])
+        self.assertEqual(ped[0]["description"]["status"], "start codon lost")
 
 
 class TestPartialExonDeletionMinusStrandMoreCases(unittest.TestCase):
@@ -1771,7 +1840,7 @@ class TestUtrOnlyExonSkipping(unittest.TestCase):
         self.assertIsNone(es[0]["start_codon_lost"])
         self.assertIsNone(es[0]["stop_codon_lost"])
         self.assertIsNone(es[0]["frameshift"])
-        self.assertIn("non-coding", es[0]["frameshift_description"])
+        self.assertEqual(es[0]["description"]["status"], "non-coding change")
 
 
 class TestPseudoexonNeverLosesCodon(unittest.TestCase):
@@ -1854,8 +1923,8 @@ class TestEntireCdsInOneExon(unittest.TestCase):
         self.assertTrue(es[0]["start_codon_lost"])
         self.assertFalse(es[0]["stop_codon_lost"])
         self.assertIsNone(es[0]["frameshift"])
-        self.assertIn("start codon lost", es[0]["frameshift_description"])
-        self.assertNotIn("stop codon lost", es[0]["frameshift_description"])
+        self.assertEqual(es[0]["description"]["status"], "start codon lost")
+        self.assertNotEqual(es[0]["description"]["status"], "stop codon lost")
 
 
 class TestPartialIntronRetentionCodonInvariant(unittest.TestCase):
@@ -1989,10 +2058,15 @@ class TestExonSkippingFallbackReverseStrand(unittest.TestCase):
         # Orientation on '-' strand for exon_skipping: dp_al*-1 < dp_dl*-1
         # -50 < 0, so exon_skipping (not whole_intron_retention). ✓
         self.assertEqual(es[0]["size"], exon_size)
-        self.assertEqual(
-            es[0]["frameshift_description"],
-            f"Exon {bio_exon} skipping ({exon_size}bp coding seq.) - in-frame",
-        )
+        self.assertEqual(es[0]["description"], {
+            "label": f"Exon {bio_exon} skipping",
+            "size_bp": exon_size,
+            "size_is_coding": True,
+            "consequence": None,
+            "status": "in-frame",
+            "introduces_stop_codon": False,
+            "extends_past_native_stop": False,
+        })
 
 
 class TestNativeSplicesitesTiebreak(unittest.TestCase):
@@ -2062,7 +2136,7 @@ class TestPotentialWholeIntronRetention(unittest.TestCase):
         self.assertEqual(len(wir), 1)
         # Variant lies in intron 1 of BRCA2 (between exon 1 and exon 2 on +
         # strand), so the label embeds the biological intron number.
-        self.assertTrue(wir[0]["frameshift_description"].startswith("Potential intron 1 retention"))
+        self.assertTrue(wir[0]["description"]["label"].startswith("Potential intron 1 retention"))
 
     def test_suppressed_when_lost_sites_dont_match_native(self):
         """BRCA2 c.-40+5G>T at SpliceAI max_distance=500: the 500bp window
@@ -2175,10 +2249,16 @@ class TestDonorShiftPartialDescription(unittest.TestCase):
         pd = [a for a in result["aberrations"] if a["aberration_type"] == "partial_exon_deletion"]
         self.assertEqual(len(pd), 1)
         self.assertEqual(pd[0]["size"], 24)
-        self.assertEqual(
-            pd[0]["frameshift_description"],
-            "Donor shift (24bp coding seq. partial exon 2 deletion) - in-frame",  # 24 % 3 == 0 -> in-frame
-        )
+        # 24 % 3 == 0 -> in-frame
+        self.assertEqual(pd[0]["description"], {
+            "label": "Donor shift",
+            "size_bp": 24,
+            "size_is_coding": True,
+            "consequence": "partial exon 2 deletion",
+            "status": "in-frame",
+            "introduces_stop_codon": False,
+            "extends_past_native_stop": False,
+        })
 
 
 class TestDeltaTypeTieBreak(unittest.TestCase):
@@ -2288,18 +2368,20 @@ class TestFormatAaChangeAndDetect(unittest.TestCase):
         # Both proteins end in '*' (the natural terminal stop); after the
         # trailing-* strip the strings are identical.
         result = _format_aa_change_and_detect("ABCDEFG*", "ABCDEFG*")
-        self.assertEqual(result, (False, None))
+        self.assertEqual(result, (False, None, False))
 
     def test_premature_stop_introduced(self):
         # Forward divergence at AA 4. Altered hits a premature stop a few AAs
         # in. Both end with the natural '*' which is stripped first.
         altered = "ABC*XYZ*"
         consensus = "ABCDEFGHIJK*"
-        stop_introduced, formatted = _format_aa_change_and_detect(altered, consensus)
+        stop_introduced, aa_change, extends_past = _format_aa_change_and_detect(altered, consensus)
         self.assertTrue(stop_introduced)
-        # The formatted string should contain the prefix "ABC" and a bracketed segment ending in "*".
-        self.assertTrue(formatted.startswith("ABC["))
-        self.assertTrue(formatted.endswith("*]"))
+        self.assertFalse(extends_past)
+        # The aa_change dict should carry the prefix "ABC" and a changed_aa
+        # segment ending in "*".
+        self.assertEqual(aa_change["prefix_aa"], "ABC")
+        self.assertTrue(aa_change["changed_aa"].endswith("*"))
 
     def test_native_stop_shifted_earlier_not_misclassified(self):
         # Critical regression: an in-frame deletion that shifts the native stop
@@ -2308,7 +2390,7 @@ class TestFormatAaChangeAndDetect(unittest.TestCase):
         # the natural stop as introduced.
         altered = "ABCDEFG*"           # native stop just shifted earlier in position
         consensus = "ABCDEFGHIJ*"      # consensus with the natural stop at the end
-        stop_introduced, _ = _format_aa_change_and_detect(altered, consensus)
+        stop_introduced, _, _ = _format_aa_change_and_detect(altered, consensus)
         self.assertFalse(stop_introduced)
 
     def test_frameshift_introduces_stop(self):
@@ -2317,12 +2399,13 @@ class TestFormatAaChangeAndDetect(unittest.TestCase):
         # (always stripped); the altered '*' must be detected as introduced.
         altered = "ABCXY*"               # frameshift garbage, then PTC
         consensus = "ABCDEFGHIJK*"
-        stop_introduced, formatted = _format_aa_change_and_detect(
+        stop_introduced, aa_change, extends_past = _format_aa_change_and_detect(
             altered, consensus, frameshift=True,
         )
         self.assertTrue(stop_introduced)
-        self.assertTrue(formatted.startswith("ABC["))
-        self.assertTrue(formatted.endswith("*]"))
+        self.assertFalse(extends_past)
+        self.assertEqual(aa_change["prefix_aa"], "ABC")
+        self.assertTrue(aa_change["changed_aa"].endswith("*"))
 
     def test_frameshift_extends_past_native_stop(self):
         # Frameshift case: altered translation diverges and never hits a PTC
@@ -2330,11 +2413,12 @@ class TestFormatAaChangeAndDetect(unittest.TestCase):
         # "protein sequence extends beyond native stop site".
         altered = "ABCXYZUVW"            # no '*' anywhere
         consensus = "ABCDEFGHIJK*"
-        stop_introduced, formatted = _format_aa_change_and_detect(
+        stop_introduced, aa_change, extends_past = _format_aa_change_and_detect(
             altered, consensus, frameshift=True,
         )
         self.assertFalse(stop_introduced)
-        self.assertEqual(formatted, EXTENDS_PAST_NATIVE_STOP)
+        self.assertIsNone(aa_change)
+        self.assertTrue(extends_past)
 
     def test_frameshift_natural_stop_in_altered_is_real_ptc(self):
         # Sanity check: for frameshift, the trailing-`*` strip must NOT apply
@@ -2343,7 +2427,7 @@ class TestFormatAaChangeAndDetect(unittest.TestCase):
         # as introduced. Without the strip-disable, the PTC would be silenced.
         altered = "ABCXYZ*"
         consensus = "ABCDEFGHIJK*"
-        stop_introduced, _ = _format_aa_change_and_detect(
+        stop_introduced, _, _ = _format_aa_change_and_detect(
             altered, consensus, frameshift=True,
         )
         self.assertTrue(stop_introduced)
@@ -2353,7 +2437,7 @@ class TestFormatAaChangeAndDetect(unittest.TestCase):
         # both natural stops are stripped, divergence-window logic runs.
         altered = "ABCDEFG*"
         consensus = "ABCDEFGHIJ*"
-        stop_introduced, _ = _format_aa_change_and_detect(altered, consensus)
+        stop_introduced, _, _ = _format_aa_change_and_detect(altered, consensus)
         self.assertFalse(stop_introduced)
 
 
@@ -2605,7 +2689,7 @@ class TestComputeConsensusContextSliceIdentity(unittest.TestCase):
         ab = wirs[0]
         self.assertEqual(ab["stop_codon_introduced"], True,
                          f"aa_change={ab.get('aa_change')}")
-        self.assertEqual(ab["aa_change"], "M[*]")
+        self.assertEqual(ab["aa_change"], {"prefix_aa": "M", "changed_aa": "*"})
 
 
 class TestConsensusFilteredInTxOrder(unittest.TestCase):
@@ -2646,7 +2730,7 @@ class TestConsensusFilteredInTxOrder(unittest.TestCase):
 class TestPrematureStopBackwardCompat(unittest.TestCase):
     """When fasta is None (or chrom/ref/alt aren't passed), detection is
     silently skipped: stop_codon_introduced and aa_change are None on every
-    aberration, and frameshift_description is unchanged."""
+    aberration, and description.introduces_stop_codon stays False."""
 
     def test_no_fasta_yields_none(self):
         # BRCA2 c.67+1G>A — known to produce an exon_skipping aberration.
@@ -2664,8 +2748,8 @@ class TestPrematureStopBackwardCompat(unittest.TestCase):
         for ab in result["aberrations"]:
             self.assertIsNone(ab["stop_codon_introduced"])
             self.assertIsNone(ab["aa_change"])
-            # The description must NOT have been extended.
-            self.assertNotIn("introduces a stop codon", ab["frameshift_description"])
+            # The description PTC flag must NOT have been flipped on.
+            self.assertFalse(ab["description"]["introduces_stop_codon"])
 
     def test_no_fasta_skips_frameshift_aberration_too(self):
         # When fasta=None, detection short-circuits regardless of aberration
@@ -2693,6 +2777,88 @@ class TestPrematureStopBackwardCompat(unittest.TestCase):
         for ab in result["aberrations"]:
             self.assertIsNone(ab["stop_codon_introduced"])
             self.assertIsNone(ab["aa_change"])
+
+
+class TestPrematureStopDescriptionMapping(unittest.TestCase):
+    """The mapping from _detect_premature_stop's outputs onto the
+    aberration['description'] booleans (sai10k_predictions.py around L1419-1427)
+    has three live branches:
+        stop_introduced=True                       -> introduces_stop_codon=True
+        frameshift=True and extends_past=True      -> extends_past_native_stop=True
+        otherwise                                  -> both stay False
+    The integration test (TestPrematureStopRad51c) covers only the in-frame PTC
+    branch via a real-genome variant. These mock-based tests exercise the
+    frameshift-PTC and extends-past branches without needing exotic real
+    variants. They also reuse the BRCA2 frameshift exon_skipping fixture from
+    TestPrematureStopBackwardCompat to keep the aberration shape realistic."""
+
+    def _frameshift_es_scores(self):
+        # Same fixture as TestPrematureStopBackwardCompat.test_no_fasta_skips_
+        # frameshift_aberration_too: BRCA2 exon 5 (size 50, 50 % 3 == 2) -> a
+        # frameshift exon_skipping aberration. We need a frameshift aberration
+        # going into the detection block so the mapping branches are reached.
+        return {
+            "DS_AG": 0.00, "DS_AL": 0.95, "DS_DG": 0.00, "DS_DL": 0.95,
+            "DP_AG": 0, "DP_AL": -1, "DP_DG": 0, "DP_DL": 49,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"],
+            "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"],
+            "STRAND": "+",
+        }
+
+    def test_frameshift_ptc_sets_introduces_stop_codon(self):
+        # _detect_premature_stop returns stop_introduced=True for a frameshift
+        # aberration -> description['introduces_stop_codon'] must flip True.
+        # Pass a non-None fasta sentinel so the detection block isn't skipped.
+        from unittest.mock import patch
+        import sai10k_predictions as sai
+        fake_aa_change = {"prefix_aa": "ABC", "changed_aa": "XY*"}
+        fake_window = {
+            "prefix_hidden_aa": 10, "visible_aa": "ABC", "changed_aa": None,
+            "suffix_hidden_aa": 100, "total_aa": 200,
+        }
+        with patch.object(sai, "_detect_premature_stop",
+                          return_value=(True, fake_aa_change, fake_window, fake_window, False)):
+            result = sai10k_compute_predictions(
+                self._frameshift_es_scores(), variant_pos=32900238,
+                chrom="13", ref="G", alt="A", fasta=object(),
+            )
+        frameshift_aberrations = [
+            ab for ab in result["aberrations"]
+            if ab.get("frameshift") is True and ab.get("affects_coding") is True
+        ]
+        self.assertTrue(frameshift_aberrations,
+                        "expected at least one coding frameshift aberration in fixture")
+        for ab in frameshift_aberrations:
+            self.assertEqual(ab["stop_codon_introduced"], True)
+            self.assertEqual(ab["aa_change"], fake_aa_change)
+            self.assertTrue(ab["description"]["introduces_stop_codon"])
+            self.assertFalse(ab["description"]["extends_past_native_stop"])
+
+    def test_extends_past_sets_extends_past_native_stop(self):
+        # _detect_premature_stop returns stop_introduced=False, extends_past=True
+        # for a frameshift aberration -> description['extends_past_native_stop']
+        # must flip True (and introduces_stop_codon must stay False).
+        from unittest.mock import patch
+        import sai10k_predictions as sai
+        with patch.object(sai, "_detect_premature_stop",
+                          return_value=(False, None, None, None, True)):
+            result = sai10k_compute_predictions(
+                self._frameshift_es_scores(), variant_pos=32900238,
+                chrom="13", ref="G", alt="A", fasta=object(),
+            )
+        frameshift_aberrations = [
+            ab for ab in result["aberrations"]
+            if ab.get("frameshift") is True and ab.get("affects_coding") is True
+        ]
+        self.assertTrue(frameshift_aberrations,
+                        "expected at least one coding frameshift aberration in fixture")
+        for ab in frameshift_aberrations:
+            self.assertEqual(ab["stop_codon_introduced"], False)
+            self.assertIsNone(ab["aa_change"])
+            self.assertFalse(ab["description"]["introduces_stop_codon"])
+            self.assertTrue(ab["description"]["extends_past_native_stop"])
 
 
 @unittest.skipUnless(os.path.exists(HG38_FASTA_PATH),
@@ -2743,9 +2909,12 @@ class TestPrematureStopRad51c(unittest.TestCase):
         self.assertTrue(ab["affects_coding"])
         self.assertFalse(ab["frameshift"])
         self.assertEqual(ab["stop_codon_introduced"], True,
-                         f"aa_change={ab['aa_change']}, desc={ab['frameshift_description']}")
-        self.assertEqual(ab["aa_change"], "TQL[WQNKVFSF*]")
-        self.assertIn(" but introduces a stop codon", ab["frameshift_description"])
+                         f"aa_change={ab['aa_change']}, description={ab['description']}")
+        self.assertEqual(ab["aa_change"], {"prefix_aa": "TQL", "changed_aa": "WQNKVFSF*"})
+        # In-frame PTC: introduces_stop_codon=True with frameshift=False so the
+        # frontend renders the " but introduces a stop codon" join.
+        self.assertTrue(ab["description"]["introduces_stop_codon"])
+        self.assertFalse(ab["frameshift"])
         # Windowed protein view (±15 aa flanking the change, with truncation
         # markers and total residue counts). Bracket aligns to the first
         # divergent residue; PTC terminates the predicted line. Pinned values:
@@ -2753,11 +2922,23 @@ class TestPrematureStopRad51c(unittest.TestCase):
         #   total WT = 346 AA, total predicted = 142 AA (terminates at PTC).
         self.assertEqual(
             ab["wt_protein_window"],
-            "[119AA]...TTEICGAPGVGKTQLCMQLAVDVQIPECFG...[197AA] (346AA total)",
+            {
+                "prefix_hidden_aa": 119,
+                "visible_aa": "TTEICGAPGVGKTQLCMQLAVDVQIPECFG",
+                "changed_aa": None,
+                "suffix_hidden_aa": 197,
+                "total_aa": 346,
+            },
         )
         self.assertEqual(
             ab["altered_protein_window"],
-            "[119AA]...TTEICGAPGVGKTQL[WQNKVFSF*] (142AA total)",
+            {
+                "prefix_hidden_aa": 119,
+                "visible_aa": "TTEICGAPGVGKTQL",
+                "changed_aa": "WQNKVFSF*",
+                "suffix_hidden_aa": 0,
+                "total_aa": 142,
+            },
         )
 
     def test_reference_mismatch_skipped(self):
@@ -2775,7 +2956,7 @@ class TestPrematureStopRad51c(unittest.TestCase):
         self.assertIsNone(ab["aa_change"])
         self.assertIsNone(ab["wt_protein_window"])
         self.assertIsNone(ab["altered_protein_window"])
-        self.assertNotIn("introduces a stop codon", ab["frameshift_description"])
+        self.assertFalse(ab["description"]["introduces_stop_codon"])
 
 
 if __name__ == "__main__":

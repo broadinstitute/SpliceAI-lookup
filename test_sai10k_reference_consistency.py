@@ -554,14 +554,13 @@ def run_new_impl(variant_pos, transcript, scores):
     regions_list = {}
     # Track aberrations where the new impl emitted its explicit
     # "could not be mapped" fallback -- distinguishing benign fallbacks from
-    # regex mismatches on unanticipated frameshift_description formats.
+    # regex mismatches on unanticipated description.label formats.
     unmappable = set()
     for a in predictions["aberrations"]:
         ab_type = a["aberration_type"]
         frameshifts_list.setdefault(ab_type, []).append(a.get("frameshift"))
         regions_list.setdefault(ab_type, []).append(_region_for_comparison(a, ab_type))
-        desc = a.get("frameshift_description") or ""
-        if "could not be mapped" in desc:
+        if (a.get("description") or {}).get("status") == "could not be mapped":
             unmappable.add(ab_type)
 
     frameshifts = {}
@@ -596,11 +595,11 @@ def run_new_impl(variant_pos, transcript, scores):
     }
 
 
-# Matches the new impl's frameshift_description formats for exon_skipping, e.g.
-#   "Exon 11 skipping (123bp coding seq.) - frameshift"
-#   "Exons 2, 3 skipping (..."
-#   "Potential exon 11 skipping (..."
-#   "Potential exons 2, 3 skipping (..."
+# Matches the new impl's description.label formats for exon_skipping, e.g.
+#   "Exon 11 skipping"
+#   "Exons 2, 3 skipping"
+#   "Potential exon 11 skipping"
+#   "Potential exons 2, 3 skipping"
 _SKIPPED_EXONS_RE = re.compile(
     r"(?:Potential\s+)?[Ee]xons?\s+([\d,\s]+?)\s+skipping",
 )
@@ -612,7 +611,7 @@ def _region_for_comparison(aberration, ab_type):
 
     For exon_skipping, the new impl doesn't expose the skipped-exon numbers
     on the aberration dict structurally -- it embeds them in
-    frameshift_description. Parse them out as a sorted tuple of ints.
+    description.label. Parse them out as a sorted tuple of ints.
 
     For whole_intron_retention, the new impl's affected_region is the
     VARIANT's containing region (intron N for intronic variants, but for
@@ -624,7 +623,7 @@ def _region_for_comparison(aberration, ab_type):
     the affected exon / host intron).
     """
     if ab_type == "exon_skipping":
-        desc = aberration.get("frameshift_description") or ""
+        desc = (aberration.get("description") or {}).get("label") or ""
         match = _SKIPPED_EXONS_RE.search(desc)
         if not match:
             return None
@@ -908,7 +907,7 @@ def _compare_one_ref(new, ref, ref_label, is_indel):
         if ab_type not in _SKIP_REGION_COMPARE:
             # Treat None as a soft divergence when we can attribute it to a
             # known ref-parser or new-impl mapping limitation:
-            #   * exon_skipping: new impl's frameshift_description literally
+            #   * exon_skipping: new impl's description.status literally
             #     says "could not be mapped" (new_is_fallback) OR ref's
             #     Lost_exons is NA (rr is None)
             #   * pseudoexon: ref's find_pseudoexon_position returns "NA|NA"
@@ -916,7 +915,7 @@ def _compare_one_ref(new, ref, ref_label, is_indel):
             #     (spliceai_parser.py:281-289). When rr is None but nr has a
             #     value, that's a ref limitation, not a new-impl bug.
             # A None that doesn't match one of these conditions means the
-            # regex failed on an unexpected frameshift_description format --
+            # regex failed on an unexpected description.label format --
             # which is a test-harness bug, not a benign divergence, so it
             # should fail hard.
             # Note: if BOTH sides are None, `nr != rr` is False and no
