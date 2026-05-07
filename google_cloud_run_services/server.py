@@ -1159,7 +1159,14 @@ def log_event(name):
     ])
 
 
-@app.route('/', strict_slashes=False, defaults={'path': ''})
+@app.route('/', strict_slashes=False)
+def index():
+    # Bare-root probes (uptime checkers, scanners polling `*.run.app/`) would
+    # otherwise generate 404 noise that drowns out real client errors in the
+    # monitoring breakdown. Return a tiny 200 so they look like normal traffic.
+    return Response("OK\n", status=200, mimetype='text/plain')
+
+
 @app.route('/<path:path>/')
 def catch_all(path):
     # Serve as text/plain so a `path` containing HTML/JS can't be rendered as

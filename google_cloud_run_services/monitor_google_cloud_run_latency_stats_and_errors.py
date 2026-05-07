@@ -168,7 +168,13 @@ def sample_count(client, metric, start, end, revisions=None):
 
 
 def request_counts(client, start, end, revisions=None):
-    """Return {service: {2xx,3xx,4xx,5xx}} sums over the window."""
+    """Return {service: {response_code_int: count}} sums over the window.
+
+    Grouping by raw `response_code` (rather than `response_code_class`) lets the
+    caller derive class totals AND show a per-code breakdown — useful when one
+    code (e.g. 404 from probe traffic) dominates the class total and would
+    otherwise mask real 400/429/etc. errors.
+    """
     span = max(60, int((end - start).total_seconds()))
     f = 'metric.type="run.googleapis.com/request_count"'
     if revisions:
@@ -183,13 +189,16 @@ def request_counts(client, start, end, revisions=None):
             alignment_period={"seconds": span},
             per_series_aligner=monitoring_v3.Aggregation.Aligner.ALIGN_SUM,
             cross_series_reducer=monitoring_v3.Aggregation.Reducer.REDUCE_SUM,
-            group_by_fields=["resource.label.service_name", "metric.label.response_code_class"],
+            group_by_fields=["resource.label.service_name", "metric.label.response_code"],
         ),
     }):
         svc = ts.resource.labels.get("service_name", "?")
-        cls = ts.metric.labels.get("response_code_class", "?")
+        try:
+            code = int(ts.metric.labels.get("response_code", ""))
+        except ValueError:
+            continue
         for p in ts.points:
-            out.setdefault(svc, {})[cls] = out.get(svc, {}).get(cls, 0) + p.value.int64_value
+            out.setdefault(svc, {})[code] = out.get(svc, {}).get(code, 0) + p.value.int64_value
     return out
 
 
@@ -259,12 +268,25 @@ def snapshot(client, args):
 
     print("=== Response codes ===")
     codes = request_counts(client, start, now, revisions=prod_revs)
-    totals = {svc: sum(codes.get(svc, {}).get(k, 0) for k in ("2xx", "3xx", "4xx", "5xx")) for svc in SERVICES}
     for svc in SERVICES:
-        c = codes.get(svc, {})
-        total = totals[svc]
-        rate = c.get("5xx", 0) / total * 100 if total else 0
-        print(f"  {svc:<14}  2xx={c.get('2xx',0):<5} 3xx={c.get('3xx',0):<3} 4xx={c.get('4xx',0):<5} 5xx={c.get('5xx',0):<3}  ({rate:.2f}% 5xx of {total})")
+        by_code = codes.get(svc, {})
+        classes = collections.Counter()
+        for code, c in by_code.items():
+            classes[f"{code // 100}xx"] += c
+        total = sum(classes.values())
+        rate = classes["5xx"] / total * 100 if total else 0
+        print(f"  {svc:<14}  2xx={classes['2xx']:<5} 3xx={classes['3xx']:<3} "
+              f"4xx={classes['4xx']:<5} 5xx={classes['5xx']:<3}  "
+              f"({rate:.2f}% 5xx of {total})")
+        # Per-code breakdown for 4xx/5xx so probe noise (e.g. 404 on `/`)
+        # doesn't drown out real client/server errors.
+        for cls in ("4xx", "5xx"):
+            items = sorted(
+                ((code, c) for code, c in by_code.items() if code // 100 == int(cls[0]) and c),
+                key=lambda x: -x[1],
+            )
+            if items:
+                print(f"                  {cls}: " + ", ".join(f"{code}={c}" for code, c in items))
     print()
 
     print("=== CPU / Memory utilization ===")
