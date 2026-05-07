@@ -266,11 +266,11 @@ def snapshot(client, args):
         print("  WARNING: error log query hit 1000-entry cap — older errors in window are truncated.")
     print()
 
-    print("=== Response codes (404s ignored as probe noise) ===")
+    print("=== Response codes (3xx and 404s ignored as probe/redirect noise) ===")
     codes = request_counts(client, start, now, revisions=prod_revs)
     for svc in SERVICES:
         all_codes = codes.get(svc, {})
-        by_code = {code: c for code, c in all_codes.items() if code != 404}
+        by_code = {code: c for code, c in all_codes.items() if code != 404 and code // 100 != 3}
         classes = collections.Counter()
         for code, c in by_code.items():
             classes[f"{code // 100}xx"] += c
@@ -278,7 +278,7 @@ def snapshot(client, args):
         rate = classes["5xx"] / total * 100 if total else 0
         ignored = all_codes.get(404, 0)
         ignored_note = f"; +{ignored} 404s ignored" if ignored else ""
-        print(f"  {svc:<14}  2xx={classes['2xx']:<5} 3xx={classes['3xx']:<3} "
+        print(f"  {svc:<14}  2xx={classes['2xx']:<5} "
               f"4xx={classes['4xx']:<5} 5xx={classes['5xx']:<3}  "
               f"({rate:.2f}% 5xx of {total}{ignored_note})")
         for cls in ("4xx", "5xx"):
