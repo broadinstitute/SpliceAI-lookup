@@ -21,7 +21,9 @@ Examples:
 import argparse
 import collections
 import json
+import select
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -381,6 +383,7 @@ def main():
 
     client = monitoring_v3.MetricServiceClient()
     while True:
+        print("Processing...")
         try:
             snapshot(client, args)
         except Exception as e:
@@ -390,9 +393,20 @@ def main():
         if args.once:
             return
         next_at = datetime.now(timezone.utc) + timedelta(minutes=args.interval)
-        print(f"\n[next snapshot at {next_at.strftime('%H:%M:%SZ')} — Ctrl-C to stop]\n", flush=True)
+        print(f"\n[next snapshot at {next_at.strftime('%H:%M:%SZ')} — Enter to run now, Ctrl-C to stop]\n", flush=True)
         try:
-            time.sleep(args.interval * 60)
+            deadline = time.monotonic() + args.interval * 60
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                # select() on stdin lets Enter break the wait early without
+                # putting the terminal into raw mode. stdin stays line-buffered,
+                # so it only becomes readable after a newline is typed.
+                ready, _, _ = select.select([sys.stdin], [], [], remaining)
+                if ready:
+                    sys.stdin.readline()
+                    break
         except KeyboardInterrupt:
             return
 
