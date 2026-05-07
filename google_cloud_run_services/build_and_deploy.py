@@ -456,6 +456,10 @@ def main():
                         print(f"To promote the dev revision of {service} to production, run:")
                         print(f"  gcloud --project {GCLOUD_PROJECT} run services update-traffic {service} "
                               f"--region us-central1 --to-tags dev=100")
+                    else:
+                        # Required when a previous --dev deploy left the service in manual-traffic mode; otherwise `gcloud run deploy` keeps traffic on the old revision.
+                        run(f"gcloud --project {GCLOUD_PROJECT} run services update-traffic {service} "
+                            f"--region us-central1 --to-latest")
 
                                 # --add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
                 # --add-volume-mount=volume=ref,mount-path=/ref \
