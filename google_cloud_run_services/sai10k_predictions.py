@@ -1283,7 +1283,7 @@ def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=N
             aberration['stop_codon_introduced'] = stop_introduced
             aberration['aa_change'] = aa_change
             if aberration.get('frameshift_description'):
-                if stop_introduced is True:
+                if stop_introduced is True and aberration.get('frameshift') is not True:
                     aberration['frameshift_description'] += ' but introduces a stop codon'
                 elif (aberration.get('frameshift') is True
                         and aa_change == EXTENDS_PAST_NATIVE_STOP):
