@@ -6,6 +6,7 @@ Loops forever, printing every --interval minutes (default 30):
   - response-code totals (2xx/3xx/4xx/5xx)
   - CPU and memory utilization (p95/p99)
   - request latency (p50/p95/p99) with sample counts
+  - container cold-start count and startup latency (p50/p95/p99)
 
 If a baseline window is provided, latency p50/p95/p99 are also compared
 to that window so regressions stand out.
@@ -315,6 +316,25 @@ def snapshot(client, args):
                 else:
                     cells.append(f"{fmt_s(pre)} → {fmt_s(post)} ({(post-pre)/pre*100:+.0f}%)")
         rows.append(cells)
+    print_table(rows, aligns=['l', 'r', 'r', 'r', 'r'])
+    print()
+
+    # Container startup latency distribution — count = number of cold starts in window,
+    # percentiles = how long each new instance took to become ready to serve requests.
+    print("=== Container startup (cold starts; p50/p95/p99 in s) ===")
+    startup_metric = "run.googleapis.com/container/startup_latencies"
+    startup = percentiles(client, startup_metric, start, now, revisions=prod_revs)
+    startup_n = sample_count(client, startup_metric, start, now, revisions=prod_revs)
+    rows = [["service", "n", "p50", "p95", "p99"]]
+    for svc in SERVICES:
+        sv = startup.get(svc, {})
+        rows.append([
+            svc,
+            str(startup_n.get(svc, 0)),
+            fmt_s(sv.get('p50')),
+            fmt_s(sv.get('p95')),
+            fmt_s(sv.get('p99')),
+        ])
     print_table(rows, aligns=['l', 'r', 'r', 'r', 'r'])
 
 
