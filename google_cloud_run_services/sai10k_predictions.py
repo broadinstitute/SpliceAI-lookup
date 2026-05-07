@@ -232,9 +232,8 @@ def _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_end
     Both acceptor and donor come from the SAME exon, so the increased_exon_inclusion
     condition (DP_AG == DP_NA AND DP_DG == DP_ND) is geometrically satisfiable.
 
-    Also returns the adjacent exons' boundaries (prev_eend, next_estart,
-    next_eend) in genomic order, used by the cryptic subflow's
-    orientation checks.
+    Also returns the adjacent exons' boundaries (prev_eend, next_estart)
+    in genomic order, used by the cryptic subflow's orientation checks.
 
     Returns dict with:
         geo_na, geo_nd: 1-based genomic positions of native acceptor / donor
@@ -242,7 +241,7 @@ def _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_end
         dp_na, dp_nd:   offsets from variant_pos
         native_exon_size: size of the associated native exon (bp)
         assoc_idx:      0-based genomic index of the associated exon
-        prev_eend, next_estart, next_eend: adjacent exon boundaries
+        prev_eend, next_estart: adjacent exon boundaries
                         (genomic order), or None at the transcript ends
     """
     if not affected_region or not exon_starts:
@@ -281,7 +280,6 @@ def _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_end
 
     prev_eend = exon_ends[assoc_idx - 1] if assoc_idx > 0 else None
     next_estart = exon_starts[assoc_idx + 1] if assoc_idx + 1 < num_exons else None
-    next_eend = exon_ends[assoc_idx + 1] if assoc_idx + 1 < num_exons else None
 
     return {
         'geo_na': geo_na,
@@ -292,7 +290,6 @@ def _get_native_splice_sites(affected_region, variant_pos, exon_starts, exon_end
         'assoc_idx': assoc_idx,
         'prev_eend': prev_eend,
         'next_estart': next_estart,
-        'next_eend': next_eend,
     }
 
 

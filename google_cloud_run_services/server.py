@@ -963,6 +963,9 @@ def run_splice_prediction_tool(tool_name):
     if genome_version not in ("37", "38"):
         return error_response(f'Invalid "hg" value: "{genome_version}". The value must be either "37" or "38". For example: {example_url}\n', source=tool_name)
 
+    if genome_version != GENOME_VERSION:
+        return error_response(f'This service only handles hg{GENOME_VERSION} requests, but received hg={genome_version}. Route hg{genome_version} requests to the matching per-genome service.\n', source=tool_name)
+
     distance_param = params.get("distance", DEFAULT_DISTANCE)
     try:
         distance_param = int(distance_param)
