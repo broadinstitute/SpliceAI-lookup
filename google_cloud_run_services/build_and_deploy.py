@@ -450,6 +450,7 @@ def main():
 --allow-unauthenticated \
 --memory 4Gi \
 --cpu 2 \
+--cpu-boost \
 {dev_flags}""")
 
                     if args.dev:

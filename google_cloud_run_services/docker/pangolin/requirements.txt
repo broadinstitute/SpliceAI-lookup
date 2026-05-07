@@ -15,5 +15,6 @@ psycopg2==2.9.9
 # Pangolin dependencies
 numpy==1.26.4
 pandas==2.2.2
-torch==2.2.1
+# torch is installed earlier in the Dockerfile from the CPU-only wheel index;
+# don't list it here so pip doesn't get an excuse to re-resolve from PyPI.
 

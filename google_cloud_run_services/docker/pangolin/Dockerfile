@@ -11,7 +11,11 @@ RUN apt update && apt-get install --no-install-recommends -y \
     liblzma-dev \
     zlib1g-dev
 
-RUN python3 -m pip install torch==2.2.1 -f https://download.pytorch.org/whl/torch_stable.html
+# Pull torch from PyTorch's CPU-only wheel index — the default PyPI wheel
+# bundles CUDA/cuDNN/cuBLAS (~2 GB on disk) that we never use on Cloud Run.
+# Important: this must come before the requirements.txt install below; if
+# pip first resolves torch from PyPI it will pick the GPU build.
+RUN python3 -m pip install torch==2.2.1 --index-url https://download.pytorch.org/whl/cpu
 
 RUN apt update && apt-get install --no-install-recommends -y build-essential libpq-dev
 

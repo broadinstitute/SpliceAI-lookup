@@ -11,7 +11,10 @@ RUN apt update && apt-get install --no-install-recommends -y \
     liblzma-dev \
     zlib1g-dev
 
-RUN python3 -m pip install tensorflow==2.16.1
+# tensorflow-cpu (vs the default tensorflow wheel) skips the bundled CUDA
+# libraries (~1.5 GB) we never use on Cloud Run — `import tensorflow` and the
+# rest of the API are unchanged.
+RUN python3 -m pip install tensorflow-cpu==2.16.1
 
 RUN apt update && apt-get install --no-install-recommends -y build-essential libpq-dev
 
