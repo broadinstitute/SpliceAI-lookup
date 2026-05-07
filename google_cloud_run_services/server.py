@@ -1,3 +1,5 @@
+import time
+_PROCESS_START_TIME = time.time()
 from datetime import datetime
 import gzip
 import json
@@ -6,7 +8,6 @@ import os
 import psycopg2
 import re
 import threading
-import time
 import traceback
 
 
@@ -123,6 +124,12 @@ if TOOL == "spliceai":
             return f"{self.chrom}-{self.pos}-{self.ref}-{self.alts[0]}"
 
     SPLICEAI_ANNOTATOR = {}
+    # genome_version -> bare mito sequence name as it appears in the FASTA
+    # (with any leading "chr" stripped, since spliceai.get_delta_scores calls
+    # normalise_chrom() which re-adds it based on the fasta's first key).
+    # Populated lazily by init_spliceai. hg19's fasta uses "MT", hg38's uses
+    # "chrM"; without this remap, user-submitted "M"/"chrM" 500s on hg19.
+    MITO_CHROM_NAME = {}
     SPLICEAI_ANNOTATION_PATHS = {
         ("37", "basic"): f"/gencode.{GENCODE_VERSION}lift37.basic.annotation.txt.gz",
         ("38", "basic"): f"/gencode.{GENCODE_VERSION}.basic.annotation.txt.gz",
@@ -155,21 +162,34 @@ RATE_LIMIT_ERROR_MESSAGE = (
 
 
 def init_spliceai(genome_version, basic_or_comprehensive):
-    
+
     if (genome_version, basic_or_comprehensive) not in SPLICEAI_ANNOTATOR:
+        t0 = time.time()
+        print(f"[startup pid={os.getpid()}] init_spliceai({genome_version}, {basic_or_comprehensive}) START "
+              f"+{t0 - _PROCESS_START_TIME:.2f}s", flush=True)
         SPLICEAI_ANNOTATOR[(genome_version, basic_or_comprehensive)] = Annotator(
             FASTA_PATH[genome_version],
             SPLICEAI_ANNOTATION_PATHS[(genome_version, basic_or_comprehensive)]
         )
+        print(f"[startup pid={os.getpid()}] init_spliceai({genome_version}, {basic_or_comprehensive}) "
+              f"Annotator() ready in {time.time() - t0:.2f}s", flush=True)
+        if genome_version not in MITO_CHROM_NAME:
+            keys = set(SPLICEAI_ANNOTATOR[(genome_version, basic_or_comprehensive)].ref_fasta.keys())
+            for candidate in ('chrM', 'chrMT', 'MT', 'M'):
+                if candidate in keys:
+                    MITO_CHROM_NAME[genome_version] = candidate[3:] if candidate.startswith('chr') else candidate
+                    break
 
 
 def init_transcript_annotations(genome_version, basic_or_comprehensive):
     if (genome_version, basic_or_comprehensive) in SHARED_TRANSCRIPT_ANNOTATIONS:
         return
 
-    # init shared transcript annotations
+    t0 = time.time()
     with gzip.open(SHARED_TRANSCRIPT_ANNOTATION_PATHS[(genome_version, basic_or_comprehensive)], "rt") as ta_f:
         SHARED_TRANSCRIPT_ANNOTATIONS[(genome_version, basic_or_comprehensive)] = json.load(ta_f)
+    print(f"[startup pid={os.getpid()}] init_transcript_annotations({genome_version}, {basic_or_comprehensive}) "
+          f"loaded in {time.time() - t0:.2f}s (+{time.time() - _PROCESS_START_TIME:.2f}s since start)", flush=True)
 
 
 def error_response(error_message, source=None, status=400):
@@ -558,6 +578,12 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
             "error": str(e),
         }
 
+    # spliceai's normalise_chrom() handles "chr" prefix mismatches but not the
+    # M↔MT alias, so a user submitting M/chrM against hg19 (which uses "MT")
+    # would otherwise hit KeyError. Remap to whichever name the fasta uses.
+    if chrom.upper() in {"M", "MT"} and genome_version in MITO_CHROM_NAME:
+        chrom = MITO_CHROM_NAME[genome_version]
+
     # generate error message if variant falls outside annotated exons or introns
     record = VariantRecord(chrom, pos, ref, alt)
     try:
@@ -879,6 +905,9 @@ def run_pangolin():
     return run_splice_prediction_tool(tool_name="pangolin")
 
 
+_FIRST_REQUEST_LOGGED = False
+
+
 def run_splice_prediction_tool(tool_name):
     """Handles API request for splice prediction.
 
@@ -890,6 +919,12 @@ def run_splice_prediction_tool(tool_name):
     Args:
         tool_name (str): "spliceai" or "pangolin"
     """
+
+    global _FIRST_REQUEST_LOGGED
+    if not _FIRST_REQUEST_LOGGED:
+        _FIRST_REQUEST_LOGGED = True
+        print(f"[startup pid={os.getpid()}] first request received "
+              f"+{time.time() - _PROCESS_START_TIME:.2f}s after process start", flush=True)
 
     if tool_name != TOOL:
         return error_response(f"ERROR: This server is configured to run {TOOL} rather than {tool_name}.\n", source=tool_name)
@@ -1133,6 +1168,10 @@ def catch_all(path):
         status=404,
         mimetype='text/plain',
     )
+
+
+print(f"[startup pid={os.getpid()}] server.py module loaded in "
+      f"{time.time() - _PROCESS_START_TIME:.2f}s (tool={TOOL}, genome={GENOME_VERSION})", flush=True)
 
 
 if '__main__' == __name__ or os.environ.get('RUNNING_ON_GOOGLE_CLOUD_RUN'):

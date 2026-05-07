@@ -449,7 +449,7 @@ def main():
 --update-secrets=DB_PASSWORD=spliceai-lookup-db-password:2 \
 --allow-unauthenticated \
 --memory 4Gi \
---cpu 4 \
+--cpu 2 \
 {dev_flags}""")
 
                     if args.dev:
