@@ -393,9 +393,11 @@ def _whole_intron_retention_native_match(geo_al, geo_dl, strand, exon_starts, ex
     """
     Verify that geo_dl matches a native donor and geo_al matches a native
     acceptor of a SINGLE intron in the reference transcript (i.e. they bound
-    the same intron between adjacent exons i and i+1).
+    the same intron between adjacent exons i and i+1). Returns the matched
+    intron's biological (1-based, transcript-orientation) number, or None if
+    no match.
 
-    Without this check, the loss branch can emit "(potential) whole intron
+    Without this check, the loss branch can emit "(potential) intron N
     retention" with a misleading size when SpliceAI's max_distance window is
     too narrow to capture both native sites and the weaker partner peak lands
     on a cryptic position. Example: BRCA2 c.-40+5G>T at max_distance=500
@@ -403,9 +405,10 @@ def _whole_intron_retention_native_match(geo_al, geo_dl, strand, exon_starts, ex
     rather than the native acceptor of exon 2 (754bp downstream).
     """
     if len(exon_starts) < 2 or len(exon_ends) < 2:
-        return False
+        return None
     is_reverse = strand == '-'
-    for i in range(len(exon_starts) - 1):
+    num_exons = len(exon_starts)
+    for i in range(num_exons - 1):
         if is_reverse:
             native_donor = exon_starts[i + 1]
             native_acceptor = exon_ends[i]
@@ -413,8 +416,8 @@ def _whole_intron_retention_native_match(geo_al, geo_dl, strand, exon_starts, ex
             native_donor = exon_ends[i]
             native_acceptor = exon_starts[i + 1]
         if geo_dl == native_donor and geo_al == native_acceptor:
-            return True
-    return False
+            return num_exons - 1 - i if is_reverse else i + 1
+    return None
 
 
 def sai10k_determine_aberrations(
@@ -533,7 +536,8 @@ def sai10k_determine_aberrations(
             ab = make('exon_skipping', 'loss')
             ab['_potential'] = is_potential
             aberrations.append(ab)
-        elif _whole_intron_retention_native_match(geo_al, geo_dl, strand, exon_starts, exon_ends):
+        elif (matched_intron_num := _whole_intron_retention_native_match(
+                geo_al, geo_dl, strand, exon_starts, exon_ends)) is not None:
             # Only emit whole_intron_retention when the predicted lost donor
             # and acceptor map to the native splice sites bounding a single
             # native intron. Suppresses misleading calls with a wrong intron
@@ -541,6 +545,7 @@ def sai10k_determine_aberrations(
             # native sites (e.g. BRCA2 c.-40+5G>T at max_distance=500).
             ab = make('whole_intron_retention', 'loss')
             ab['_potential'] = is_potential
+            ab['affected_intron_number'] = matched_intron_num
             aberrations.append(ab)
 
     # -------------------------------------------------------------------
@@ -863,7 +868,7 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             aberration['frameshift'] = None
             aberration['start_codon_lost'] = None
             aberration['stop_codon_lost'] = None
-            return 'non-coding'
+            return 'non-coding change'
         if start_lost:
             aberration['frameshift'] = None
             aberration['start_codon_lost'] = True
@@ -999,7 +1004,12 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             status = set_coding_fields(aberration, cds_size, start_lost=False, stop_lost=False)
             aberration['size'] = intron_size
             aberration['size_type'] = 'intron'
-            label = 'Potential whole intron retention' if is_potential else 'Whole intron retention'
+            # affected_intron_number is set at emission (loss branch) when the
+            # geo_dl/geo_al pair matches the native sites of a single intron.
+            intron_num = aberration.get('affected_intron_number')
+            prefix = 'Potential intron' if is_potential else 'Intron'
+            label = f'{prefix} {intron_num} retention' if intron_num is not None else (
+                'Potential whole intron retention' if is_potential else 'Whole intron retention')
             size_text = f'{cds_size}bp coding seq.' if aberration['affects_coding'] else f'{intron_size}bp'
             aberration['frameshift_description'] = f'{label} ({size_text}) - {status}'
         else:
@@ -1055,7 +1065,7 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
                 aberration['frameshift'] = False if affects_coding else None
                 aberration['start_codon_lost'] = False if affects_coding else None
                 aberration['stop_codon_lost'] = False if affects_coding else None
-                label_status = 'coding' if affects_coding else 'non-coding'
+                label_status = 'coding' if affects_coding else 'non-coding change'
             else:
                 aberration['affects_coding'] = None
                 aberration['cds_size'] = None
@@ -1078,6 +1088,42 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             aberration['frameshift'] = None
             aberration['frameshift_description'] = f'{aberration_type.replace("_", " ")} - size unclear'
             return
+        native = aberration.get('_native') or {}
+        # Resolve the human-readable affected exon number (1-based, transcript
+        # orientation) so partial_exon_deletion descriptions can read
+        # "partial exon N deletion". Falls back to no number if assoc_idx is
+        # unavailable.
+        assoc_idx = native.get('assoc_idx')
+        if assoc_idx is not None and 0 <= assoc_idx < len(exon_starts):
+            num_exons = len(exon_starts)
+            affected_exon_number = num_exons - assoc_idx if strand == '-' else assoc_idx + 1
+        else:
+            affected_exon_number = None
+        if aberration_type == 'partial_exon_deletion':
+            aberration['affected_exon_number'] = affected_exon_number
+            consequence = (f'partial exon {affected_exon_number} deletion'
+                           if affected_exon_number is not None
+                           else 'partial exon deletion')
+        else:
+            # partial_intron_retention: gain_B_acceptor activates a cryptic
+            # acceptor in the upstream intron (in transcript order) of the
+            # variant's associated exon; gain_B_donor activates a cryptic
+            # donor in the downstream intron. Biological intron N sits
+            # between exon N and exon N+1, so:
+            #   acceptor branch -> intron (bio_exon - 1)
+            #   donor branch    -> intron bio_exon
+            # The orientation gates upstream guarantee the relevant neighbor
+            # exon exists, so intron numbering won't underflow.
+            if affected_exon_number is not None:
+                affected_intron_number = (affected_exon_number - 1
+                                          if aberration.get('_branch') == 'gain_B_acceptor'
+                                          else affected_exon_number)
+            else:
+                affected_intron_number = None
+            aberration['affected_intron_number'] = affected_intron_number
+            consequence = (f'partial intron {affected_intron_number} retention'
+                           if affected_intron_number is not None
+                           else 'partial intron retention')
         # Cryptic acceptor/donor site lands past the opposite native exon
         # boundary. The reference parser still emits the call but its
         # get_partial_seq step returns "deletion greater than exon size"
@@ -1092,12 +1138,11 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             aberration['stop_codon_lost'] = None
             shift_type = 'Acceptor' if aberration.get('_branch') == 'gain_B_acceptor' else 'Donor'
             aberration['frameshift_description'] = (
-                f'{shift_type} shift ({abs(partial_size)}bp partial exon deletion) '
+                f'{shift_type} shift ({abs(partial_size)}bp {consequence}) '
                 f'- deletion greater than exon size')
             return
         display_size = abs(partial_size)
         # Identify the native site and the predicted cryptic site for the active side.
-        native = aberration.get('_native') or {}
         branch = aberration.get('_branch', '')
         if branch == 'gain_B_acceptor':
             native_site = native.get('geo_na')
@@ -1143,7 +1188,6 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
         status = set_coding_fields(aberration, cds_size, start_lost, stop_lost)
         aberration['size'] = display_size
         aberration['size_type'] = 'partial'
-        consequence = 'partial exon deletion' if aberration_type == 'partial_exon_deletion' else 'partial intron retention'
         size_text = f'{cds_size}bp coding seq.' if aberration['affects_coding'] else f'{display_size}bp'
         aberration['frameshift_description'] = f'{shift_type} shift ({size_text} {consequence}) - {status}'
         return
@@ -1252,14 +1296,18 @@ def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=N
     # Premature-stop detection (PDF feedback comment #5). Runs after annotation
     # so it can read affects_coding / frameshift / start_codon_lost /
     # stop_codon_lost from the annotation step. Mutates each aberration:
-    #   stop_codon_introduced: True | False | None
-    #   aa_change:             formatted "ABC[XYZ*]" string, the
-    #                          EXTENDS_PAST_NATIVE_STOP sentinel for a
-    #                          frameshift extension, or None.
+    #   stop_codon_introduced:    True | False | None
+    #   aa_change:                formatted "ABC[XYZ*]" string, the
+    #                             EXTENDS_PAST_NATIVE_STOP sentinel for a
+    #                             frameshift extension, or None.
+    #   wt_protein_window:        ±15-aa context around the change for the WT
+    #                             protein, with truncation/total markers (PTC
+    #                             cases only; None otherwise).
+    #   altered_protein_window:   same window for the predicted altered protein.
     # When the detector signals a PTC, we extend frameshift_description inline.
-    # The detector silently returns (None, None) when fasta=None (no genome
-    # FASTA available) or when chrom/ref/alt aren't supplied — preserves
-    # backward compatibility for any caller that doesn't supply them.
+    # The detector silently returns (None, None, None, None) when fasta=None
+    # (no genome FASTA available) or when chrom/ref/alt aren't supplied —
+    # preserves backward compatibility for any caller that doesn't supply them.
     t2 = time.perf_counter()
     n_premature_stop_calls = 0
     # Compute the per-transcript consensus context lazily on the first
@@ -1276,21 +1324,27 @@ def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=N
                 consensus_ctx = _compute_consensus_context(transcript_scores, fasta, chrom)
                 consensus_ctx_computed = True
             n_premature_stop_calls += 1
-            stop_introduced, aa_change = _detect_premature_stop(
+            stop_introduced, aa_change, wt_window, altered_window = _detect_premature_stop(
                 transcript_scores, aberration, fasta, chrom, ref, alt, variant_pos,
                 consensus_ctx=consensus_ctx,
             )
             aberration['stop_codon_introduced'] = stop_introduced
             aberration['aa_change'] = aa_change
+            aberration['wt_protein_window'] = wt_window
+            aberration['altered_protein_window'] = altered_window
             if aberration.get('frameshift_description'):
                 if stop_introduced is True and aberration.get('frameshift') is not True:
                     aberration['frameshift_description'] += ' but introduces a stop codon'
+                elif stop_introduced is True and aberration.get('frameshift') is True:
+                    aberration['frameshift_description'] += ', introduces a stop codon'
                 elif (aberration.get('frameshift') is True
                         and aa_change == EXTENDS_PAST_NATIVE_STOP):
                     aberration['frameshift_description'] += ' and extends past the native stop'
         else:
             aberration['stop_codon_introduced'] = None
             aberration['aa_change'] = None
+            aberration['wt_protein_window'] = None
+            aberration['altered_protein_window'] = None
     premature_stop_ms = (time.perf_counter() - t2) * 1000
 
     # Strip internal-only fields before returning to callers (and ultimately the
@@ -1944,6 +1998,92 @@ def _translate_spans(spans, first_eframe, fasta, chrom, strand, apply_variant_ar
 EXTENDS_PAST_NATIVE_STOP = 'protein sequence extends beyond native stop site'
 
 
+def _build_protein_windows(altered_aa, consensus_aa, frameshift,
+                           prefix_offset_aa=0, total_wt_aa=None, flank=15):
+    """Build human-readable WT vs. altered protein windows for the popup tooltip.
+
+    Caller contract: only invoked when a PTC has been detected (i.e.
+    `_format_aa_change_and_detect` returned `stop_introduced=True`), so
+    `altered_aa` is guaranteed to contain '*'. Non-PTC cases are not handled.
+
+    Returns (wt_display, altered_display) — both with the format
+    "[NAA]...VISIBLE...[NAA] (TotalAA total)", where the leading/trailing
+    "[NAA]..." markers indicate residues truncated from the displayed window
+    and "(TotalAA total)" gives the full-protein residue count (excluding the
+    natural stop). The altered line terminates at the bracketed PTC and has no
+    trailing residues. Returns (None, None) if the two translations are
+    identical (defensive — shouldn't occur given the caller contract).
+
+    Inputs `altered_aa` and `consensus_aa` are the per-aberration translations
+    starting at row_anchor; `prefix_offset_aa` is the count of WT residues that
+    precede consensus_aa in the full protein; `total_wt_aa` is the full-protein
+    WT residue count (excluding terminator). `flank` controls how many residues
+    of context are shown on either side of the change.
+
+    Bracket convention in altered_display: '[' opens at the first divergent
+    residue (forward_diff) and ']' closes after the premature stop. This is
+    intentionally aligned to the biological change boundary, not to the fixed
+    3-residue prefix used by `_format_aa_change_and_detect`'s compact
+    `aa_change`.
+    """
+    # Mirror _format_aa_change_and_detect's trailing-* trim. Consensus always
+    # strips the natural stop; altered only strips it when not frameshift
+    # (frameshift extension reads the natural stop's bases out of frame, so a
+    # trailing '*' there is meaningful — irrelevant for PTC cases since the
+    # first '*' is always the PTC, but kept for parity with the format helper).
+    if consensus_aa.endswith('*'):
+        consensus_aa = consensus_aa[:-1]
+    if not frameshift and altered_aa.endswith('*'):
+        altered_aa = altered_aa[:-1]
+
+    forward_diff_raw = _find_difference_point(altered_aa, consensus_aa, 'forward')
+    if forward_diff_raw == 'identical' or not isinstance(forward_diff_raw, int):
+        return (None, None)
+    # _find_difference_point returns 1-based forward positions; convert to a
+    # 0-based index of the first divergent residue for slicing.
+    diff_idx = forward_diff_raw - 1
+
+    # Caller contract guarantees altered_aa contains '*'; find('*') returns the
+    # 0-based PTC position. The changed region ends one past the PTC; the
+    # consensus has no symmetric end so we just render flank residues
+    # downstream of diff_idx in the WT.
+    altered_stop_local = altered_aa.find('*')
+    altered_change_end = altered_stop_local + 1
+    consensus_change_end = diff_idx
+
+    if total_wt_aa is None:
+        total_wt_aa = prefix_offset_aa + len(consensus_aa)
+    altered_total_aa = prefix_offset_aa + altered_stop_local
+
+    pre_start = max(0, diff_idx - flank)
+
+    # WT line: leading-truncation marker, plain residues, trailing-truncation marker.
+    wt_post_end = min(len(consensus_aa), consensus_change_end + flank)
+    wt_pre_count = prefix_offset_aa + pre_start
+    wt_post_count = max(0, total_wt_aa - (prefix_offset_aa + wt_post_end))
+    wt_display = (
+        (f'[{wt_pre_count}AA]...' if wt_pre_count > 0 else '')
+        + consensus_aa[pre_start:wt_post_end]
+        + (f'...[{wt_post_count}AA]' if wt_post_count > 0 else '')
+        + f' ({total_wt_aa}AA total)'
+    )
+
+    # Altered line: leading-truncation marker, prefix identical to WT,
+    # [changed region terminating at PTC]. The predicted protein terminates at
+    # the PTC, so no trailing residues are shown.
+    altered_pre_count = prefix_offset_aa + pre_start
+    altered_prefix = altered_aa[pre_start:diff_idx]
+    altered_changed = altered_aa[diff_idx:altered_change_end]
+    altered_display = (
+        (f'[{altered_pre_count}AA]...' if altered_pre_count > 0 else '')
+        + altered_prefix
+        + '[' + altered_changed + ']'
+        + f' ({altered_total_aa}AA total)'
+    )
+
+    return (wt_display, altered_display)
+
+
 def _format_aa_change_and_detect(altered_aa, consensus_aa, frameshift=False):
     """Return (stop_introduced, formatted_aa_change) for an aberration.
 
@@ -2062,9 +2202,12 @@ def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt
     in the translated CDS-clamped spans, returns
     (False, EXTENDS_PAST_NATIVE_STOP).
 
-    Returns (stop_introduced, aa_change_string), where stop_introduced is
-    True/False/None (None = detection skipped, e.g. mitochondrial transcript,
-    missing FASTA, indel straddling a splice boundary, reference mismatch).
+    Returns (stop_introduced, aa_change_string, wt_protein_window,
+    altered_protein_window). `stop_introduced` is True/False/None (None =
+    detection skipped, e.g. mitochondrial transcript, missing FASTA, indel
+    straddling a splice boundary, reference mismatch). The two window strings
+    are populated when a PTC is introduced (or in-frame change is detected)
+    and None otherwise.
 
     `consensus_ctx`, when provided, is a `_compute_consensus_context` result;
     callers detecting over multiple aberrations on the same transcript should
@@ -2078,10 +2221,10 @@ def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt
         if chrom_normalized.startswith('CHR'):
             chrom_normalized = chrom_normalized[3:]
         if chrom_normalized in ('M', 'MT'):
-            return (None, None)
+            return (None, None, None, None)
 
     if fasta is None or chrom is None or ref is None or alt is None or var_pos is None:
-        return (None, None)
+        return (None, None, None, None)
 
     cds_start = transcript_scores.get('CDS_START')
     cds_end = transcript_scores.get('CDS_END')
@@ -2091,16 +2234,16 @@ def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt
         if consensus_ctx is None:
             consensus_ctx = _compute_consensus_context(transcript_scores, fasta, chrom)
         if consensus_ctx is None or consensus_ctx.get('consensus_aa_full') is None:
-            return (None, None)
+            return (None, None, None, None)
 
         built = _build_altered_exon_spans(
             transcript_scores, aberration, consensus=consensus_ctx['consensus'],
         )
         if built is None:
-            return (None, None)
+            return (None, None, None, None)
         altered_spans, row_anchor, first_eframe = built
         if not altered_spans:
-            return (None, None)
+            return (None, None, None, None)
 
         # eFrame=1 wants to trim 2 leading bases off the first altered span,
         # but `_translate_spans` only does so when the span has >= 2 bases. A
@@ -2110,10 +2253,14 @@ def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt
         # Bail just for this aberration. eFrame=2 trims a single base, which
         # is always available since CDS-clamped spans are non-empty.
         if first_eframe == 1 and (altered_spans[0][1] - altered_spans[0][0] + 1) < 2:
-            return (None, None)
+            return (None, None, None, None)
 
         cum = consensus_ctx['cum_cds_bases']
-        consensus_aa = consensus_ctx['consensus_aa_full'][(cum[row_anchor] + 2) // 3:]
+        prefix_offset_aa = (cum[row_anchor] + 2) // 3
+        consensus_aa = consensus_ctx['consensus_aa_full'][prefix_offset_aa:]
+        consensus_aa_full = consensus_ctx['consensus_aa_full']
+        total_wt_aa = (len(consensus_aa_full) - 1
+                       if consensus_aa_full.endswith('*') else len(consensus_aa_full))
 
         altered_aa = _translate_spans(
             altered_spans, first_eframe, fasta, chrom, strand,
@@ -2124,13 +2271,25 @@ def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt
         if altered_aa in ('reference mismatch', 'impacts native start or stop site',
                           'variant straddles splice boundary'):
             print(f'WARNING: SAI-10k stop-codon detection skipped: {altered_aa}')
-            return (None, None)
+            return (None, None, None, None)
 
-        return _format_aa_change_and_detect(
-            altered_aa, consensus_aa, frameshift=(aberration.get('frameshift') is True),
+        is_frameshift = (aberration.get('frameshift') is True)
+        stop_introduced, formatted = _format_aa_change_and_detect(
+            altered_aa, consensus_aa, frameshift=is_frameshift,
         )
+        # Only build windows for the cases the popup actually renders (PTC
+        # introduced). Skipping non-PTC cases keeps the API surface minimal
+        # without precomputing strings the frontend won't show.
+        if stop_introduced is True:
+            wt_window, altered_window = _build_protein_windows(
+                altered_aa, consensus_aa, frameshift=is_frameshift,
+                prefix_offset_aa=prefix_offset_aa, total_wt_aa=total_wt_aa,
+            )
+        else:
+            wt_window, altered_window = (None, None)
+        return (stop_introduced, formatted, wt_window, altered_window)
     except Exception as exc:
         # Defensive: detection must never break the rest of the SAI-10k response.
         print(f'WARNING: SAI-10k stop-codon detection raised '
               f'{type(exc).__name__}: {exc}')
-        return (None, None)
+        return (None, None, None, None)
