@@ -1061,7 +1061,7 @@ class TestExonSkippingFallback(unittest.TestCase):
         es = [a for a in result["aberrations"] if a["aberration_type"] == "exon_skipping"]
         self.assertEqual(len(es), 1)
         self.assertEqual(es[0]["description"], {
-            "label": "Exon skipping",
+            "label": "Exon skipping predicted but skipped exon(s)",
             "size_bp": None,
             "size_is_coding": None,
             "consequence": None,

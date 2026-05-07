@@ -1023,7 +1023,7 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             aberration['affects_coding'] = None
             aberration['frameshift'] = None
             aberration['description'] = make_description(
-                label='Exon skipping',
+                label='Exon skipping predicted but skipped exon(s)',
                 status='could not be mapped',
             )
         return
