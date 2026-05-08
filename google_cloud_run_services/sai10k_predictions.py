@@ -2081,39 +2081,45 @@ def _translate_spans(spans, first_eframe, fasta, chrom, strand, apply_variant_ar
 
 
 def _build_protein_windows(altered_aa, consensus_aa, frameshift,
-                           prefix_offset_aa=0, total_wt_aa=None, flank=15):
+                           prefix_offset_aa=0, total_wt_aa=None, flank=15,
+                           stop_introduced=True):
     """Build WT vs. altered protein windows for the popup tooltip.
 
-    Caller contract: only invoked when a PTC has been detected (i.e.
-    `_format_aa_change_and_detect` returned `stop_introduced=True`), so
-    `altered_aa` is guaranteed to contain '*'. Non-PTC cases are not handled.
+    Two modes:
+      * PTC mode (stop_introduced=True): the altered translation terminates
+        at a premature stop. WT window has no bracketed change; altered has
+        the PTC region as changed_aa and no trailing residues.
+      * In-frame mode (stop_introduced=False, frameshift=False): both
+        translations run to a normal stop with a localized insert / delete /
+        substitute. Both windows carry a bracketed changed_aa with visible
+        flanks on both sides. For pure deletion altered.changed_aa is ''
+        (sentinel: frontend renders a `|` deletion-site marker); symmetric
+        for pure insertion on the WT side.
 
     Returns (wt_dict, altered_dict). Each dict has the shape:
         {
-            "prefix_hidden_aa": int,    # AAs hidden before the visible region
-                                        # (0 if the window starts at the protein N-terminus)
-            "visible_aa": str,          # plain AA sequence shown in the window
-            "changed_aa": str | None,   # PTC region incl. trailing '*' (altered only);
-                                        # always None for the WT dict
-            "suffix_hidden_aa": int,    # AAs hidden after the visible region
-                                        # (0 at C-terminus / when truncated by the PTC)
-            "total_aa": int,            # full protein length (truncated length for altered)
+            "prefix_hidden_aa": int,        # AAs hidden before visible_aa
+            "visible_aa": str,              # visible residues BEFORE changed_aa
+            "changed_aa": str | None,       # bracketed orange region;
+                                            #   '' = pure ins/del site marker;
+                                            #   None = no change on this side
+                                            #   (PTC WT)
+            "trailing_visible_aa": str,     # visible residues AFTER changed_aa
+                                            #   (always '' in PTC mode since
+                                            #   the WT keeps full visible_aa
+                                            #   and the altered terminates)
+            "suffix_hidden_aa": int,        # AAs hidden after the visible region
+            "total_aa": int,                # full protein length (truncated
+                                            #   length for altered in PTC mode)
         }
-    The frontend assembles the final display string from these fields.
-    Returns (None, None) if the two translations are identical (defensive —
-    shouldn't occur given the caller contract).
+    Returns (None, None) if the two translations are identical (defensive in
+    PTC mode, expected for in-frame events with no AA-level divergence).
 
     Inputs `altered_aa` and `consensus_aa` are the per-aberration translations
     starting at row_anchor; `prefix_offset_aa` is the count of WT residues that
     precede consensus_aa in the full protein; `total_wt_aa` is the full-protein
     WT residue count (excluding terminator). `flank` controls how many residues
     of context are shown on either side of the change.
-
-    Bracket convention in altered_display: '[' opens at the first divergent
-    residue (forward_diff) and ']' closes after the premature stop. This is
-    intentionally aligned to the biological change boundary, not to the fixed
-    3-residue prefix used by `_format_aa_change_and_detect`'s compact
-    `aa_change`.
     """
     # Mirror _format_aa_change_and_detect's trailing-* trim. Consensus always
     # strips the natural stop; altered only strips it when not frameshift
@@ -2132,44 +2138,91 @@ def _build_protein_windows(altered_aa, consensus_aa, frameshift,
     # 0-based index of the first divergent residue for slicing.
     diff_idx = forward_diff_raw - 1
 
-    # Caller contract guarantees altered_aa contains '*'; find('*') returns the
-    # 0-based PTC position. The changed region ends one past the PTC; the
-    # consensus has no symmetric end so we just render flank residues
-    # downstream of diff_idx in the WT.
-    altered_stop_local = altered_aa.find('*')
-    altered_change_end = altered_stop_local + 1
-    consensus_change_end = diff_idx
-
     if total_wt_aa is None:
         total_wt_aa = prefix_offset_aa + len(consensus_aa)
-    altered_total_aa = prefix_offset_aa + altered_stop_local
 
     pre_start = max(0, diff_idx - flank)
 
-    # WT window: hidden-prefix count, visible residues, hidden-suffix count.
-    wt_post_end = min(len(consensus_aa), consensus_change_end + flank)
-    wt_pre_count = prefix_offset_aa + pre_start
-    wt_post_count = max(0, total_wt_aa - (prefix_offset_aa + wt_post_end))
+    if stop_introduced:
+        # PTC mode. Caller contract: altered_aa contains '*'. The changed
+        # region ends one past the PTC; the consensus has no symmetric end so
+        # we just render `flank` residues downstream of diff_idx in the WT
+        # (kept inside visible_aa to preserve the original schema layout).
+        altered_stop_local = altered_aa.find('*')
+        altered_change_end = altered_stop_local + 1
+        consensus_change_end = diff_idx
+
+        altered_total_aa = prefix_offset_aa + altered_stop_local
+        wt_post_end = min(len(consensus_aa), consensus_change_end + flank)
+        wt_window = {
+            'prefix_hidden_aa': prefix_offset_aa + pre_start,
+            'visible_aa': consensus_aa[pre_start:wt_post_end],
+            'changed_aa': None,
+            'trailing_visible_aa': '',
+            'suffix_hidden_aa': max(0, total_wt_aa - (prefix_offset_aa + wt_post_end)),
+            'total_aa': total_wt_aa,
+        }
+        altered_window = {
+            'prefix_hidden_aa': prefix_offset_aa + pre_start,
+            'visible_aa': altered_aa[pre_start:diff_idx],
+            'changed_aa': altered_aa[diff_idx:altered_change_end],
+            'trailing_visible_aa': '',
+            'suffix_hidden_aa': 0,
+            'total_aa': altered_total_aa,
+        }
+        return (wt_window, altered_window)
+
+    # In-frame mode: bracket the divergent region in BOTH windows, with visible
+    # flanks on both sides. Reverse-walk to locate the matching tail; the
+    # function returns the 1-based position in seq_a (= altered_aa) coords,
+    # which serves as the 0-based half-open end. Derive the consensus end from
+    # the (length-difference + altered-end) relation rather than a second call.
+    rev_diff_raw = _find_difference_point(altered_aa, consensus_aa, 'reverse')
+    if rev_diff_raw == 'identical' or not isinstance(rev_diff_raw, int):
+        return (None, None)
+    rev_diff_alt = rev_diff_raw
+    rev_diff_cons = len(consensus_aa) - len(altered_aa) + rev_diff_alt
+    # Forward and reverse diffs cross when the inserted/deleted block matches
+    # an adjacent residue (alignment ambiguity in tandem repeats — e.g.
+    # inserting 'D' between '...CD' and 'E...' is indistinguishable from
+    # inserting it between 'C' and 'DE...'). Re-anchor to a left-aligned
+    # canonical placement so the length difference shows up as the changed
+    # region on the longer side; the shorter side gets '' (rendered as `|`).
+    if rev_diff_alt < diff_idx or rev_diff_cons < diff_idx:
+        len_diff = len(altered_aa) - len(consensus_aa)
+        if len_diff > 0:
+            rev_diff_alt = diff_idx + len_diff
+            rev_diff_cons = diff_idx
+        elif len_diff < 0:
+            rev_diff_alt = diff_idx
+            rev_diff_cons = diff_idx - len_diff
+        else:
+            # Equal-length crossing is unreachable in practice (it would require
+            # identical sequences, which forward_diff='identical' already
+            # short-circuits). Bail safely.
+            rev_diff_alt = diff_idx
+            rev_diff_cons = diff_idx
+
+    altered_total_aa = prefix_offset_aa + len(altered_aa)
+    wt_post_end = min(len(consensus_aa), rev_diff_cons + flank)
+    alt_post_end = min(len(altered_aa), rev_diff_alt + flank)
+
     wt_window = {
-        'prefix_hidden_aa': wt_pre_count,
-        'visible_aa': consensus_aa[pre_start:wt_post_end],
-        'changed_aa': None,
-        'suffix_hidden_aa': wt_post_count,
+        'prefix_hidden_aa': prefix_offset_aa + pre_start,
+        'visible_aa': consensus_aa[pre_start:diff_idx],
+        'changed_aa': consensus_aa[diff_idx:rev_diff_cons],
+        'trailing_visible_aa': consensus_aa[rev_diff_cons:wt_post_end],
+        'suffix_hidden_aa': max(0, total_wt_aa - (prefix_offset_aa + wt_post_end)),
         'total_aa': total_wt_aa,
     }
-
-    # Altered window: hidden-prefix count, visible prefix identical to WT,
-    # changed region terminating at PTC. The predicted protein terminates at
-    # the PTC, so no trailing residues are shown (suffix_hidden_aa=0).
-    altered_pre_count = prefix_offset_aa + pre_start
     altered_window = {
-        'prefix_hidden_aa': altered_pre_count,
+        'prefix_hidden_aa': prefix_offset_aa + pre_start,
         'visible_aa': altered_aa[pre_start:diff_idx],
-        'changed_aa': altered_aa[diff_idx:altered_change_end],
-        'suffix_hidden_aa': 0,
+        'changed_aa': altered_aa[diff_idx:rev_diff_alt],
+        'trailing_visible_aa': altered_aa[rev_diff_alt:alt_post_end],
+        'suffix_hidden_aa': max(0, altered_total_aa - (prefix_offset_aa + alt_post_end)),
         'total_aa': altered_total_aa,
     }
-
     return (wt_window, altered_window)
 
 
@@ -2367,13 +2420,22 @@ def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt
         stop_introduced, aa_change, extends_past = _format_aa_change_and_detect(
             altered_aa, consensus_aa, frameshift=is_frameshift,
         )
-        # Only build windows for the cases the popup actually renders (PTC
-        # introduced). Skipping non-PTC cases keeps the API surface minimal
-        # without precomputing strings the frontend won't show.
+        # Build windows for the two cases the popup renders: PTC, and in-frame
+        # coding changes (no PTC). Frameshift-without-PTC (extends-past-native-
+        # stop) is intentionally skipped — its protein continues into a
+        # post-CDS region we don't have translated, so there's no clean tail to
+        # display.
         if stop_introduced is True:
             wt_window, altered_window = _build_protein_windows(
                 altered_aa, consensus_aa, frameshift=is_frameshift,
                 prefix_offset_aa=prefix_offset_aa, total_wt_aa=total_wt_aa,
+                stop_introduced=True,
+            )
+        elif not is_frameshift:
+            wt_window, altered_window = _build_protein_windows(
+                altered_aa, consensus_aa, frameshift=False,
+                prefix_offset_aa=prefix_offset_aa, total_wt_aa=total_wt_aa,
+                stop_introduced=False,
             )
         else:
             wt_window, altered_window = (None, None)

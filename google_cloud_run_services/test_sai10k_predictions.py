@@ -33,6 +33,7 @@ from sai10k_predictions import (
     _reverse_complement,
     _find_difference_point,
     _format_aa_change_and_detect,
+    _build_protein_windows,
     _apply_variant_to_altered_exon_seqs,
     _consensus_filtered_in_tx_order,
     _compute_consensus_context,
@@ -2926,6 +2927,7 @@ class TestPrematureStopRad51c(unittest.TestCase):
                 "prefix_hidden_aa": 119,
                 "visible_aa": "TTEICGAPGVGKTQLCMQLAVDVQIPECFG",
                 "changed_aa": None,
+                "trailing_visible_aa": "",
                 "suffix_hidden_aa": 197,
                 "total_aa": 346,
             },
@@ -2936,6 +2938,7 @@ class TestPrematureStopRad51c(unittest.TestCase):
                 "prefix_hidden_aa": 119,
                 "visible_aa": "TTEICGAPGVGKTQL",
                 "changed_aa": "WQNKVFSF*",
+                "trailing_visible_aa": "",
                 "suffix_hidden_aa": 0,
                 "total_aa": 142,
             },
@@ -2957,6 +2960,131 @@ class TestPrematureStopRad51c(unittest.TestCase):
         self.assertIsNone(ab["wt_protein_window"])
         self.assertIsNone(ab["altered_protein_window"])
         self.assertFalse(ab["description"]["introduces_stop_codon"])
+
+
+class TestBuildProteinWindowsInFrame(unittest.TestCase):
+    """Direct tests of _build_protein_windows in in-frame (no-PTC) mode.
+
+    Use a small flank (3) so the window boundaries fit in short fixture
+    sequences. prefix_offset_aa=10 simulates ten WT residues upstream of
+    `consensus_aa`, exercising prefix_hidden_aa accounting.
+    """
+
+    def test_substitution_brackets_both_sides(self):
+        # WT: A B C D E F G   altered: A B C X Y G
+        # forward_diff at idx 3 (D vs X); matching tail "G".
+        wt, alt = _build_protein_windows(
+            altered_aa="ABCXYG", consensus_aa="ABCDEFG",
+            frameshift=False, prefix_offset_aa=10, flank=3,
+            stop_introduced=False,
+        )
+        self.assertEqual(wt, {
+            "prefix_hidden_aa": 10,
+            "visible_aa": "ABC",
+            "changed_aa": "DEF",
+            "trailing_visible_aa": "G",
+            "suffix_hidden_aa": 0,
+            "total_aa": 17,
+        })
+        self.assertEqual(alt, {
+            "prefix_hidden_aa": 10,
+            "visible_aa": "ABC",
+            "changed_aa": "XY",
+            "trailing_visible_aa": "G",
+            "suffix_hidden_aa": 0,
+            "total_aa": 16,
+        })
+
+    def test_pure_deletion_marks_altered_changed_empty(self):
+        # WT: A B C D E F G   altered: A B C F G  (deletes "DE")
+        wt, alt = _build_protein_windows(
+            altered_aa="ABCFG", consensus_aa="ABCDEFG",
+            frameshift=False, prefix_offset_aa=0, flank=3,
+            stop_introduced=False,
+        )
+        # WT has the deleted residues bracketed.
+        self.assertEqual(wt["changed_aa"], "DE")
+        # Altered has '' (sentinel — frontend renders a `|` marker).
+        self.assertEqual(alt["changed_aa"], "")
+        self.assertEqual(wt["total_aa"], 7)
+        self.assertEqual(alt["total_aa"], 5)
+        # Visible flanks identical on both sides of the change.
+        self.assertEqual(wt["visible_aa"], alt["visible_aa"])
+        self.assertEqual(wt["trailing_visible_aa"], alt["trailing_visible_aa"])
+        self.assertEqual(wt["trailing_visible_aa"], "FG")
+
+    def test_pure_insertion_marks_wt_changed_empty(self):
+        # WT: A B C F G   altered: A B C D E F G  (inserts "DE")
+        wt, alt = _build_protein_windows(
+            altered_aa="ABCDEFG", consensus_aa="ABCFG",
+            frameshift=False, prefix_offset_aa=0, flank=3,
+            stop_introduced=False,
+        )
+        self.assertEqual(wt["changed_aa"], "")        # `|` site marker
+        self.assertEqual(alt["changed_aa"], "DE")
+        self.assertEqual(wt["total_aa"], 5)
+        self.assertEqual(alt["total_aa"], 7)
+
+    def test_identical_returns_none(self):
+        wt, alt = _build_protein_windows(
+            altered_aa="ABCDEFG", consensus_aa="ABCDEFG",
+            frameshift=False, prefix_offset_aa=0,
+            stop_introduced=False,
+        )
+        self.assertIsNone(wt)
+        self.assertIsNone(alt)
+
+    def test_tandem_repeat_insertion_left_anchored(self):
+        # WT: A B C D E F   altered: A B C D D E F  (insert 'D' adjacent to existing 'D').
+        # The forward and reverse diffs cross because the inserted D matches
+        # the existing D. Without re-anchoring, both `changed_aa` collapse to ''
+        # and the inserted residue silently lands in trailing_visible_aa.
+        # The fix shifts the change to a left-aligned canonical form: WT side
+        # gets '' (rendered as `|` deletion-site marker), altered side gets the
+        # inserted 'D' bracketed.
+        wt, alt = _build_protein_windows(
+            altered_aa="ACDDEF", consensus_aa="ACDEF",
+            frameshift=False, prefix_offset_aa=0, flank=3,
+            stop_introduced=False,
+        )
+        self.assertEqual(wt["changed_aa"], "")
+        self.assertEqual(alt["changed_aa"], "D")
+        # Visible flanks are now identical on both sides — the residues that
+        # used to leak into trailing_visible_aa as 'DEF' on the altered side
+        # are now correctly rendered as 'EF'.
+        self.assertEqual(wt["trailing_visible_aa"], "EF")
+        self.assertEqual(alt["trailing_visible_aa"], "EF")
+        self.assertEqual(wt["total_aa"], 5)
+        self.assertEqual(alt["total_aa"], 6)
+
+    def test_tandem_repeat_deletion_left_anchored(self):
+        # WT: A C E E E F G   altered: A C E E F G (delete one of three Es).
+        # Symmetric ambiguity: the deleted E matches an adjacent E. Re-anchor
+        # so WT shows the deleted E bracketed and altered gets the '' marker.
+        wt, alt = _build_protein_windows(
+            altered_aa="ACEEFG", consensus_aa="ACEEEFG",
+            frameshift=False, prefix_offset_aa=0, flank=3,
+            stop_introduced=False,
+        )
+        self.assertEqual(wt["changed_aa"], "E")
+        self.assertEqual(alt["changed_aa"], "")
+        self.assertEqual(wt["total_aa"], 7)
+        self.assertEqual(alt["total_aa"], 6)
+
+    def test_natural_stop_strip_applied(self):
+        # Both end with '*' (natural stop). After stripping, sequences differ
+        # only in the middle. In in-frame mode altered's '*' is also stripped
+        # (frameshift=False).
+        wt, alt = _build_protein_windows(
+            altered_aa="ABCXYG*", consensus_aa="ABCDEFG*",
+            frameshift=False, prefix_offset_aa=0, flank=3,
+            stop_introduced=False,
+        )
+        self.assertEqual(wt["changed_aa"], "DEF")
+        self.assertEqual(alt["changed_aa"], "XY")
+        # totals exclude the stripped natural stop
+        self.assertEqual(wt["total_aa"], 7)
+        self.assertEqual(alt["total_aa"], 6)
 
 
 if __name__ == "__main__":
