@@ -21,6 +21,7 @@ Examples:
 import argparse
 import collections
 import json
+import os
 import select
 import subprocess
 import sys
@@ -28,11 +29,16 @@ import time
 from datetime import datetime, timezone, timedelta
 
 from google.cloud import monitoring_v3
+from google.cloud import bigquery
 
 
 PROJECT = "spliceai-lookup-412920"
 REGION = "us-central1"
 SERVICES = ["liftover", "spliceai-37", "spliceai-38", "pangolin-37", "pangolin-38"]
+
+# Cache populated by `~/.claude/skills/analyze-gcloud-costs/scripts/cost_analysis.py`.
+# If absent, the cost section is skipped with a warning instead of failing.
+BILLING_CACHE_DIR = os.path.expanduser("~/.cache/analyze-gcloud-costs")
 
 
 def parse_iso(s):
@@ -212,6 +218,104 @@ def fmt_s(x):
     return f"{x/1000:.2f}s" if x is not None else "?"
 
 
+def discover_billing_export():
+    """Return the fully-qualified BigQuery billing-export table for PROJECT, or None.
+
+    Reads the cache populated by `/analyze-gcloud-costs`. If the cache file or
+    billing-account lookup is unavailable, returns None so the caller can skip
+    the cost section instead of failing the whole snapshot.
+    """
+    try:
+        out = subprocess.run([
+            "gcloud", "billing", "projects", "describe", PROJECT,
+            "--format=value(billingAccountName)",
+        ], capture_output=True, text=True, check=True).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    if not out:
+        return None
+    cache_file = os.path.join(BILLING_CACHE_DIR, f"{out.replace('billingAccounts/', '')}.json")
+    if not os.path.exists(cache_file):
+        return None
+    with open(cache_file) as f:
+        e = json.load(f)
+    return f"{e['bq_project']}.{e['dataset']}.{e['standard_table']}"
+
+
+def daily_costs(bq_client, table, days):
+    """Return (daily_totals, top_skus) for PROJECT over the last `days` days.
+
+    daily_totals: list of (date, usd) ordered by date ascending.
+    top_skus:     list of (service, sku, usd) ordered by usd descending, top 10.
+    Net cost = gross usage cost + credits (credits are negative).
+    """
+    params = [
+        bigquery.ScalarQueryParameter("project_id", "STRING", PROJECT),
+        bigquery.ScalarQueryParameter("days", "INT64", days),
+    ]
+    # Pad partition filter by 5 days for late-arriving billing data. The usage_start_time
+    # comparison uses `>` (not `>=`) so `--cost-days N` returns exactly N rows: today plus
+    # the prior N-1 days. Today's row is partial — that's intentional, so the chart shows
+    # spending-so-far rather than dropping to zero at the right edge.
+    partition_clause = (
+        "_PARTITIONTIME >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL (@days + 5) DAY) "
+        "AND DATE(usage_start_time) > DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY) "
+        "AND project.id = @project_id"
+    )
+    daily = [(r.day, float(r.net_usd or 0)) for r in bq_client.query(f"""
+        SELECT
+          DATE(usage_start_time) AS day,
+          ROUND(SUM(cost) + SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c), 0)), 4) AS net_usd
+        FROM `{table}`
+        WHERE {partition_clause}
+        GROUP BY day
+        ORDER BY day
+    """, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()]
+    skus = [(r.service, r.sku, float(r.net_usd or 0)) for r in bq_client.query(f"""
+        SELECT
+          service.description AS service,
+          sku.description AS sku,
+          ROUND(SUM(cost) + SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c), 0)), 2) AS net_usd
+        FROM `{table}`
+        WHERE {partition_clause}
+        GROUP BY service, sku
+        HAVING net_usd >= 0.01
+        ORDER BY net_usd DESC
+        LIMIT 10
+    """, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()]
+    return daily, skus
+
+
+def print_cost_chart(daily, skus, bar_width=40):
+    """Print an ASCII bar chart of daily net cost plus the top-SKU breakdown.
+
+    Bar length is scaled so the largest day fills `bar_width` cells. Uses the
+    eight Unicode left-block fractions (U+2589..U+2588) for sub-cell precision
+    so small days stay visible without a `log` scale distorting comparisons.
+    """
+    if not daily:
+        print("  (no billing data returned for the window)")
+        return
+    blocks = " ▏▎▍▌▋▊▉█"
+    max_usd = max(usd for _, usd in daily) or 1.0
+    total = sum(usd for _, usd in daily)
+    for day, usd in daily:
+        units = bar_width * 8 * usd / max_usd
+        full, frac = divmod(round(units), 8)
+        bar = "█" * full + (blocks[frac] if frac else "")
+        print(f"  {day.strftime('%a %b %d')}  {bar:<{bar_width}}  ${usd:>7,.2f}")
+    print(f"\n  Total over {len(daily)} day(s): ${total:,.2f}   "
+          f"(avg ${total/len(daily):,.2f}/day)")
+
+    if skus:
+        print()
+        print("  Top SKUs:")
+        rows = [["$usd", "service", "sku"]]
+        for service, sku, usd in skus:
+            rows.append([f"${usd:,.2f}", service, sku[:60] + ("…" if len(sku) > 60 else "")])
+        print_table(rows, aligns=['r', 'l', 'l'], indent="    ")
+
+
 def print_table(rows, aligns=None, indent="  ", gap="  "):
     """Print rows aligned by max column widths.
 
@@ -231,7 +335,7 @@ def print_table(rows, aligns=None, indent="  ", gap="  "):
         print((indent + gap.join(cells)).rstrip())
 
 
-def snapshot(client, args):
+def snapshot(client, args, bq_client=None, billing_table=None):
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=args.window_hours)
 
@@ -361,6 +465,15 @@ def snapshot(client, args):
             fmt_s(sv.get('p99')),
         ])
     print_table(rows, aligns=['l', 'r', 'r', 'r', 'r'])
+    print()
+
+    print(f"=== Project cost over the last {args.cost_days:g} days (net of credits) ===")
+    if bq_client is None or billing_table is None:
+        print("  (skipped — billing-export discovery cache not found at "
+              f"{BILLING_CACHE_DIR}; run /analyze-gcloud-costs once to populate it)")
+    else:
+        daily, skus = daily_costs(bq_client, billing_table, int(args.cost_days))
+        print_cost_chart(daily, skus)
 
 
 def main():
@@ -379,13 +492,19 @@ def main():
                         help="Aggregate metrics across all revisions of each service "
                              "(default: filter to the revision currently serving 100%% production traffic, "
                              "so dev/test traffic against `dev---*` URLs doesn't contaminate metrics).")
+    parser.add_argument("--cost-days", type=float, default=14.0,
+                        help="Number of days of daily-cost history to chart (default: 14).")
     args = parser.parse_args()
 
     client = monitoring_v3.MetricServiceClient()
+    billing_table = discover_billing_export()
+    # Reuse a single client across iterations so we don't repeat ADC + project discovery
+    # every 30 minutes. The BQ project hosts the billing export (not PROJECT itself).
+    bq_client = bigquery.Client(project=billing_table.split(".")[0]) if billing_table else None
     while True:
         print("Processing...")
         try:
-            snapshot(client, args)
+            snapshot(client, args, bq_client=bq_client, billing_table=billing_table)
         except Exception as e:
             import traceback
             print(f"\n[snapshot failed: {type(e).__name__}: {e} — retrying next interval]")
