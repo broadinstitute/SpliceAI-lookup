@@ -26,7 +26,7 @@ RUN git clone https://github.com/bw2/Pangolin.git \
     && cd Pangolin \
 	&& python3 -m pip install .
 
-ARG CONCURRENCY="2"
+ARG WORKERS="2"
 ARG GENOME_VERSION="unknown"
 
 COPY docker/ref/GRCh${GENOME_VERSION} /
@@ -34,10 +34,22 @@ COPY docker/pangolin/annotations/GRCh${GENOME_VERSION} /
 COPY server.py /
 COPY sai10k_predictions.py /
 
+# Cap every CPU thread pool to 1 thread per worker. Without these, each gunicorn
+# worker's torch/OpenMP/BLAS pools default to the instance core count, so WORKERS workers
+# on a 2-CPU instance oversubscribe the CPUs by a large factor and a burst of cache-miss
+# inferences balloons past the 300s Cloud Run timeout (504). One thread per worker keeps
+# per-request CPU bounded; parallelism comes from WORKERS workers, not threads per worker.
+ENV OMP_NUM_THREADS=1
+ENV OPENBLAS_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
+
 ENV PORT=8080
 ENV TOOL=pangolin
 ENV GENOME_VERSION=${GENOME_VERSION}
-ENV CONCURRENCY=${CONCURRENCY}
+ENV WORKERS=${WORKERS}
 ENV RUNNING_ON_GOOGLE_CLOUD_RUN=1
 
-CMD exec gunicorn --preload --bind :$PORT --workers ${CONCURRENCY} --threads 1 --timeout 0 server:app
+# --timeout 120 (was 0): recycle a worker stuck >120s so a saturated instance self-heals
+# instead of cascading into 300s timeouts. --graceful-timeout gives in-flight requests 30s
+# to finish on restart.
+CMD exec gunicorn --preload --bind :$PORT --workers ${WORKERS} --threads 1 --timeout 120 --graceful-timeout 30 server:app

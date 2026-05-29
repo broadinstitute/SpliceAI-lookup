@@ -408,9 +408,22 @@ def main():
                 tag = get_tag(tool, genome_version)
                 dockerhub_tag = get_tag(tool, genome_version, repo_name="dockerhub")
                 service = get_service_name(tool, genome_version)
-                concurrency = 6    # if genome_version == '37' else 2
+                # gunicorn worker processes per instance (the `--workers` count baked into
+                # the image). Each worker is single-threaded (TF/torch thread pools are
+                # capped to 1 in the Dockerfile) so `workers` alone sets how many model
+                # inferences run at once. Decoupled from Cloud Run `concurrency` below so
+                # the two can be tuned independently.
+                workers = 6
+                # Cloud Run requests served concurrently per instance. Kept equal to
+                # `workers` (sync gunicorn workers serve one request each, so extra
+                # concurrency would just queue inside the instance instead of scaling out).
+                concurrency = 6
                 min_instances = 0  # if tool == 'pangolin' else 2
-                max_instances = 3
+                # Raised 3 -> 6 so bursts of cache-miss traffic scale out across instances
+                # instead of saturating a few and timing out (504). This is only a ceiling:
+                # min_instances=0 means idle services still scale to zero, so the baseline
+                # cost is unchanged.
+                max_instances = 6
                 # Keep dev image digests separate from prod so a stray non-dev
                 # deploy from the same checkout can't accidentally promote the
                 # dev image.
@@ -419,7 +432,7 @@ def main():
                     if args.docker_command == "podman":
                         run(f"gcloud --project {GCLOUD_PROJECT} auth print-access-token | podman login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev")
 
-                    run(f"{args.docker_command} build -f docker/{tool}/Dockerfile --build-arg=\"CONCURRENCY={concurrency}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest -t {dockerhub_tag}:latest .")
+                    run(f"{args.docker_command} build -f docker/{tool}/Dockerfile --build-arg=\"WORKERS={workers}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest -t {dockerhub_tag}:latest .")
                     run(f"{args.docker_command} push {tag}:latest")
                     run(f"{args.docker_command} push {dockerhub_tag}:latest")
 
