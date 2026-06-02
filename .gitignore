@@ -2,6 +2,7 @@
 *.txt*
 *.tsv*
 *.json*
+*.chain.gz*
 
 service.backup_copy.yaml
 
