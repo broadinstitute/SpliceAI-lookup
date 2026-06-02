@@ -4,6 +4,20 @@ This repo contains:
 
 ---
 
+### SpliceAI-Lookup Service (Charité deployment)
+SpliceAI-Lookup Service  
+provided by Charité - Institut für Medizinische Genetik und Humangenetik  
+- coded by Oliver Küchler (Problems/Questions: oliver.kuechler@charite.de)
+
+#### Quickstart to serve frontend:
+
+```python
+python3 -m http.server 8000
+```
+Open http://localhost:8000/index.html in your browser.
+
+---
+
 #### SpliceAI, Pangolin APIs
 
 

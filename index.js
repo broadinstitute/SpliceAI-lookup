@@ -3,7 +3,7 @@ let lastGenomeVersion, lastSpliceaiResponseJson, lastPangolinResponseJson
 let batchVariantResults = []
 let currentBatchIndex = 0
 let lastBatchFormOptions = null
-const BATCH_VARIANT_MAX = 50
+const BATCH_VARIANT_MAX = 75
 
 /** "main" = MANE Select (etc.) rows only; "all" = all transcripts — persists while switching batch variants */
 let transcriptFilterPreference = "main"
