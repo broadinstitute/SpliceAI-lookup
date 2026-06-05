@@ -1,6 +1,7 @@
 This repo contains: 
 - client-side code for [spliceailookup.broadinstitute.org](https://spliceailookup.broadinstitute.org/) - contained within the [index.html](index.html) file and hosted via GitHub Pages.
 - server-side code for SpliceAI and Pangolin REST APIs - contained within the [google_cloud_run_services/](google_cloud_run_services/) subdirectory and hosted on Google Cloud Run. 
+- the original Flask web app that previously powered spliceailookup.broadinstitute.org - contained within the [original_flask_app/](original_flask_app/) subdirectory. 
 
 ---
 
