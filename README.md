@@ -51,20 +51,18 @@ docker run -p 8080:8080 docker.io/weisburd/spliceai-37:latest
 docker run -p 8080:8080 docker.io/weisburd/pangolin-38:latest
 docker run -p 8080:8080 docker.io/weisburd/pangolin-37:latest
 ```
-These containers are fully self-contained: the reference genome and gene annotations are baked into the image, and **no external PostgreSQL (or any other) database is required**. On the hosted service the database is used only for response caching, per-IP rate limiting, and SAI-10k transcript-structure enrichment; a local instance simply runs without it — meaning **local instances are not rate limited** and can be used to process large batches of variants. (Without the database the SAI-10k protein-consequence details fall back to the bundled annotations; the core SpliceAI/Pangolin delta scores are unaffected.)
 
-On startup the container loads the model and prints some TensorFlow / model-loading warnings (e.g. `WARNING:absl:No training configuration found...`); these can be ignored. Once it is listening on port 8080, you can query it — for example, if you ran the `spliceai-38` image, open http://localhost:8080/spliceai/?hg=38&variant=chr8-140300616-T-G in your browser. Each per-genome/per-tool image only answers requests for its own tool and `hg` value. Because there is no cache, every query recomputes rather than returning a cached result.
+On startup the container loads the model and prints some TensorFlow / model-loading warnings (e.g. `WARNING:absl:No training configuration found...`); these can be ignored. Once it is listening on port 8080, you can query it. For example, if you started the `spliceai-38` image, you can open http://localhost:8080/spliceai/?hg=38&variant=chr8-140300616-T-G in your browser. Each per-genome/per-tool image only answers requests for its own tool and `hg` value. 
 
 Optional environment variables (pass with `docker run -e NAME=value ...`):
 - `DISABLE_RATE_LIMIT=1` — explicitly turn off per-IP rate limiting. Only relevant if you connect your own database (see below); without a database, rate limiting is already disabled.
 - `DATABASE_ENABLED=1` / `0` — force the database on or off. Defaults to on when `DB_PASSWORD` is set and off otherwise.
-- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` — connection settings for an optional PostgreSQL database (see below). Each defaults to the hosted Cloud SQL value, so you only set the ones you need to override.
+- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` — connection settings for an optional PostgreSQL database (see below).
 
-(Older prebuilt images may instead print repeated `ERROR: Unable to connect to SQL database ...` messages at startup. These are harmless and can be ignored.)
 
 ##### Optionally attaching your own PostgreSQL database
 
-A database is **not** required, but attaching one to a local instance adds response caching, so repeated queries for the same variant return instantly. To attach a local PostgreSQL:
+A database is not required, but attaching one to a local instance adds response caching, so repeated queries for the same variant return instantly. To attach a local PostgreSQL:
 
 1. Create an empty database, e.g. `createdb spliceai-lookup-db`.
 2. Point the container at it. From a Docker container, the host's PostgreSQL is reachable at `host.docker.internal` (on Docker Desktop for Mac/Windows; on Linux add `--add-host=host.docker.internal:host-gateway`):
@@ -78,12 +76,11 @@ A database is **not** required, but attaching one to a local instance adds respo
      -e DB_PASSWORD=yourpassword \
      docker.io/weisburd/spliceai-38:latest
    ```
-   If your PostgreSQL uses passwordless (`trust`) auth, omit `-e DB_PASSWORD` and keep `-e DATABASE_ENABLED=1` (which is what flags the database as enabled in that case).
+   If your PostgreSQL uses passwordless (`trust`) auth, omit `-e DB_PASSWORD` and keep `-e DATABASE_ENABLED=1`.
 
 The server **creates the tables it needs automatically** on the first request (`cache`, `log`, `restricted_ips`, `whitelist_ips`) — no manual schema setup is required.
 
-The larger `transcripts_hg37`/`transcripts_hg38` tables used for SAI-10k transcript-structure enrichment are *not* created automatically (they require a bulk load from GENCODE genePred files); without them SAI-10k falls back to the bundled annotations. To populate them, see the `update_transcript_tables` command in [build_and_deploy.py](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/google_cloud_run_services/build_and_deploy.py).
-
+The `transcripts_hg37`/`transcripts_hg38` tables used for SAI-10k transcript-structure enrichment are *not* created automatically; without them SAI-10k falls back to the bundled annotations. To populate them, see the `update_transcript_tables` command in [build_and_deploy.py](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/google_cloud_run_services/build_and_deploy.py).
 
 If you would like to run your own API instance on Google Cloud instead of locally, see the [build_and_deploy.py](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/google_cloud_run_services/build_and_deploy.py#L224-L238) script which we use to deploy and update the SpliceAI-lookup API on [Google Cloud Run](https://cloud.google.com/run?hl=en). Submit a GitHub issue if you have any questions.
 
