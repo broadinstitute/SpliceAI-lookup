@@ -260,10 +260,14 @@ DISABLE_RATE_LIMIT = _env_flag("DISABLE_RATE_LIMIT")
 # Module-level connection pool for Cloud SQL. Flask under Cloud Run typically
 # serves multiple concurrent requests per instance via threaded workers, so use
 # ThreadedConnectionPool (thread-safe) rather than SimpleConnectionPool.
-# maxconn is sized to match Cloud Run's default per-instance request concurrency
-# (80) so the 81st cache-miss request never blocks on getconn(). Each Cloud Run
-# instance is one Python process; with ~10 instances the absolute peak is ~800
-# Cloud SQL connections, well under the per-tier limit.
+# Each gunicorn worker is a separate process (forked under --preload) with its
+# own pool and runs single-threaded (--threads 1), so it serves one request at a
+# time and needs only one DB connection. maxconn=2 keeps a one-slot safety margin
+# while bounding the total: workers x instances x services x maxconn must stay
+# under the server's max_connections (75). The previous maxconn=80 assumed Cloud
+# Run's default concurrency of 80, but the deploy pins --workers/--concurrency to
+# 6, so 80 per worker let a single instance open far more connections than the
+# tier allows -- exhausting max_connections and leaving dozens of idle backends.
 # If initialisation fails (e.g. transient Cloud SQL hiccup at startup, or
 # DB_PASSWORD not set in a local dev environment), DATABASE_CONNECTION_POOL
 # stays None and get_db_connection falls back to opening a connection per
@@ -343,7 +347,7 @@ def _try_init_database_pool():
             return
         _database_pool_init_last_attempt = now
         try:
-            DATABASE_CONNECTION_POOL = ThreadedConnectionPool(minconn=1, maxconn=80, **DB_CONNECT_KWARGS)
+            DATABASE_CONNECTION_POOL = ThreadedConnectionPool(minconn=1, maxconn=2, **DB_CONNECT_KWARGS)
             print("Successfully initialised DB connection pool", flush=True)
         except Exception as e:
             print(f"WARNING: DB connection pool init failed; falling back to per-request connections: {e}", flush=True)
