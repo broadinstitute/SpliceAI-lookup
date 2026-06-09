@@ -1,0 +1,145 @@
+name: Build and deploy to Cloud Run on tag
+
+# Pushing a git tag builds the SpliceAI + Pangolin images and deploys them to
+# Cloud Run via google_cloud_run_services/build_and_deploy.py.
+#
+#   - A normal tag (e.g. v1.2.3) updates BOTH the production revision (traffic
+#     routed to it) and the no-traffic "dev" revision of every service.
+#   - A tag whose name contains "dev" (e.g. v1.2.3-dev) updates ONLY the dev
+#     revision, leaving production serving its current revision.
+#
+# Each of the 4 services (spliceai/pangolin x GRCh37/GRCh38) is built and
+# deployed in its own matrix job so the heavy ref data + image fit on a stock
+# GitHub-hosted runner and the 4 deploys run in parallel.
+on:
+  push:
+    tags:
+      - '*'
+
+# One deploy run at a time so two tags pushed close together can't race on the
+# same Cloud Run service.
+concurrency:
+  group: cloud-run-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [spliceai, pangolin]
+        genome: ["37", "38"]
+
+    defaults:
+      run:
+        working-directory: google_cloud_run_services
+
+    env:
+      GCLOUD_PROJECT: spliceai-lookup-412920
+      REF_BUCKET: gs://spliceai-lookup-reference-data/build-context
+      # build_and_deploy.py raises at import unless this is set, but build/deploy
+      # never touch the DB, so any non-empty value works.
+      SPLICEAI_LOOKUP_DB_HOST: unused-for-build-and-deploy
+
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@v4
+
+      # The pangolin GRCh37 cell pulls ~1.8 GB of ref data and builds a ~3 GB
+      # image; reclaim space the stock runner wastes on toolchains we don't use.
+      - name: Free up disk space
+        working-directory: ${{ github.workspace }}
+        run: |
+          sudo rm -rf /opt/hostedtoolcache/CodeQL /usr/local/lib/android /opt/ghc /usr/share/dotnet
+          docker system prune -af || true
+          df -h /
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build_and_deploy.py dependencies
+        run: python3 -m pip install pandas psycopg2-binary python-dotenv tqdm
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud (with beta component)
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: spliceai-lookup-412920
+          install_components: beta
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      # The Dockerfiles COPY docker/ref/GRCh<genome> and the tool's annotations
+      # into the image, but those files are gitignored (too large for the repo),
+      # so fetch just this cell's subset from the public ref-data bucket.
+      - name: Download reference data for ${{ matrix.tool }} GRCh${{ matrix.genome }}
+        run: |
+          mkdir -p docker/ref "docker/${{ matrix.tool }}/annotations"
+          gcloud storage cp -r "$REF_BUCKET/docker/ref/GRCh${{ matrix.genome }}" docker/ref/
+          gcloud storage cp -r "$REF_BUCKET/docker/${{ matrix.tool }}/annotations/GRCh${{ matrix.genome }}" "docker/${{ matrix.tool }}/annotations/"
+
+      # Guard against the easy footgun: server.py's GENCODE_VERSION was bumped
+      # but the build-context ref data in the bucket wasn't re-uploaded (so the
+      # image would ship annotations for the wrong Gencode release, or the
+      # container would 500 at startup looking for files that aren't there).
+      # Fail loudly if any downloaded gencode.* file doesn't match server.py.
+      - name: Verify ref data Gencode version matches server.py
+        run: |
+          set -euo pipefail
+          GV=$(grep -E '^GENCODE_VERSION = ' server.py | sed -E 's/^GENCODE_VERSION = "([^"]+)".*/\1/')
+          if [[ -z "$GV" ]]; then
+            echo "ERROR: could not read GENCODE_VERSION from server.py"; exit 1
+          fi
+          if [[ "${{ matrix.genome }}" == "37" ]]; then TOKEN="${GV}lift37"; else TOKEN="$GV"; fi
+          echo "server.py GENCODE_VERSION=$GV -> expecting ref files tagged 'gencode.$TOKEN'"
+
+          files=$(find "docker/ref/GRCh${{ matrix.genome }}" "docker/${{ matrix.tool }}/annotations/GRCh${{ matrix.genome }}" -type f -name 'gencode.*')
+          if [[ -z "$files" ]]; then
+            echo "ERROR: no gencode.* ref files were downloaded from the bucket"; exit 1
+          fi
+
+          bad=0
+          while IFS= read -r f; do
+            ver=$(basename "$f" | sed -E 's/^gencode\.(v[0-9]+(lift37)?)\..*/\1/')
+            if [[ "$ver" != "$TOKEN" ]]; then
+              echo "MISMATCH: $(basename "$f") is gencode '$ver', expected '$TOKEN'"
+              bad=1
+            fi
+          done <<< "$files"
+
+          if [[ "$bad" != "0" ]]; then
+            echo "ERROR: bucket build-context ref data does not match server.py GENCODE_VERSION=$GV."
+            echo "Re-upload the v$GV ref data to $REF_BUCKET (see .github/workflows/deploy-on-tag.yml header)."
+            exit 1
+          fi
+          echo "OK: all downloaded ref files match gencode $TOKEN"
+
+      - name: Build and deploy
+        run: |
+          set -euo pipefail
+          TOOL="${{ matrix.tool }}"
+          GENOME="${{ matrix.genome }}"
+
+          # Deploy the no-traffic dev revision on every tag.
+          python3 build_and_deploy.py -t "$TOOL" -g "$GENOME" --dev
+
+          # Update production only when the tag does NOT contain "dev". Run this
+          # last so the final --to-latest routes traffic to the prod revision.
+          if [[ "${GITHUB_REF_NAME}" == *dev* ]]; then
+            echo "Tag '${GITHUB_REF_NAME}' contains 'dev' -> dev revision only, leaving production unchanged."
+          else
+            echo "Tag '${GITHUB_REF_NAME}' -> updating production as well."
+            python3 build_and_deploy.py -t "$TOOL" -g "$GENOME"
+          fi
