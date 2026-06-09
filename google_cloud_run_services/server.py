@@ -212,14 +212,50 @@ def parse_variant(variant_str):
     return match['chrom'], int(match['pos']), match['ref'], match['alt']
 
 
+def _env_flag(name, default=False):
+    """Parse a boolean environment variable.
+
+    Treats only 1/true/yes/on (case-insensitive) as true and 0/false/no/off/""
+    as false, so e.g. NAME=0 reads as false instead of the way
+    bool(os.environ.get(name)) would make any non-empty string truthy. Returns
+    `default` when the variable is unset.
+    """
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+# Connection parameters. Each defaults to the production Cloud Run / Cloud SQL
+# value so the deployed service is unchanged, but every field can be overridden
+# via env vars to point a local instance at your own PostgreSQL (e.g.
+# DB_HOST=localhost DB_PORT=5432). A DB_HOST starting with "/" is treated by
+# psycopg2 as a Unix-socket directory (the Cloud SQL default); a regular
+# hostname uses TCP.
 DB_CONNECT_KWARGS = dict(
-    dbname="spliceai-lookup-db",
-    user="postgres",
+    dbname=os.environ.get("DB_NAME", "spliceai-lookup-db"),
+    user=os.environ.get("DB_USER", "postgres"),
     password=os.environ.get("DB_PASSWORD"),
-    host="/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db",
-    port="5432",
+    host=os.environ.get("DB_HOST", "/cloudsql/spliceai-lookup-412920:us-central1:spliceai-lookup-db"),
+    port=os.environ.get("DB_PORT", "5432"),
     connect_timeout=5,
 )
+
+# Whether to use a database at all. DB-backed features (response caching, per-IP
+# rate limiting, SAI-10k transcript-structure enrichment) are only active when
+# this is true; otherwise get_db_connection yields None and every caller
+# degrades gracefully. Defaults to on whenever a DB_PASSWORD is present (Cloud
+# Run injects it as a secret) and off otherwise (a local `docker run` with no
+# env), preserving prior behavior with no deploy change. Set DATABASE_ENABLED=1
+# explicitly to attach a local PostgreSQL that uses passwordless (trust) auth,
+# or DATABASE_ENABLED=0 to force the no-DB path even when a password is set.
+DATABASE_ENABLED = _env_flag("DATABASE_ENABLED", default=bool(os.environ.get("DB_PASSWORD")))
+
+# Explicitly disable per-IP rate limiting (independent of the database), e.g. for
+# a private instance that DOES have a database but should not throttle. Rate
+# limiting is also off whenever DATABASE_ENABLED is False, since it is entirely
+# DB-backed.
+DISABLE_RATE_LIMIT = _env_flag("DISABLE_RATE_LIMIT")
 
 # Module-level connection pool for Cloud SQL. Flask under Cloud Run typically
 # serves multiple concurrent requests per instance via threaded workers, so use
@@ -239,10 +275,66 @@ _DATABASE_POOL_INIT_RETRY_SECONDS = 60
 _database_pool_init_last_attempt = 0.0
 _database_pool_init_lock = threading.Lock()
 
+# DDL for the small operational tables the server reads/writes for caching and
+# rate limiting. All idempotent (CREATE ... IF NOT EXISTS) so running them
+# against a database where they already exist (e.g. production Cloud SQL) is a
+# no-op. The large transcripts_hg37/38 enrichment tables are intentionally NOT
+# created here — they require a separate bulk data load from genePred files (see
+# build_and_deploy.py's update_transcript_tables command), and SAI-10k degrades
+# gracefully to the bundled annotations when they are absent.
+_SCHEMA_DDL_STATEMENTS = (
+    "CREATE TABLE IF NOT EXISTS cache (key TEXT UNIQUE, value TEXT, counter INT, accessed TIMESTAMP DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS cache_index ON cache (key)",
+    "CREATE TABLE IF NOT EXISTS log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), bc VARCHAR(20), distance INT, mask INT4, details TEXT, variant_consequence TEXT)",
+    "CREATE INDEX IF NOT EXISTS idx_log_ip_logtime ON log USING btree (ip, logtime DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_log_event_name ON log USING btree (event_name)",
+    "CREATE TABLE IF NOT EXISTS restricted_ips (ip TEXT UNIQUE, created TIMESTAMP DEFAULT now())",
+    "CREATE INDEX IF NOT EXISTS idx_restricted_ips_created ON restricted_ips USING btree (created)",
+    "CREATE TABLE IF NOT EXISTS whitelist_ips (ip TEXT UNIQUE, created TIMESTAMP DEFAULT now())",
+)
+_database_schema_init_attempted = False
+_database_schema_lock = threading.Lock()
+
+
+def _init_database_schema(conn):
+    """Create the cache / log / restricted_ips / whitelist_ips tables if missing.
+
+    Runs at most once per process (guarded by _database_schema_init_attempted)
+    the first time a usable connection is obtained, so a freshly-pointed local
+    PostgreSQL works without any manual bootstrap. Idempotent and safe on
+    production where the tables already exist. The attempt flag is set even when
+    the DDL fails (e.g. the DB user lacks CREATE rights) so a permanent failure
+    isn't retried — re-running the 8 statements under the lock on every request
+    would serialize traffic. The failure is logged and non-fatal: the server
+    still runs via the fail-open paths.
+    """
+    global _database_schema_init_attempted
+    if _database_schema_init_attempted or conn is None:
+        return
+    with _database_schema_lock:
+        if _database_schema_init_attempted:
+            return
+        try:
+            with conn.cursor() as cursor:
+                for ddl in _SCHEMA_DDL_STATEMENTS:
+                    cursor.execute(ddl)
+            conn.commit()
+            print("Ensured DB schema exists (cache, log, restricted_ips, whitelist_ips)", flush=True)
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            print(f"WARNING: DB schema init failed (continuing without it): {e}", flush=True)
+        finally:
+            _database_schema_init_attempted = True
+
 
 def _try_init_database_pool():
     """Attempt to (re)initialise DATABASE_CONNECTION_POOL, throttled to once per _DATABASE_POOL_INIT_RETRY_SECONDS."""
     global DATABASE_CONNECTION_POOL, _database_pool_init_last_attempt
+    if not DATABASE_ENABLED:
+        return
     with _database_pool_init_lock:
         if DATABASE_CONNECTION_POOL is not None:
             return
@@ -257,7 +349,11 @@ def _try_init_database_pool():
             print(f"WARNING: DB connection pool init failed; falling back to per-request connections: {e}", flush=True)
 
 
-_try_init_database_pool()
+# The pool is initialised lazily on the first request (see get_db_connection),
+# not at import time. Under gunicorn --preload the module is imported once in the
+# arbiter before workers fork; initialising the pool here would share a single
+# connection's socket across all forked workers and corrupt the protocol. Lazy
+# init means each worker opens its own pool after the fork.
 
 
 @contextmanager
@@ -275,6 +371,13 @@ def get_db_connection():
     container startup), retry pool init lazily so a transient outage doesn't
     permanently disable pooling for this instance.
     """
+    if not DATABASE_ENABLED:
+        # No database configured (e.g. a local instance) — yield None so callers
+        # skip caching, rate limiting, and DB lookups without attempting (and
+        # logging a failed) connection on every request.
+        yield None
+        return
+
     if DATABASE_CONNECTION_POOL is None:
         _try_init_database_pool()
 
@@ -293,6 +396,12 @@ def get_db_connection():
         except Exception as e:
             print(f"ERROR: Unable to connect to SQL database: {e}")
             conn = None
+
+    # Ensure the operational tables exist the first time we get a usable
+    # connection (no-op after the first success, and on production where they
+    # already exist).
+    if conn is not None:
+        _init_database_schema(conn)
 
     raised = False
     try:
@@ -433,26 +542,8 @@ def get_transcript_structures(conn, transcript_ids, genome_version):
     return result
 
 
-#def does_table_exist(table_name):
-#    results = run_sql(f"SELECT EXISTS (SELECT 1 AS result FROM pg_tables WHERE tablename=%s)", (table_name,))
-#    does_table_already_exist = results[0][0]
-#    return does_table_already_exist
-
-#if not does_table_exist("cache"):
-#    print("Creating cache table")
-#    run_sql("""CREATE TABLE cache (key TEXT UNIQUE, value TEXT, counter INT, accessed TIMESTAMP DEFAULT now())""")
-#    run_sql("""CREATE INDEX cache_index ON cache (key)""")
-
-#if not does_table_exist("log"):
-#    print("Creating event_log table")
-#    run_sql("""CREATE TABLE log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), bc VARCHAR(20), distance INT, mask INT4, details TEXT, variant_consequence TEXT)""")
-#    run_sql("""CREATE INDEX idx_log_ip_logtime ON log USING btree (ip, logtime DESC)""")
-#    run_sql("""CREATE INDEX idx_log_event_name ON log USING btree (event_name)""")
-
-#if not does_table_exist("restricted_ips"):
-#    print("Creating restricted_ips table")
-#    run_sql("""CREATE TABLE restricted_ips (ip TEXT UNIQUE, created TIMESTAMP DEFAULT now())""")
-#    run_sql("""CREATE INDEX idx_restricted_ips_created ON restricted_ips USING btree (created)""")
+# Operational tables (cache, log, restricted_ips, whitelist_ips) are created
+# automatically by _init_database_schema (see _SCHEMA_DDL_STATEMENTS above).
 
 # Query to add ip to the restricted_ips table
 #run_sql("""INSERT INTO restricted_ips (ip) VALUES ('210.3.222.157')""")
@@ -484,7 +575,7 @@ def exceeds_rate_limit(conn, user_ip, params):
     #"""
 
     try:
-        if conn is None:
+        if DISABLE_RATE_LIMIT or conn is None:
             return False
 
         if is_user_on_whitelist(conn, params.get("ip")):
@@ -497,18 +588,18 @@ def exceeds_rate_limit(conn, user_ip, params):
             return RATE_LIMIT_ERROR_MESSAGE
 
         rows = run_sql(conn, "SELECT COUNT(ip) FROM log WHERE event_name LIKE %s AND ip=%s AND logtime >= NOW() - INTERVAL '7 minutes'", ("%computed%", user_ip))
-        did_user_exceed_rate_limit = rows and int(rows[0][0]) >= 50
+        did_user_exceed_rate_limit = rows and int(rows[0][0]) >= 150
         if did_user_exceed_rate_limit and not is_user_on_whitelist(conn, user_ip):
-            # the user has exceeded the rate limit: computing scores for 50 or more variants in the last 7 minutes
+            # the user has exceeded the rate limit: computing scores for 150 or more variants in the last 7 minutes
             rows = run_sql(conn, "SELECT COUNT(ip) FROM log WHERE event_name='rate_limit_exceeded' AND ip=%s AND logtime >= NOW() - INTERVAL '5 minutes'", (user_ip,))
             user_hit_rate_limit_exceeded_recently = rows and int(rows[0][0]) > 0
             if not user_hit_rate_limit_exceeded_recently:
                 # the user will receive at most one "rate_limit_exceeded" event every 5 minutes
                 log(conn, f"rate_limit_exceeded", ip=user_ip)
                 rows = run_sql(conn, "SELECT COUNT(ip) FROM log WHERE event_name='rate_limit_exceeded' AND ip=%s AND logtime >= NOW() - INTERVAL '1 days'", (user_ip,))
-                user_triggered_too_many_rate_limit_exceeded_errors_today = rows and int(rows[0][0]) >= 5
+                user_triggered_too_many_rate_limit_exceeded_errors_today = rows and int(rows[0][0]) >= 15
                 if user_triggered_too_many_rate_limit_exceeded_errors_today:
-                    # the user has hit the limit of 5 or more "rate_limit_exceeded" events during the last 24 hours
+                    # the user has hit the limit of 15 or more "rate_limit_exceeded" events during the last 24 hours
                     rows = run_sql(conn, "SELECT COUNT(ip) FROM restricted_ips WHERE ip=%s", (user_ip,))
                     need_to_delete_previous_restricted_ip_record = rows and int(rows[0][0]) > 0
                     if need_to_delete_previous_restricted_ip_record:
@@ -1184,5 +1275,12 @@ print(f"[startup pid={os.getpid()}] server.py module loaded in "
       f"{time.time() - _PROCESS_START_TIME:.2f}s (tool={TOOL}, genome={GENOME_VERSION})", flush=True)
 
 
-if '__main__' == __name__ or os.environ.get('RUNNING_ON_GOOGLE_CLOUD_RUN'):
+# Start the Werkzeug dev server only when this file is run directly
+# (python server.py). Under gunicorn the module is imported (so __name__ is
+# "server", not "__main__") and gunicorn serves `app` itself. The previous
+# `or os.environ.get('RUNNING_ON_GOOGLE_CLOUD_RUN')` clause fired app.run() at
+# import time under gunicorn --preload, blocking the arbiter before it could fork
+# workers — silently defeating the gunicorn worker recycling (--timeout 120) this
+# image relies on to recover from stuck inferences.
+if __name__ == '__main__':
     app.run(debug=DEBUG, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
