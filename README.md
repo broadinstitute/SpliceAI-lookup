@@ -78,7 +78,7 @@ A database is not required, but attaching one to a local instance adds response 
    ```
    If your PostgreSQL uses passwordless (`trust`) auth, omit `-e DB_PASSWORD` and keep `-e DATABASE_ENABLED=1`.
 
-The server **creates the tables it needs automatically** on the first request (`cache`, `log`, `restricted_ips`, `whitelist_ips`) — no manual schema setup is required.
+The server creates the tables it needs automatically on the first request (`cache`, `log`, `restricted_ips`, `whitelist_ips`) — no manual schema setup is required.
 
 The `transcripts_hg37`/`transcripts_hg38` tables used for SAI-10k transcript-structure enrichment are *not* created automatically; without them SAI-10k falls back to the bundled annotations. To populate them, see the `update_transcript_tables` command in [build_and_deploy.py](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/google_cloud_run_services/build_and_deploy.py).
 
