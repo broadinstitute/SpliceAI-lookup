@@ -449,6 +449,14 @@ def main():
                     print(f"Deploying {service} with image sha256 {sha256}{' (dev revision, no traffic)' if args.dev else ''}")
 
                     dev_flags = "--no-traffic --tag dev " if args.dev else ""
+                    # Comma-separated list of IPs to hard-block at the API door
+                    # (server.py block_ips). Sourced from the BLOCKED_IPS
+                    # env var (set as a GitHub Actions repo Variable, or exported
+                    # locally); unset -> empty, which clears any previous value and
+                    # disables blocking. The "^@^" prefix tells gcloud to split
+                    # env-var assignments on "@" instead of ",", so the commas
+                    # between IPs stay inside the single BLOCKED_IPS value.
+                    blocked_ips_flag = f'--update-env-vars "^@^BLOCKED_IPS={os.environ.get("BLOCKED_IPS", "").strip()}" '
                     run(f"""gcloud \
 --project {GCLOUD_PROJECT} beta run deploy {service} \
 --image {tag}@{sha256} \
@@ -464,7 +472,7 @@ def main():
 --memory 4Gi \
 --cpu 2 \
 --cpu-boost \
-{dev_flags}""")
+{blocked_ips_flag}{dev_flags}""")
 
                     if args.dev:
                         print(f"To promote the dev revision of {service} to production, run:")

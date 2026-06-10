@@ -257,6 +257,12 @@ DATABASE_ENABLED = _env_flag("DATABASE_ENABLED", default=bool(os.environ.get("DB
 # DB-backed.
 DISABLE_RATE_LIMIT = _env_flag("DISABLE_RATE_LIMIT")
 
+# Comma-separated list of blocked IP addresses, rejected at the door (see
+# block_ips) before any routing, DB query, or model inference.
+BLOCKED_IPS = frozenset(ip.strip() for ip in os.environ.get("BLOCKED_IPS", "").split(",") if ip.strip())
+if not BLOCKED_IPS:
+    print("WARNING: BLOCKED_IPS env var is unset/empty; no IPs will be blocked at the door", flush=True)
+
 # Module-level connection pool for Cloud SQL. Flask under Cloud Run typically
 # serves multiple concurrent requests per instance via threaded workers, so use
 # ThreadedConnectionPool (thread-safe) rather than SimpleConnectionPool.
@@ -1204,6 +1210,21 @@ def get_user_ip(request):
     if not xff:
         return None
     return xff.rsplit(",", 1)[-1].strip() or None
+
+
+@app.before_request
+def block_ips():
+    """Reject hard-blocked IPs before routing, DB access, or model inference.
+
+    Returns a 429 at the earliest point in the request lifecycle so a flood from
+    a blocked IP costs no DB connection and no compute — unlike the
+    DB-backed restricted_ips check, which runs later and only on cache-miss.
+    Returning None (for every other IP) lets the request proceed normally. The
+    `BLOCKED_IPS and` guard skips the X-Forwarded-For parse when no IPs are
+    blocked, so the hook is free in the common case.
+    """
+    if BLOCKED_IPS and get_user_ip(request) in BLOCKED_IPS:
+        return error_response(RATE_LIMIT_ERROR_MESSAGE, status=429)
 
 
 @app.route('/log/<string:name>/', strict_slashes=False)

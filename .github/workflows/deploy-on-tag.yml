@@ -42,6 +42,11 @@ jobs:
       # build_and_deploy.py raises at import unless this is set, but build/deploy
       # never touch the DB, so any non-empty value works.
       SPLICEAI_LOOKUP_DB_HOST: unused-for-build-and-deploy
+      # Comma-separated IPs hard-blocked at the API door (server.py
+      # block_ips). Set the BLOCKED_IPS repo Variable to populate it
+      # (Settings -> Secrets and variables -> Actions -> Variables); unset ->
+      # empty -> no IPs blocked. build_and_deploy.py forwards it to Cloud Run.
+      BLOCKED_IPS: ${{ vars.BLOCKED_IPS }}
 
     steps:
       - name: Check out the tagged commit
