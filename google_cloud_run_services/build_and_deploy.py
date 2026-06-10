@@ -436,7 +436,19 @@ def main():
                     if args.docker_command == "podman":
                         run(f"gcloud --project {GCLOUD_PROJECT} auth print-access-token | podman login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev")
 
-                    run(f"{args.docker_command} build -f docker/{tool}/Dockerfile --build-arg=\"WORKERS={workers}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest -t {dockerhub_tag}:latest .")
+                    # In CI (USE_BUILDX_CACHE set; see deploy-on-tag.yml) build with buildx and a
+                    # per-service GitHub Actions layer cache, so unchanged layers (base image,
+                    # tensorflow-cpu, pip deps) restore instead of rebuilding from scratch on the
+                    # fresh runner. `scope={service}` keeps the 4 matrix builds from clobbering each
+                    # other's cache. --load puts the built image into the local docker store so the
+                    # push / pull / digest-capture steps below work unchanged. Locally the buildx
+                    # container driver and the gha backend aren't set up, so fall back to a plain build.
+                    build_cmd = (
+                        f"docker buildx build --load "
+                        f"--cache-from type=gha,scope={service} --cache-to type=gha,mode=max,scope={service} "
+                        if os.environ.get("USE_BUILDX_CACHE") else f"{args.docker_command} build "
+                    )
+                    run(f"{build_cmd}-f docker/{tool}/Dockerfile --build-arg=\"WORKERS={workers}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest -t {dockerhub_tag}:latest .")
                     run(f"{args.docker_command} push {tag}:latest")
                     run(f"{args.docker_command} push {dockerhub_tag}:latest")
 

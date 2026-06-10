@@ -47,6 +47,10 @@ jobs:
       # (Settings -> Secrets and variables -> Actions -> Variables); unset ->
       # empty -> no IPs blocked. build_and_deploy.py forwards it to Cloud Run.
       BLOCKED_IPS: ${{ vars.BLOCKED_IPS }}
+      # Tells build_and_deploy.py to build with buildx + a GitHub Actions layer
+      # cache (needs the Set up Docker Buildx step below). Unset locally, where
+      # the buildx container driver / gha cache backend aren't available.
+      USE_BUILDX_CACHE: "1"
 
     steps:
       - name: Check out the tagged commit
@@ -85,6 +89,12 @@ jobs:
 
       - name: Log in to Docker Hub
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      # Container-driver builder required for the `docker buildx build --cache-to
+      # type=gha` layer caching that build_and_deploy.py uses when USE_BUILDX_CACHE
+      # is set. Placed after the disk-space prune so the builder isn't pruned away.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       # The Dockerfiles COPY docker/ref/GRCh<genome> and the tool's annotations
       # into the image, but those files are gitignored (too large for the repo),
