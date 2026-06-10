@@ -49,7 +49,10 @@ ENV GENOME_VERSION=${GENOME_VERSION}
 ENV WORKERS=${WORKERS}
 ENV RUNNING_ON_GOOGLE_CLOUD_RUN=1
 
-# --timeout 120 (was 0): recycle a worker stuck >120s so a saturated instance self-heals
-# instead of cascading into 300s timeouts. --graceful-timeout gives in-flight requests 30s
-# to finish on restart.
-CMD exec gunicorn --preload --bind :$PORT --workers ${WORKERS} --threads 1 --timeout 120 --graceful-timeout 30 server:app
+# --timeout 240 (was 120, was 0): recycle a worker stuck >240s so a saturated instance
+# self-heals — `--timeout 0` never recycled a wedged worker, so 504s piled onto one
+# instance for hours. Raised 120 -> 240 to match spliceai, so heavy inferences finish
+# instead of being killed at 120s. Kept under Cloud Run's 300s request timeout so gunicorn
+# recycles the worker first (clean 500) rather than the platform (504). --graceful-timeout
+# gives in-flight requests 30s to finish on restart.
+CMD exec gunicorn --preload --bind :$PORT --workers ${WORKERS} --threads 1 --timeout 240 --graceful-timeout 30 server:app
