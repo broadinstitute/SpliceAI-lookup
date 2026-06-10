@@ -411,13 +411,17 @@ def main():
                 # gunicorn worker processes per instance (the `--workers` count baked into
                 # the image). Each worker is single-threaded (TF/torch thread pools are
                 # capped to 1 in the Dockerfile) so `workers` alone sets how many model
-                # inferences run at once. Decoupled from Cloud Run `concurrency` below so
-                # the two can be tuned independently.
-                workers = 6
+                # inferences run at once. Lowered 6 -> 3 to ease CPU oversubscription on the
+                # 2-CPU instances: at 6 workers, >2 simultaneous cache-miss inferences shared
+                # 2 cores so each ~6s prediction stretched ~3x and tripped the 120s gunicorn
+                # timeout (SIGABRT -> 500/503). 3 workers is a modest 1.5x over 2 cores, so a
+                # single slow inference can't starve the others into the timeout; extra burst
+                # concurrency comes from scaling out across instances, not more workers.
+                workers = 3
                 # Cloud Run requests served concurrently per instance. Kept equal to
                 # `workers` (sync gunicorn workers serve one request each, so extra
                 # concurrency would just queue inside the instance instead of scaling out).
-                concurrency = 6
+                concurrency = 3
                 min_instances = 0  # if tool == 'pangolin' else 2
                 # Raised 3 -> 6 so bursts of cache-miss traffic scale out across instances
                 # instead of saturating a few and timing out (504). This is only a ceiling:
