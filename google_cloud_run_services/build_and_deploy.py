@@ -488,6 +488,7 @@ def main():
 --memory 4Gi \
 --cpu 2 \
 --cpu-boost \
+--timeout 900s \
 {blocked_ips_flag}{dev_flags}""")
 
                     if args.dev:
