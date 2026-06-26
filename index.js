@@ -23,6 +23,9 @@ const VARIANT_RE = new RegExp(
     'iu'
 )
 
+const LOC_ONLY_RE = /^(?:chr)?[0-9XYMT]{1,2}[-\s:,]+[0-9,]+$/i
+const ALLELE_RE = /^[ACGT]+$/i
+
 const TRANSCRIPT_PRIORITY = {
     "MS": 3,
     "MP": 2,
@@ -1393,7 +1396,47 @@ const readFileAsText = (file) => new Promise((resolve, reject) => {
     r.readAsText(file)
 })
 
-const parseVariantsFromText = (text) => text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"))
+const sanitizePastedText = (text) =>
+    text
+        .replace(/[\uFEFF\u200B-\u200D\u2060]/g, "")
+        .replace(/\u00A0/g, " ")
+        .replace(/[\u2028\u2029]/g, "\n")
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "")
+
+const parseVariantsFromText = (text) => {
+    const lines = sanitizePastedText(text)
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("#"))
+
+    const variants = []
+    for (let i = 0; i < lines.length; ) {
+        const line = lines[i]
+
+        if (VARIANT_RE.test(line)) {
+            variants.push(line)
+            i++
+            continue
+        }
+
+        if (
+            LOC_ONLY_RE.test(line) &&
+            i + 2 < lines.length &&
+            ALLELE_RE.test(lines[i + 1]) &&
+            ALLELE_RE.test(lines[i + 2])
+        ) {
+            variants.push(`${line}:${lines[i + 1]}:${lines[i + 2]}`)
+            i += 3
+            continue
+        }
+
+        variants.push(line)
+        i++
+    }
+    return variants
+}
+
+const normalizeVariantsText = (text) => parseVariantsFromText(text).join("\n")
 
 const parseVariantsFromVCF = (content) => {
     const variants = []
@@ -1828,6 +1871,24 @@ $(document).ready(() => {
     $("#batch-next-btn").click(() => { void displayBatchVariantAtIndex(currentBatchIndex + 1) })
     $("#batch-variant-select").on("change", function() {
         void displayBatchVariantAtIndex(parseInt($(this).val(), 10))
+    })
+
+    $("#variants-textarea").on("paste", (event) => {
+        const clipboardData = event.originalEvent?.clipboardData || window.clipboardData
+        if (!clipboardData) return
+
+        const pasted = clipboardData.getData("text")
+        if (!pasted) return
+
+        event.preventDefault()
+        const normalized = normalizeVariantsText(pasted)
+        const textarea = event.target
+        const start = textarea.selectionStart
+        const end = textarea.selectionEnd
+        textarea.value = textarea.value.substring(0, start) + normalized + textarea.value.substring(end)
+        const cursor = start + normalized.length
+        textarea.selectionStart = cursor
+        textarea.selectionEnd = cursor
     })
 
     $("#variants-textarea").keydown((event) => {
