@@ -634,7 +634,7 @@ def exceeds_rate_limit(conn, user_ip, params):
 # Bump SAI10K_VERSION whenever sai10k_predictions.py changes its classification
 # logic or output shape, so cached responses from older algorithm versions are
 # invalidated and recomputed.
-SAI10K_VERSION = "v19"
+SAI10K_VERSION = "v20"
 
 
 def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
