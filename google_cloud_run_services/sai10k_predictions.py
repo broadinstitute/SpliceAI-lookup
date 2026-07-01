@@ -417,12 +417,30 @@ def _whole_intron_retention_native_match(geo_al, geo_dl, strand, exon_starts, ex
     return None
 
 
+def _cryptic_gain_activation(gain_delta, gain_alt, loss_delta, loss_alt):
+    """
+    Cryptic gain activation check (ALT-score branch), factored out so it can be
+    applied both to the single strongest site and to each additional cryptic
+    site. Algebraically identical to the former inline cryptic_acceptor_check /
+    cryptic_donor_check: the acceptor side maps gain=AG, loss=AL; the donor side
+    maps gain=DG, loss=DL, so the ALT diff (gain_alt - loss_alt) equals the old
+    acceptor_diff / donor_diff.
+    """
+    return (
+        (gain_delta < MIN_DELTA_SCORE and loss_delta > LOSS_PARTNER_MIN
+         and gain_alt >= ALT_SCORE_STRONG and (gain_alt - loss_alt) >= ALT_DIFF_HIGH)
+        or
+        (gain_delta >= MIN_DELTA_SCORE and (gain_alt - loss_alt) > ALT_DIFF_LOW)
+    )
+
+
 def sai10k_determine_aberrations(
         ds_ag, ds_al, ds_dg, ds_dl,
         dp_ag, dp_al, dp_dg, dp_dl,
         ds_ag_alt, ds_al_alt, ds_dg_alt, ds_dl_alt,
         variant_pos, exon_starts, exon_ends, strand,
         has_alt_scores=True,
+        all_non_zero_scores=None,
 ):
     """
     Classify splice aberration(s) per Canson et al. 2023 flowchart v1.1.
@@ -445,6 +463,14 @@ def sai10k_determine_aberrations(
             acceptor/donor activation falls back to the reference's simpler
             DS_AG/DS_DG dominance logic (spliceai_parser.py:1331-1338) instead
             of the ALT-score side-selection logic.
+        all_non_zero_scores: optional list of per-position score dicts
+            (transcript_scores['ALL_NON_ZERO_SCORES']), one per genomic position
+            in the SpliceAI window, each with keys pos/RA/AA/RD/AD (score values
+            are "0.2f" strings). When supplied AND has_alt_scores is True, the
+            cryptic GAIN subflow emits an extra sibling aberration for EACH
+            additional cryptic donor-gain (and acceptor-gain) site that
+            independently satisfies the cryptic-activation condition, beyond the
+            single strongest site. Default None (single-site behavior only).
 
     The paper flowchart's three branches (LOSS, GAIN Subflow A, GAIN Subflow B)
     evaluate INDEPENDENTLY; a single variant can produce up to one aberration
@@ -622,23 +648,11 @@ def sai10k_determine_aberrations(
         dg_acceptor_match = geo_ag == native['geo_na']
 
         if has_alt_scores:
-            acceptor_diff = ds_ag_alt - ds_al_alt
-            donor_diff = ds_dg_alt - ds_dl_alt
-
             # ALT-score conditions — two-branch OR, one for "cryptic overwhelms a
             # weak native" and one for "strong delta with no native suppression".
-            cryptic_acceptor_check = (
-                (ds_ag < MIN_DELTA_SCORE and ds_al > LOSS_PARTNER_MIN
-                 and ds_ag_alt >= ALT_SCORE_STRONG and acceptor_diff >= ALT_DIFF_HIGH)
-                or
-                (ds_ag >= MIN_DELTA_SCORE and acceptor_diff > ALT_DIFF_LOW)
-            )
-            cryptic_donor_check = (
-                (ds_dg < MIN_DELTA_SCORE and ds_dl > LOSS_PARTNER_MIN
-                 and ds_dg_alt >= ALT_SCORE_STRONG and donor_diff >= ALT_DIFF_HIGH)
-                or
-                (ds_dg >= MIN_DELTA_SCORE and donor_diff > ALT_DIFF_LOW)
-            )
+            # Acceptor side maps gain=AG, loss=AL; donor side maps gain=DG, loss=DL.
+            cryptic_acceptor_check = _cryptic_gain_activation(ds_ag, ds_ag_alt, ds_al, ds_al_alt)
+            cryptic_donor_check = _cryptic_gain_activation(ds_dg, ds_dg_alt, ds_dl, ds_dl_alt)
 
             # Reference parser's side-selection logic (spliceai_parser.py:1312-1328):
             #   Cryptic acceptor fires iff:
@@ -669,38 +683,121 @@ def sai10k_determine_aberrations(
         dp_na = native['dp_na']
         dp_nd = native['dp_nd']
 
-        if activate_acceptor and _cryptic_acceptor_orientation_ok(geo_ag, native, is_reverse=strand == '-'):
-            # partial_size = (DP_AG*Strand) - (DP_NA*Strand)
-            partial_size = (dp_ag - dp_na) * strand_sign
-            if partial_size > 0 and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS:
-                aberrations.append(make('partial_exon_deletion', 'gain_B_acceptor'))
-                aberrations[-1]['_partial_size'] = partial_size
-                # When the cryptic site lands past the opposite native exon
-                # boundary, the reference parser still emits Partial_exon_deletion
-                # but its sequence step records "deletion greater than exon size"
-                # (spliceai_parser.py:552-554). Flag here so the annotation step
-                # surfaces the same outcome instead of computing a misleading
-                # cds_size against a segment that overruns the exon.
-                if partial_size >= native['native_exon_size']:
-                    aberrations[-1]['_oversize_partial_deletion'] = True
-            elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
-                  and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
-                aberrations.append(make('partial_intron_retention', 'gain_B_acceptor'))
-                # Store signed partial_size (negative = retention); formatters take abs() for display.
-                aberrations[-1]['_partial_size'] = partial_size
+        if activate_acceptor:
+            if _cryptic_acceptor_orientation_ok(geo_ag, native, is_reverse=strand == '-'):
+                # partial_size = (DP_AG*Strand) - (DP_NA*Strand)
+                partial_size = (dp_ag - dp_na) * strand_sign
+                # Only emit a partial_exon_deletion when the deletion is smaller than
+                # the affected exon. When partial_size >= native exon size the deletion
+                # would overrun the exon (a partial exon deletion is physically
+                # impossible), so emit nothing.
+                if (partial_size > 0 and partial_size < native['native_exon_size']
+                        and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
+                    aberrations.append(make('partial_exon_deletion', 'gain_B_acceptor'))
+                    aberrations[-1]['_partial_size'] = partial_size
+                    aberrations[-1]['alt_score'] = ds_ag_alt
+                elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
+                      and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
+                    aberrations.append(make('partial_intron_retention', 'gain_B_acceptor'))
+                    # Store signed partial_size (negative = retention); formatters take abs() for display.
+                    aberrations[-1]['_partial_size'] = partial_size
+                    aberrations[-1]['alt_score'] = ds_ag_alt
 
-        if activate_donor and _cryptic_donor_orientation_ok(geo_dg, native, is_reverse=strand == '-'):
-            # partial_size = (DP_ND*Strand) - (DP_DG*Strand)
-            partial_size = (dp_nd - dp_dg) * strand_sign
-            if partial_size > 0 and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS:
-                aberrations.append(make('partial_exon_deletion', 'gain_B_donor'))
-                aberrations[-1]['_partial_size'] = partial_size
-                if partial_size >= native['native_exon_size']:
-                    aberrations[-1]['_oversize_partial_deletion'] = True
-            elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
-                  and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
-                aberrations.append(make('partial_intron_retention', 'gain_B_donor'))
-                aberrations[-1]['_partial_size'] = partial_size
+            # Sibling acceptor-gain sites: emit a separate aberration for each
+            # ADDITIONAL cryptic acceptor gain (beyond the strongest site above)
+            # that independently satisfies the cryptic-activation condition. Each
+            # candidate is checked on its own, independent of whether the strongest
+            # site passed its orientation check, so a well-oriented sibling is
+            # still emitted when the strongest site is mis-oriented.
+            if has_alt_scores and all_non_zero_scores:
+                seen_acceptor_geo = set()
+                for entry in sorted(all_non_zero_scores, key=lambda e: int(e['pos'])):
+                    cand_geo = int(entry['pos'])
+                    if cand_geo == geo_ag or cand_geo in seen_acceptor_geo:
+                        continue  # strongest site already emitted, or a duplicate position
+                    seen_acceptor_geo.add(cand_geo)
+                    # Round to 2 decimals: raw scores are "0.2f" strings and float
+                    # subtraction (e.g. 0.30 - 0.10) can yield 0.19999999999999998,
+                    # which would spuriously fail the >= 0.2 threshold below.
+                    ag_delta = round(float(entry['AA']) - float(entry['RA']), 2)
+                    if ag_delta <= 0:
+                        continue
+                    cand_alt = float(entry['AA'])
+                    if not _cryptic_gain_activation(ag_delta, cand_alt, ds_al, ds_al_alt):
+                        continue
+                    if not _cryptic_acceptor_orientation_ok(cand_geo, native, is_reverse=strand == '-'):
+                        continue
+                    cand_dp = cand_geo - variant_pos
+                    partial_size = (cand_dp - dp_na) * strand_sign
+                    if (partial_size > 0 and partial_size < native['native_exon_size']
+                            and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
+                        ab = make('partial_exon_deletion', 'gain_B_acceptor')
+                    elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
+                          and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
+                        ab = make('partial_intron_retention', 'gain_B_acceptor')
+                    else:
+                        continue
+                    ab['geo_ag'] = cand_geo  # annotate off THIS site, not the strongest
+                    ab['_partial_size'] = partial_size
+                    ab['alt_score'] = cand_alt
+                    aberrations.append(ab)
+
+        if activate_donor:
+            if _cryptic_donor_orientation_ok(geo_dg, native, is_reverse=strand == '-'):
+                # partial_size = (DP_ND*Strand) - (DP_DG*Strand)
+                partial_size = (dp_nd - dp_dg) * strand_sign
+                # Only emit a partial_exon_deletion when the deletion is smaller than
+                # the affected exon (see acceptor branch above); a deletion that
+                # overruns the exon is physically impossible, so emit nothing.
+                if (partial_size > 0 and partial_size < native['native_exon_size']
+                        and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
+                    aberrations.append(make('partial_exon_deletion', 'gain_B_donor'))
+                    aberrations[-1]['_partial_size'] = partial_size
+                    aberrations[-1]['alt_score'] = ds_dg_alt
+                elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
+                      and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
+                    aberrations.append(make('partial_intron_retention', 'gain_B_donor'))
+                    aberrations[-1]['_partial_size'] = partial_size
+                    aberrations[-1]['alt_score'] = ds_dg_alt
+
+            # Sibling donor-gain sites: emit a separate aberration for each
+            # ADDITIONAL cryptic donor gain (beyond the strongest site above)
+            # that independently satisfies the cryptic-activation condition. Each
+            # candidate is checked on its own, independent of whether the strongest
+            # site passed its orientation check, so a well-oriented sibling is
+            # still emitted when the strongest site is mis-oriented.
+            if has_alt_scores and all_non_zero_scores:
+                seen_donor_geo = set()
+                for entry in sorted(all_non_zero_scores, key=lambda e: int(e['pos'])):
+                    cand_geo = int(entry['pos'])
+                    if cand_geo == geo_dg or cand_geo in seen_donor_geo:
+                        continue  # strongest site already emitted, or a duplicate position
+                    seen_donor_geo.add(cand_geo)
+                    # Round to 2 decimals: raw scores are "0.2f" strings and float
+                    # subtraction (e.g. 0.30 - 0.10) can yield 0.19999999999999998,
+                    # which would spuriously fail the >= 0.2 threshold below.
+                    dd_delta = round(float(entry['AD']) - float(entry['RD']), 2)
+                    if dd_delta <= 0:
+                        continue
+                    cand_alt = float(entry['AD'])
+                    if not _cryptic_gain_activation(dd_delta, cand_alt, ds_dl, ds_dl_alt):
+                        continue
+                    if not _cryptic_donor_orientation_ok(cand_geo, native, is_reverse=strand == '-'):
+                        continue
+                    cand_dp = cand_geo - variant_pos
+                    partial_size = (dp_nd - cand_dp) * strand_sign
+                    if (partial_size > 0 and partial_size < native['native_exon_size']
+                            and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
+                        ab = make('partial_exon_deletion', 'gain_B_donor')
+                    elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
+                          and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
+                        ab = make('partial_intron_retention', 'gain_B_donor')
+                    else:
+                        continue
+                    ab['geo_dg'] = cand_geo  # annotate off THIS site, not the strongest
+                    ab['_partial_size'] = partial_size
+                    ab['alt_score'] = cand_alt
+                    aberrations.append(ab)
 
     return aberrations
 
@@ -787,7 +884,7 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
                   enum: "in-frame", "frameshift", "coding",
                   "non-coding change", "start codon lost", "stop codon lost",
                   "size unclear", "could not be mapped", "unknown",
-                  "frameshift status unclear", "deletion greater than exon size".
+                  "frameshift status unclear".
               introduces_stop_codon (bool): set True downstream by the
                   premature-stop detector; appended PTC clause on the frontend.
               extends_past_native_stop (bool): set True downstream when a
@@ -1189,27 +1286,6 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             consequence = (f'partial intron {affected_intron_number} retention'
                            if affected_intron_number is not None
                            else 'partial intron retention')
-        # Cryptic acceptor/donor site lands past the opposite native exon
-        # boundary. The reference parser still emits the call but its
-        # get_partial_seq step returns "deletion greater than exon size"
-        # (spliceai_parser.py:552-554), nullifying the cds_size/frameshift
-        # downstream. Mirror that behavior here.
-        if aberration.get('_oversize_partial_deletion'):
-            aberration['size'] = abs(partial_size)
-            aberration['size_type'] = 'partial'
-            aberration['affects_coding'] = None
-            aberration['frameshift'] = None
-            aberration['start_codon_lost'] = None
-            aberration['stop_codon_lost'] = None
-            shift_type = 'Acceptor' if aberration.get('_branch') == 'gain_B_acceptor' else 'Donor'
-            aberration['description'] = make_description(
-                label=f'{shift_type} shift',
-                size_bp=abs(partial_size),
-                size_is_coding=False,
-                consequence=consequence,
-                status='deletion greater than exon size',
-            )
-            return
         display_size = abs(partial_size)
         # Identify the native site and the predicted cryptic site for the active side.
         branch = aberration.get('_branch', '')
@@ -1348,6 +1424,7 @@ def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=N
         ds_ag_alt, ds_al_alt, ds_dg_alt, ds_dl_alt,
         variant_pos, exon_starts, exon_ends, strand,
         has_alt_scores=has_alt_scores,
+        all_non_zero_scores=transcript_scores.get('ALL_NON_ZERO_SCORES'),
     )
     determine_ms = (time.perf_counter() - t0) * 1000
 

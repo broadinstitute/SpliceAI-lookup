@@ -473,6 +473,94 @@ class TestDetermineAberrations(unittest.TestCase):
         self.assertIn("whole_intron_retention", types)
         self.assertIn("partial_exon_deletion", types)
 
+    def test_multi_site_cryptic_donor_gains(self):
+        """Two independent cryptic donor-gain sites (PALB2 c.47A>G-like) should
+        each yield a separate gain_B_donor aberration with its own alt_score,
+        geo_dg and _partial_size."""
+        # BRCA2 exon 2: [32890559, 32890664], native donor at 32890664 on '+'.
+        # Variant at 32890650 (exonic, dp_nd = 14). Two donor-gain candidates:
+        #   site 1 (max, at GEO_DG=32890640, dp_dg=-10): delta 0.20 / alt 0.51
+        #           -> partial_size = (14 - (-10)) = 24 (partial exon deletion).
+        #   site 2 (GEO_DG=32890630): delta 0.14 / alt 0.94
+        #           -> partial_size = (14 - (-20)) = 34 (partial exon deletion).
+        # ds_dl=0.3 / ds_dl_alt=0.4 let both pass _cryptic_gain_activation.
+        all_non_zero_scores = [
+            {"pos": "32890640", "RA": "0.00", "AA": "0.00", "RD": "0.31", "AD": "0.51"},
+            {"pos": "32890630", "RA": "0.00", "AA": "0.00", "RD": "0.80", "AD": "0.94"},
+        ]
+        result = sai10k_determine_aberrations(
+            ds_ag=0.0, ds_al=0.0, ds_dg=0.2, ds_dl=0.3,
+            dp_ag=0, dp_al=0, dp_dg=-10, dp_dl=0,
+            ds_ag_alt=0.0, ds_al_alt=0.0, ds_dg_alt=0.51, ds_dl_alt=0.4,
+            variant_pos=32890650,
+            exon_starts=BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            exon_ends=BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            strand="+",
+            all_non_zero_scores=all_non_zero_scores,
+        )
+        donors = [a for a in result if a["_branch"] == "gain_B_donor"]
+        self.assertEqual(len(donors), 2)
+        # Each sibling carries its own alt_score, geo_dg and _partial_size.
+        self.assertEqual({a["geo_dg"] for a in donors}, {32890640, 32890630})
+        self.assertEqual({a["_partial_size"] for a in donors}, {24, 34})
+        self.assertEqual({round(a["alt_score"], 2) for a in donors}, {0.51, 0.94})
+        for a in donors:
+            self.assertIsNotNone(a.get("alt_score"))
+
+    def test_single_site_cryptic_donor_gain_regression(self):
+        """Same setup as the multi-site case but with only the single strongest
+        donor site (and also with all_non_zero_scores=None) must yield exactly
+        ONE gain_B_donor aberration, matching pre-change behavior."""
+        single_site = [
+            {"pos": "32890640", "RA": "0.00", "AA": "0.00", "RD": "0.31", "AD": "0.51"},
+        ]
+        for scores in (single_site, None):
+            result = sai10k_determine_aberrations(
+                ds_ag=0.0, ds_al=0.0, ds_dg=0.2, ds_dl=0.3,
+                dp_ag=0, dp_al=0, dp_dg=-10, dp_dl=0,
+                ds_ag_alt=0.0, ds_al_alt=0.0, ds_dg_alt=0.51, ds_dl_alt=0.4,
+                variant_pos=32890650,
+                exon_starts=BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+                exon_ends=BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+                strand="+",
+                all_non_zero_scores=scores,
+            )
+            donors = [a for a in result if a["_branch"] == "gain_B_donor"]
+            self.assertEqual(len(donors), 1)
+            self.assertEqual(donors[0]["aberration_type"], "partial_exon_deletion")
+            self.assertEqual(donors[0]["geo_dg"], 32890640)
+            self.assertEqual(donors[0]["_partial_size"], 24)
+            self.assertEqual(round(donors[0]["alt_score"], 2), 0.51)
+
+    def test_sibling_cryptic_donor_gain_boundary_delta(self):
+        """Regression: a sibling donor gain whose per-site delta is exactly 0.20
+        via two-decimal scores (AD='0.30', RD='0.10') must still be emitted. Naive
+        float subtraction gives 0.19999999999999998, which fails the >= 0.2 branch-2
+        threshold in _cryptic_gain_activation and would drop the site; the per-site
+        delta is rounded to 2 decimals to avoid that."""
+        all_non_zero_scores = [
+            # strongest donor site (excluded from the sibling loop; emitted above)
+            {"pos": "32890640", "RA": "0.00", "AA": "0.00", "RD": "0.31", "AD": "0.51"},
+            # sibling with per-site delta exactly 0.20 (0.30 - 0.10) and alt 0.30,
+            # so it only passes branch2 (>= 0.2) once the delta is rounded.
+            {"pos": "32890630", "RA": "0.00", "AA": "0.00", "RD": "0.10", "AD": "0.30"},
+        ]
+        result = sai10k_determine_aberrations(
+            ds_ag=0.0, ds_al=0.0, ds_dg=0.2, ds_dl=0.3,
+            dp_ag=0, dp_al=0, dp_dg=-10, dp_dl=0,
+            ds_ag_alt=0.0, ds_al_alt=0.0, ds_dg_alt=0.51, ds_dl_alt=0.4,
+            variant_pos=32890650,
+            exon_starts=BRCA2_TRANSCRIPT_HG19["EXON_STARTS"],
+            exon_ends=BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            strand="+",
+            all_non_zero_scores=all_non_zero_scores,
+        )
+        donors = [a for a in result if a["_branch"] == "gain_B_donor"]
+        self.assertEqual(len(donors), 2)
+        boundary = [a for a in donors if a["geo_dg"] == 32890630]
+        self.assertEqual(len(boundary), 1)
+        self.assertEqual(round(boundary[0]["alt_score"], 2), 0.30)
+
 
 class TestAnnotateFrameshift(unittest.TestCase):
     """Test the sai10k_annotate_frameshift function (mutates aberration dict)."""
