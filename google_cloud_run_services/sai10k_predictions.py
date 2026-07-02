@@ -662,14 +662,24 @@ def sai10k_determine_aberrations(
             #       (DG_native_match=FAIL AND DG_acceptor_match=PASS)            # acceptor at native, donor is cryptic
             #     OR (DG_native_match=FAIL AND DG_acceptor_match=FAIL AND DS_AG < DS_DG)
             #   Neither fires when both positions match native (=,=) or when DS_AG == DS_DG at (≠,≠).
-            activate_acceptor = cryptic_acceptor_check and (
+            # acceptor_side_ok / donor_side_ok isolate JUST this side-selection
+            # decision, without the cryptic_*_check amplitude gate. The single
+            # strongest-by-raw-delta site (geo_ag/geo_dg) can legitimately fail
+            # its own amplitude/ALT-score check (e.g. a native-donor-destroying
+            # variant whose top-raw-delta "gain" position is a weak decoy) while
+            # a different, non-maximal position is the true, strongly
+            # ALT-activated cryptic site. The sibling scan below needs to run in
+            # that case too, so it is gated on the side-selection alone.
+            acceptor_side_ok = (
                 (dg_native_match and not dg_acceptor_match)
                 or (not dg_native_match and not dg_acceptor_match and ds_ag > ds_dg)
             )
-            activate_donor = cryptic_donor_check and (
+            donor_side_ok = (
                 (not dg_native_match and dg_acceptor_match)
                 or (not dg_native_match and not dg_acceptor_match and ds_ag < ds_dg)
             )
+            activate_acceptor = cryptic_acceptor_check and acceptor_side_ok
+            activate_donor = cryptic_donor_check and donor_side_ok
         else:
             # No DS_*_ALT scores supplied (standard SpliceAI output). Mirror the
             # reference parser's --include=False path (spliceai_parser.py:1331-1338):
@@ -679,6 +689,10 @@ def sai10k_determine_aberrations(
             # activation when DS_AG actually dominates DS_DG (or vice versa).
             activate_acceptor = ds_ag >= MIN_DELTA_SCORE and ds_ag > ds_dg
             activate_donor = ds_dg >= MIN_DELTA_SCORE and ds_dg > ds_ag
+            # No sibling scan without ALT scores (see gating below), so these
+            # aren't otherwise used, but keep them defined for both branches.
+            acceptor_side_ok = activate_acceptor
+            donor_side_ok = activate_donor
 
         dp_na = native['dp_na']
         dp_nd = native['dp_nd']
@@ -703,44 +717,46 @@ def sai10k_determine_aberrations(
                     aberrations[-1]['_partial_size'] = partial_size
                     aberrations[-1]['alt_score'] = ds_ag_alt
 
-            # Sibling acceptor-gain sites: emit a separate aberration for each
-            # ADDITIONAL cryptic acceptor gain (beyond the strongest site above)
-            # that independently satisfies the cryptic-activation condition. Each
-            # candidate is checked on its own, independent of whether the strongest
-            # site passed its orientation check, so a well-oriented sibling is
-            # still emitted when the strongest site is mis-oriented.
-            if has_alt_scores and all_non_zero_scores:
-                seen_acceptor_geo = set()
-                for entry in sorted(all_non_zero_scores, key=lambda e: int(e['pos'])):
-                    cand_geo = int(entry['pos'])
-                    if cand_geo == geo_ag or cand_geo in seen_acceptor_geo:
-                        continue  # strongest site already emitted, or a duplicate position
-                    seen_acceptor_geo.add(cand_geo)
-                    # Round to 2 decimals: raw scores are "0.2f" strings and float
-                    # subtraction (e.g. 0.30 - 0.10) can yield 0.19999999999999998,
-                    # which would spuriously fail the >= 0.2 threshold below.
-                    ag_delta = round(float(entry['AA']) - float(entry['RA']), 2)
-                    if ag_delta <= 0:
-                        continue
-                    cand_alt = float(entry['AA'])
-                    if not _cryptic_gain_activation(ag_delta, cand_alt, ds_al, ds_al_alt):
-                        continue
-                    if not _cryptic_acceptor_orientation_ok(cand_geo, native, is_reverse=strand == '-'):
-                        continue
-                    cand_dp = cand_geo - variant_pos
-                    partial_size = (cand_dp - dp_na) * strand_sign
-                    if (partial_size > 0 and partial_size < native['native_exon_size']
-                            and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
-                        ab = make('partial_exon_deletion', 'gain_B_acceptor')
-                    elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
-                          and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
-                        ab = make('partial_intron_retention', 'gain_B_acceptor')
-                    else:
-                        continue
-                    ab['geo_ag'] = cand_geo  # annotate off THIS site, not the strongest
-                    ab['_partial_size'] = partial_size
-                    ab['alt_score'] = cand_alt
-                    aberrations.append(ab)
+        # Sibling acceptor-gain sites: emit a separate aberration for each
+        # ADDITIONAL cryptic acceptor gain (beyond the strongest site above)
+        # that independently satisfies the cryptic-activation condition. Each
+        # candidate is checked on its own, independent of whether the strongest
+        # site passed its orientation OR amplitude check, so a well-oriented,
+        # strongly-activated sibling is still emitted when the strongest
+        # (by-raw-delta) site itself failed either check. Gated on
+        # acceptor_side_ok rather than activate_acceptor for that reason.
+        if acceptor_side_ok and has_alt_scores and all_non_zero_scores:
+            seen_acceptor_geo = set()
+            for entry in sorted(all_non_zero_scores, key=lambda e: int(e['pos'])):
+                cand_geo = int(entry['pos'])
+                if cand_geo == geo_ag or cand_geo in seen_acceptor_geo:
+                    continue  # strongest site already emitted, or a duplicate position
+                seen_acceptor_geo.add(cand_geo)
+                # Round to 2 decimals: raw scores are "0.2f" strings and float
+                # subtraction (e.g. 0.30 - 0.10) can yield 0.19999999999999998,
+                # which would spuriously fail the >= 0.2 threshold below.
+                ag_delta = round(float(entry['AA']) - float(entry['RA']), 2)
+                if ag_delta <= 0:
+                    continue
+                cand_alt = float(entry['AA'])
+                if not _cryptic_gain_activation(ag_delta, cand_alt, ds_al, ds_al_alt):
+                    continue
+                if not _cryptic_acceptor_orientation_ok(cand_geo, native, is_reverse=strand == '-'):
+                    continue
+                cand_dp = cand_geo - variant_pos
+                partial_size = (cand_dp - dp_na) * strand_sign
+                if (partial_size > 0 and partial_size < native['native_exon_size']
+                        and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
+                    ab = make('partial_exon_deletion', 'gain_B_acceptor')
+                elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
+                      and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
+                    ab = make('partial_intron_retention', 'gain_B_acceptor')
+                else:
+                    continue
+                ab['geo_ag'] = cand_geo  # annotate off THIS site, not the strongest
+                ab['_partial_size'] = partial_size
+                ab['alt_score'] = cand_alt
+                aberrations.append(ab)
 
         if activate_donor:
             if _cryptic_donor_orientation_ok(geo_dg, native, is_reverse=strand == '-'):
@@ -760,44 +776,50 @@ def sai10k_determine_aberrations(
                     aberrations[-1]['_partial_size'] = partial_size
                     aberrations[-1]['alt_score'] = ds_dg_alt
 
-            # Sibling donor-gain sites: emit a separate aberration for each
-            # ADDITIONAL cryptic donor gain (beyond the strongest site above)
-            # that independently satisfies the cryptic-activation condition. Each
-            # candidate is checked on its own, independent of whether the strongest
-            # site passed its orientation check, so a well-oriented sibling is
-            # still emitted when the strongest site is mis-oriented.
-            if has_alt_scores and all_non_zero_scores:
-                seen_donor_geo = set()
-                for entry in sorted(all_non_zero_scores, key=lambda e: int(e['pos'])):
-                    cand_geo = int(entry['pos'])
-                    if cand_geo == geo_dg or cand_geo in seen_donor_geo:
-                        continue  # strongest site already emitted, or a duplicate position
-                    seen_donor_geo.add(cand_geo)
-                    # Round to 2 decimals: raw scores are "0.2f" strings and float
-                    # subtraction (e.g. 0.30 - 0.10) can yield 0.19999999999999998,
-                    # which would spuriously fail the >= 0.2 threshold below.
-                    dd_delta = round(float(entry['AD']) - float(entry['RD']), 2)
-                    if dd_delta <= 0:
-                        continue
-                    cand_alt = float(entry['AD'])
-                    if not _cryptic_gain_activation(dd_delta, cand_alt, ds_dl, ds_dl_alt):
-                        continue
-                    if not _cryptic_donor_orientation_ok(cand_geo, native, is_reverse=strand == '-'):
-                        continue
-                    cand_dp = cand_geo - variant_pos
-                    partial_size = (dp_nd - cand_dp) * strand_sign
-                    if (partial_size > 0 and partial_size < native['native_exon_size']
-                            and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
-                        ab = make('partial_exon_deletion', 'gain_B_donor')
-                    elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
-                          and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
-                        ab = make('partial_intron_retention', 'gain_B_donor')
-                    else:
-                        continue
-                    ab['geo_dg'] = cand_geo  # annotate off THIS site, not the strongest
-                    ab['_partial_size'] = partial_size
-                    ab['alt_score'] = cand_alt
-                    aberrations.append(ab)
+        # Sibling donor-gain sites: emit a separate aberration for each
+        # ADDITIONAL cryptic donor gain (beyond the strongest site above)
+        # that independently satisfies the cryptic-activation condition. Each
+        # candidate is checked on its own, independent of whether the strongest
+        # site passed its orientation OR amplitude check, so a well-oriented,
+        # strongly-activated sibling is still emitted when the strongest
+        # (by-raw-delta) site itself failed either check — e.g. a variant that
+        # destroys the native donor can make SpliceAI's single reported
+        # top-raw-delta "gain" position a weak decoy (fails ALT_SCORE_STRONG)
+        # while a different, non-maximal position is the true, strongly
+        # ALT-activated cryptic donor. Gated on donor_side_ok rather than
+        # activate_donor for that reason.
+        if donor_side_ok and has_alt_scores and all_non_zero_scores:
+            seen_donor_geo = set()
+            for entry in sorted(all_non_zero_scores, key=lambda e: int(e['pos'])):
+                cand_geo = int(entry['pos'])
+                if cand_geo == geo_dg or cand_geo in seen_donor_geo:
+                    continue  # strongest site already emitted, or a duplicate position
+                seen_donor_geo.add(cand_geo)
+                # Round to 2 decimals: raw scores are "0.2f" strings and float
+                # subtraction (e.g. 0.30 - 0.10) can yield 0.19999999999999998,
+                # which would spuriously fail the >= 0.2 threshold below.
+                dd_delta = round(float(entry['AD']) - float(entry['RD']), 2)
+                if dd_delta <= 0:
+                    continue
+                cand_alt = float(entry['AD'])
+                if not _cryptic_gain_activation(dd_delta, cand_alt, ds_dl, ds_dl_alt):
+                    continue
+                if not _cryptic_donor_orientation_ok(cand_geo, native, is_reverse=strand == '-'):
+                    continue
+                cand_dp = cand_geo - variant_pos
+                partial_size = (dp_nd - cand_dp) * strand_sign
+                if (partial_size > 0 and partial_size < native['native_exon_size']
+                        and d_from_exon is not None and d_from_exon <= DISTANCE_EXON_MAX_LOSS):
+                    ab = make('partial_exon_deletion', 'gain_B_donor')
+                elif (partial_size < 0 and partial_size >= -DISTANCE_PARTIAL_RETENTION_MAX
+                      and d_from_exon is not None and d_from_exon <= DISTANCE_PARTIAL_RETENTION_MAX):
+                    ab = make('partial_intron_retention', 'gain_B_donor')
+                else:
+                    continue
+                ab['geo_dg'] = cand_geo  # annotate off THIS site, not the strongest
+                ab['_partial_size'] = partial_size
+                ab['alt_score'] = cand_alt
+                aberrations.append(ab)
 
     return aberrations
 
