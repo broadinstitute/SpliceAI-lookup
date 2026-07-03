@@ -14,16 +14,25 @@
             "spliceai-38": "https://spliceai-38-xwkwwwxdwq-uc.a.run.app",
         }
 
-        // If the URL hash contains api=dev, swap spliceai/pangolin URLs to
-        // their 'dev'-tagged Cloud Run revisions (deployed by
-        // build_and_deploy.py --dev). 'normalize' (liftover) is unaffected
-        // because build_and_deploy.py doesn't manage that service.
+        // Route spliceai/pangolin requests to their 'dev'-tagged Cloud Run
+        // revisions (deployed by build_and_deploy.py --dev) when EITHER:
+        //   - this page is served from the dev GitHub Pages site
+        //     (broadinstitute.github.io/SpliceAI-lookup-dev), so the dev site
+        //     always talks to the dev API without needing a URL flag, OR
+        //   - the URL hash contains api=dev (manual override, e.g. for local
+        //     testing or forcing dev from another host).
+        // 'normalize' (liftover) is unaffected because build_and_deploy.py
+        // doesn't manage that service.
+        const _servedFromDevSite = (
+            window.location.hostname === "broadinstitute.github.io"
+            && window.location.pathname.startsWith("/SpliceAI-lookup-dev")
+        )
         const _apiMatch = window.location.hash.match(/[?&#]api=([^&#]*)/)
-        if (_apiMatch && _apiMatch[1] === "dev") {
+        if (_servedFromDevSite || (_apiMatch && _apiMatch[1] === "dev")) {
             for (const k of ["pangolin-37", "pangolin-38", "spliceai-37", "spliceai-38"]) {
                 baseApiUrl[k] = baseApiUrl[k].replace(/^https:\/\//, "https://dev---")
             }
-            console.log("api=dev: routing spliceai/pangolin requests to dev revisions:", baseApiUrl)
+            console.log("Routing spliceai/pangolin requests to dev revisions:", baseApiUrl)
         }
     </script>
     <meta content="width=device-width, initial-scale=1" charset="utf-8" name="viewport"/>
@@ -355,7 +364,11 @@
                 <div>
                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website<br />
                     <br/>
-                    <b>May 11, 2026</b>
+                    <b>July 1st, 2026</b>
+                    <br />
+                    - improved SpliceAI-10k output when SpliceAI predicts multiple acceptor/donor shifts (examples: <a href="https://spliceailookup.broadinstitute.org/#variant=NM_024675.4(PALB2)%3Ac.47A%3EG&hg=38&bc=basic&distance=500&mask=0&ra=0" target="_blank">NM_024675.4(PALB2):c.47A>G</a>, <a href="https://spliceailookup.broadinstitute.org/#variant=NM_000546.6(TP53)%3Ac.673-1G%3EA&hg=38&bc=basic&distance=500&mask=0&ra=0" target="_blank">NM_000546.6(TP53):c.673-1G>A</a>)<br/>
+                    <br />
+                    <b>May, 2026</b>
                     <br />
                     - Added <a href="https://academic.oup.com/bioinformatics/article/39/4/btad179/7109800" target="_blank">SpliceAI-10k Calculator</a> predictions<br/>
 		    - Updated list of Related web tools<br />
@@ -1003,15 +1016,71 @@
         // Error messages may include user-entered variant text and server-reflected
         // strings (Ensembl, myvariant.info, our own API). Render as text nodes
         // + explicit <br> elements instead of interpolating into an .html() string,
-        // so any HTML/JS in the message is neutralised.
+        // so any HTML/JS in the message is neutralised. An array of parts may be
+        // passed to embed a trusted link: each string becomes a text node and each
+        // {text, href} becomes an <a> opened in a new tab.
         const $box = $("#error-box")
         $box.append(document.createElement("br"))
-        $box.append(document.createTextNode(errorMessage == null ? "" : String(errorMessage)))
+        for (const part of (Array.isArray(errorMessage) ? errorMessage : [errorMessage])) {
+            if (part != null && typeof part === 'object' && part.href) {
+                const link = document.createElement("a")
+                link.href = part.href
+                link.target = "_blank"
+                link.rel = "noopener noreferrer"
+                link.textContent = String(part.text)
+                $box.append(link)
+            } else {
+                $box.append(document.createTextNode(part == null ? "" : String(part)))
+            }
+        }
         $box.append(document.createElement("br"))
         $box.show()
     }
 
     const ENSEMBL_TIMEOUT_MS = 90000  // 90 second timeout for Ensembl API calls
+    const VARIANTVALIDATOR_TIMEOUT_MS = 30000  // 30 second timeout for the VariantValidator fallback
+    // Guidance appended to variant-resolution errors when HGVS lookup is unavailable.
+    const GENOMIC_COORDINATE_HINT = `Try entering the variant using genomic coordinates rather than HGVS (eg. "chrom-pos-ref-alt", "chrom:pos ref>alt", etc.)`
+
+    const resolveVariantWithVariantValidator = async (variant, genomeVersion) => {
+        /* Fallback coordinate resolver, used only when the Ensembl API is unreachable.
+         * Converts an HGVS variant to "{chrom}-{pos}-{ref}-{alt}" via the public
+         * VariantValidator REST API (no API key required). Returns that string on
+         * success, or null if VariantValidator is unreachable or can't resolve the
+         * variant. Does NOT provide a VEP consequence.
+         *
+         * Args:
+         *  variant (string): user input text (HGVS notation)
+         *  genomeVersion (string): "37" or "38"
+         */
+        const build = genomeVersion == '37' ? 'GRCh37' : 'GRCh38'
+        const buildKey = genomeVersion == '37' ? 'grch37' : 'grch38'
+        try {
+            const response = await makeRequest(
+                // Use the 'select' (MANE/RefSeq-select) transcript set rather than
+                // 'all': VariantValidator has deprecated select_transcripts='all'/'raw'
+                // for genomic (g.) HGVS input, which returns a 404 "Not Found" instead
+                // of coordinates. 'select' resolves both transcript- and genomic-HGVS.
+                `https://rest.variantvalidator.org/VariantValidator/variantvalidator/${build}/${encodeURIComponent(variant.trim())}/select`,
+                VARIANTVALIDATOR_TIMEOUT_MS)
+            // The response is keyed by validated variant description(s), alongside
+            // "flag" and "metadata" keys; the genomic position lives under
+            // primary_assembly_loci[buildKey].vcf.
+            for (const key of Object.keys(response)) {
+                if (key === 'flag' || key === 'metadata') continue
+                const loci = response[key] && response[key].primary_assembly_loci
+                const vcf = loci && loci[buildKey] && loci[buildKey].vcf
+                if (vcf && vcf.chr && vcf.pos && vcf.ref && vcf.alt) {
+                    return `${String(vcf.chr).replace(/^chr/i, '')}-${vcf.pos}-${vcf.ref}-${vcf.alt}`
+                }
+            }
+            console.warn("VariantValidator returned no genomic coordinates for", variant, response)
+            return null
+        } catch (e) {
+            console.warn("VariantValidator fallback failed:", e)
+            return null
+        }
+    }
 
     const normalizeVariant = async (variant, genomeVersion) => {
         /* Convert the given variant to a standardized "{chrom}-{pos}-{ref}-{alt}" string using a regular expression, or
@@ -1073,11 +1142,26 @@
                         'fallbackReason': errorMessage.includes('timed out') ? 'Ensembl API timed out' : 'Ensembl API unavailable'
                     }
                 }
-                // HGVS notation requires Ensembl - provide helpful error message
-                if (errorMessage.includes('timed out')) {
-                    throw Error(`Ensembl API timed out. Please enter the variant in "chrom:pos ref > alt" format to work around this issue.`)
+                // HGVS notation requires Ensembl and we have no local parse. Try
+                // VariantValidator as a coordinate-resolution fallback before giving up.
+                const vvVariant = await resolveVariantWithVariantValidator(variant, genomeVersion)
+                if (vvVariant) {
+                    console.warn(`Ensembl API unavailable, using VariantValidator as fallback: ${vvVariant}`)
+                    return {
+                        'variant': vvVariant,
+                        'consequence': null,
+                        'usedFallback': true,
+                        'fallbackReason': errorMessage.includes('timed out')
+                            ? 'Ensembl API timed out; converted HGVS to genomic coordinates via VariantValidator'
+                            : 'Ensembl API unavailable; converted HGVS to genomic coordinates via VariantValidator'
+                    }
                 }
-                throw Error(`Ensembl API call failed: ${errorMessage}`)
+                // Ensembl is unreachable, VariantValidator couldn't resolve it, and the
+                // input isn't in a directly-parseable genomic format.
+                if (errorMessage.includes('timed out')) {
+                    throw Error(`Ensembl API timed out. ${GENOMIC_COORDINATE_HINT}`)
+                }
+                throw Error(`Ensembl API call failed: ${errorMessage}. ${GENOMIC_COORDINATE_HINT}`)
             }
 
             ensemblApiResponseJson = await ensemblApiResponse
@@ -1709,8 +1793,19 @@
                 inner = d ? `<span style="color: #666;">${renderDescription(d, first.frameshift)}${aaChangeIcon(first)}</span>` : ''
             } else {
                 // One visualize link covers all aberrations (they share an IGV view).
+                // Only the cryptic splice-site predictions (partial exon deletion /
+                // partial intron retention) carry an alt_score, and the backend
+                // always emits them contiguously at the END of the list (loss and
+                // gain-A aberrations, which have no alt_score, come first). Given
+                // that contiguity, this comparator sorts the cryptic block by
+                // descending ALT score while leaving the non-cryptic prefix in
+                // place (it returns 0 for any pair involving a non-alt aberration).
+                // NOTE: the comparator is not a strict-weak-order, so it relies on
+                // that contiguity — it would misorder cryptic rows if a non-alt
+                // aberration were ever interleaved among them.
                 const items = sai10kAberrations
                     .filter(ab => ab.description)
+                    .sort((a, b) => (a.alt_score != null && b.alt_score != null) ? b.alt_score - a.alt_score : 0)
                     .map(ab => `<li style="margin: 2px 0;">${renderDescription(ab.description, ab.frameshift)}${aaChangeIcon(ab)}</li>`)
                     .join('')
                 inner = items
@@ -2438,7 +2533,10 @@
         }
 
         // get user inputs from form elements
-        const variant = $("#search-box").val().trim()
+        // Strip surrounding whitespace, and also any trailing commas/semicolons
+        // (with whitespace around them) left over from pasting a variant out of a
+        // delimited list.
+        const variant = $("#search-box").val().trim().replace(/[\s,;]+$/, "")
         if (!variant) return
         if (variant.length > 10000) {
             showErrorIfCurrent("Input cannot be larger than 10,000 characters")
@@ -2487,7 +2585,19 @@
 
             // Show warning if Ensembl API fallback was used
             if (normalizedVariantAndConsequence.usedFallback) {
-                showErrorIfCurrent(`Note: ${normalizedVariantAndConsequence.fallbackReason}. VEP consequence is unavailable.`)
+                // Render "VariantValidator" in the fallback note as a link when the
+                // reason mentions it; all other reason text stays a plain text node.
+                const reason = normalizedVariantAndConsequence.fallbackReason
+                const vvIndex = reason.indexOf("VariantValidator")
+                if (vvIndex === -1) {
+                    showErrorIfCurrent(`Note: ${reason}. VEP consequence is unavailable.`)
+                } else {
+                    showErrorIfCurrent([
+                        `Note: ${reason.slice(0, vvIndex)}`,
+                        {text: "VariantValidator", href: "https://variantvalidator.org/"},
+                        `${reason.slice(vvIndex + "VariantValidator".length)}. VEP consequence is unavailable.`,
+                    ])
+                }
             }
 
             let [spliceaiResponseJson, pangolinResponseJson, otherPredictorsResponseJson] = await Promise.all([
