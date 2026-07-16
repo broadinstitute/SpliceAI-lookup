@@ -87,6 +87,6 @@ If you would like to run your own API instance on Google Cloud instead of locall
 ---
 #### For Developers
 
-Repository layout, local development setup, tests, and how to submit changes are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
+For how to make, test, and/or contribute changes, see [Developer Guidelines](CONTRIBUTING.md).
 
 
