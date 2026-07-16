@@ -1,7 +1,6 @@
-# Contributing / Developer Guidelines
+Developer Guidelines
 
-Thanks for your interest in improving SpliceAI-lookup. This document covers the
-repository layout, local development, tests, and how to submit changes. For how to
+This doc covers the repository layout, local development, tests, and how to submit changes. For how to
 *use* the hosted APIs or run a prebuilt Docker image, see the [README](README.md).
 
 ## Repository layout
