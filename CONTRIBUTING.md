@@ -104,9 +104,8 @@ reporting scoring problems so the result can be reproduced.
 ## Submitting changes
 
 1. Fork the repo and create a branch for your change.
-2. Keep changes focused; update the README / this file when behavior or setup changes.
-3. Run the relevant tests (above).
-4. Open a pull request describing what changed and why.
+2. Run the relevant tests (above).
+3. Open a pull request describing what changed and why.
 
 ## Releasing / deploying
 
