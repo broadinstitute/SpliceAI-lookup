@@ -1,0 +1,37 @@
+# Runtime dependencies for the SpliceAI / Pangolin API server (server.py +
+# sai10k_predictions.py). Install for local development with:
+#   python3 -m pip install -r requirements.txt
+#
+# This is the union of docker/spliceai/requirements.txt and
+# docker/pangolin/requirements.txt (the per-image lists the Dockerfiles actually
+# install). It does NOT include the model packages themselves, which are large,
+# platform-specific, and installed separately — exactly as the Dockerfiles do:
+#
+#   SpliceAI:
+#     python3 -m pip install tensorflow-cpu==2.16.1
+#     python3 -m pip install https://github.com/bw2/SpliceAI/archive/refs/heads/master.zip
+#
+#   Pangolin:
+#     python3 -m pip install torch==2.2.1 --index-url https://download.pytorch.org/whl/cpu
+#     python3 -m pip install git+https://github.com/bw2/Pangolin.git
+#
+# server.py imports the model packages lazily, so the server starts without them;
+# only the scoring endpoint for the corresponding TOOL requires its model package.
+
+# web server
+flask
+flask_cors
+flask-talisman==1.1.0
+gunicorn
+
+# scoring / annotation support
+numpy==1.26.4
+pandas==2.2.2
+biopython==1.83
+pyfastx==2.1.0
+gffutils==0.13
+PyVCF3>=1.0.3
+
+# optional PostgreSQL response cache (see README). psycopg2-binary avoids needing
+# libpq-dev / a compiler locally — swap it in if the source build of psycopg2 fails.
+psycopg2==2.9.9

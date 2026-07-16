@@ -85,9 +85,8 @@ The `transcripts_hg37`/`transcripts_hg38` tables used for SAI-10k transcript-str
 If you would like to run your own API instance on Google Cloud instead of locally, see the [build_and_deploy.py](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/google_cloud_run_services/build_and_deploy.py#L224-L238) script which we use to deploy and update the SpliceAI-lookup API on [Google Cloud Run](https://cloud.google.com/run?hl=en). Submit a GitHub issue if you have any questions.
 
 ---
-#### Code Overview For Developers
+#### For Developers
 
-The [spliceailookup.broadinstitute.org](https://spliceailookup.broadinstitute.org) front-end is contained within [index.html](index.html). It uses ES6 javascript with [Semantic UI](https://semantic-ui.com) and [jQuery](https://en.wikipedia.org/wiki/JQuery). Also, it uses a [custom version of igv.js](https://github.com/bw2/igv.js) that includes new track types for visualizing the SpliceAI & Pangolin scores. The new server-side code is in the [google_cloud_run_services/](google_cloud_run_services/) subdirectory and includes Dockerfiles for building API server images, as well as the [build_and_deploy.py](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/google_cloud_run_services/build_and_deploy.py#L224-L238) script for deploying SpliceAI and Pangolin API services to [Google Cloud Run](https://cloud.google.com/run?hl=en). 
-The API server logic is in [google_cloud_run_services/server.py](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/google_cloud_run_services/server.py) and uses the [Flask](https://flask.palletsprojects.com/en/3.0.x) library.
+Repository layout, local development setup, tests, and how to submit changes are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 
