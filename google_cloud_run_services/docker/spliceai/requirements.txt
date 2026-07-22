@@ -3,7 +3,6 @@ flask_cors
 flask-talisman==1.1.0
 gunicorn
 pandas==2.2.2
-biopython==1.83
 pyfastx==2.1.0
 
 # sql

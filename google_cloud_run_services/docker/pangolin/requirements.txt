@@ -5,7 +5,6 @@ gunicorn
 
 # pangolin dependencies:
 gffutils==0.13
-biopython==1.83
 pyfastx==2.1.0
 PyVCF3>=1.0.3
 

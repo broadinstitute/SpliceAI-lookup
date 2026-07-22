@@ -27,7 +27,6 @@ gunicorn
 # scoring / annotation support
 numpy==1.26.4
 pandas==2.2.2
-biopython==1.83
 pyfastx==2.1.0
 gffutils==0.13
 PyVCF3>=1.0.3
