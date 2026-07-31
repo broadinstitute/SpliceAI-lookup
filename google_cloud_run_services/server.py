@@ -63,6 +63,17 @@ VARIANT_RE = re.compile(
     r"(?P<alt>[ACGT]+)"
 )
 
+# Matches a bare chrom+pos with no ref/alt (e.g. "chr8-140300615", "chr8:140300615"),
+# used for REF-only score requests where no ALT allele is available. fullmatch()
+# against this is tried only after VARIANT_RE's fullmatch fails, so a full
+# variant string is never misparsed as a position (the trailing "-C-G" etc.
+# keeps it from matching this pattern at all).
+POSITION_RE = re.compile(
+    r"(chr)?(?P<chrom>[0-9XYMTt]{1,2})"
+    r"[-\s:]+"
+    r"(?P<pos>[0-9]{1,9})"
+)
+
 FASTA_PATH = {
     "37": "/hg19.fa.gz",
     "38": "/hg38.fa.gz",
@@ -111,7 +122,7 @@ if GENOME_VERSION not in ("37", "38"):
     raise ValueError(f'Environment variable "GENOME_VERSION" should be set to either "37" or "38" instead of: "{os.environ.get("GENOME_VERSION")}"')
 
 if TOOL == "spliceai":
-    from spliceai.utils import Annotator, get_delta_scores
+    from spliceai.utils import Annotator, get_delta_scores, get_reference_scores
 
     class VariantRecord:
         def __init__(self, chrom, pos, ref, alt):
@@ -140,6 +151,7 @@ if TOOL == "spliceai":
 elif TOOL == "pangolin":
     from pkg_resources import resource_filename
     from pangolin.pangolin import process_variant as process_variant_using_pangolin
+    from pangolin.pangolin import process_position as process_position_using_pangolin
     from pangolin.model import torch, Pangolin, L, W, AR
     import gffutils
 
@@ -210,6 +222,14 @@ def parse_variant(variant_str):
         raise ValueError(f"Unable to parse variant: {variant_str}")
 
     return match['chrom'], int(match['pos']), match['ref'], match['alt']
+
+
+def parse_position(position_str):
+    match = POSITION_RE.fullmatch(position_str)
+    if not match:
+        raise ValueError(f"Unable to parse position: {position_str}")
+
+    return match['chrom'], int(match['pos'])
 
 
 def _env_flag(name, default=False):
@@ -637,14 +657,16 @@ def exceeds_rate_limit(conn, user_ip, params):
 SAI10K_VERSION = "v21"
 
 
-def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
-    suffix = f"__sai10k-{SAI10K_VERSION}" if tool_name == "spliceai" else ""
+def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic", is_position_only=False):
+    # REF-only (position-only) spliceai responses never run SAI-10k-calc (it requires
+    # an ALT allele), so bumping SAI10K_VERSION should not invalidate their cache entries.
+    suffix = f"__sai10k-{SAI10K_VERSION}" if tool_name == "spliceai" and not is_position_only else ""
     return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}__{basic_or_comprehensive}{suffix}"
 
 
-def get_splicing_scores_from_cache(conn, tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic"):
+def get_splicing_scores_from_cache(conn, tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic", is_position_only=False):
     results = {}
-    key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive)
+    key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive, is_position_only)
     try:
         rows = run_sql(conn, f"SELECT value FROM cache WHERE key=%s", (key,))
         if rows:
@@ -656,8 +678,8 @@ def get_splicing_scores_from_cache(conn, tool_name, variant, genome_version, dis
     return results
 
 
-def add_splicing_scores_to_cache(conn, tool_name, variant, genome_version, distance, mask, basic_or_comprehensive, results):
-    key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive)
+def add_splicing_scores_to_cache(conn, tool_name, variant, genome_version, distance, mask, basic_or_comprehensive, results, is_position_only=False):
+    key = get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive, is_position_only)
     try:
         results_string = json.dumps(results)
 
@@ -882,6 +904,87 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
     }
 
 
+def get_spliceai_reference_scores(variant, genome_version, distance_param, basic_or_comprehensive_param):
+    """REF-only counterpart of get_spliceai_scores: variant is a bare chrom-pos
+    position (no ref/alt). No SAI-10k-calc predictions or DB transcript-
+    structure enrichment -- those require an ALT allele.
+    """
+    chrom, pos = parse_position(variant)
+
+    # spliceai's normalise_chrom() handles "chr" prefix mismatches but not the
+    # M↔MT alias -- see the matching comment in get_spliceai_scores.
+    if chrom.upper() in {"M", "MT"} and genome_version in MITO_CHROM_NAME:
+        chrom = MITO_CHROM_NAME[genome_version]
+
+    try:
+        scores = get_reference_scores(
+            chrom, pos,
+            SPLICEAI_ANNOTATOR[(genome_version, basic_or_comprehensive_param)],
+            distance_param)
+    except Exception as e:
+        print(f"ERROR while computing SpliceAI REF scores for {variant}: {e}")
+        traceback.print_exc()
+        return {
+            "variant": variant,
+            "source": "spliceai",
+            "error": f"{type(e)}: {e}",
+        }
+
+    if not scores:
+        return {
+            "variant": variant,
+            "source": "spliceai",
+            "error": f"The SpliceAI model did not return any scores for {variant}. This may be because the position does "
+                     f"not overlap any exons or introns defined by the GENCODE '{basic_or_comprehensive_param}' annotation.",
+        }
+
+    # Enrich each transcript_scores with in-memory annotations (no DB), same as get_spliceai_scores.
+    candidate_transcripts = []
+    for transcript_scores in scores:
+        transcript_id_without_version = transcript_scores.get("NAME", "").split(".")[0]
+        transcript_annotations = SHARED_TRANSCRIPT_ANNOTATIONS[(genome_version, basic_or_comprehensive_param)].get(transcript_id_without_version)
+        if transcript_annotations is None:
+            raise ValueError(f"Missing annotations for {transcript_id_without_version} in {genome_version} annotations")
+        transcript_scores.update(transcript_annotations)
+        candidate_transcripts.append(transcript_scores)
+
+    # Select the transcript to visualize: highest priority (MS > MP > C > N),
+    # then highest combined |RA_MAX| + |RD_MAX|. Mirrors the selection logic in
+    # get_pangolin_scores below.
+    selected_transcript = None
+    best_priority = -1
+    best_score_sum = -1.0
+    for transcript_scores in candidate_transcripts:
+        priority = TRANSCRIPT_PRIORITY_ORDER.get(transcript_scores.get('t_priority', 'N'), 0)
+        score_sum = abs(float(transcript_scores['RA_MAX'])) + abs(float(transcript_scores['RD_MAX']))
+        if priority > best_priority or (priority == best_priority and score_sum > best_score_sum):
+            selected_transcript = transcript_scores
+            best_priority = priority
+            best_score_sum = score_sum
+
+    all_non_zero_scores = selected_transcript["ALL_NON_ZERO_SCORES"] if selected_transcript else None
+    all_non_zero_scores_strand = (selected_transcript.get("STRAND") or selected_transcript.get("t_strand")) if selected_transcript else None
+    all_non_zero_scores_transcript_id = selected_transcript["t_id"] if selected_transcript else None
+
+    for transcript_scores in candidate_transcripts:
+        for redundant_key in ("NAME", "STRAND", "ALL_NON_ZERO_SCORES"):
+            transcript_scores.pop(redundant_key, None)
+
+    return {
+        "variant": variant,
+        "genomeVersion": genome_version,
+        "chrom": chrom,
+        "pos": pos,
+        "distance": distance_param,
+        "scores": scores,
+        "source": "spliceai:model",
+        "isPositionOnly": True,
+        "allNonZeroScores": all_non_zero_scores,
+        "allNonZeroScoresStrand": all_non_zero_scores_strand,
+        "allNonZeroScoresTranscriptId": all_non_zero_scores_transcript_id,
+    }
+
+
 def get_pangolin_scores(variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param):
     if genome_version not in ("37", "38"):
         raise ValueError(f"Invalid genome_version: {genome_version}")
@@ -996,6 +1099,92 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
     }
 
 
+def get_pangolin_reference_scores(variant, genome_version, distance_param, basic_or_comprehensive_param):
+    """REF-only counterpart of get_pangolin_scores: variant is a bare chrom-pos
+    position (no ref/alt).
+    """
+    if genome_version not in ("37", "38"):
+        raise ValueError(f"Invalid genome_version: {genome_version}")
+
+    if basic_or_comprehensive_param not in ("basic", "comprehensive"):
+        raise ValueError(f"Invalid basic_or_comprehensive_param: {basic_or_comprehensive_param}")
+
+    chrom, pos = parse_position(variant)
+
+    class PangolinArgs:
+        reference_file = FASTA_PATH[genome_version]
+        distance = distance_param
+
+    pangolin_models = []
+
+    for i in 0, 2, 4, 6:
+        for j in 1, 2, 3:
+            model = Pangolin(L, W, AR)
+            if torch.cuda.is_available():
+                model.cuda()
+                weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)))
+            else:
+                weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)), map_location=torch.device('cpu'))
+            model.load_state_dict(weights)
+            model.eval()
+            pangolin_models.append(model)
+
+    features_db = gffutils.FeatureDB(PANGOLIN_ANNOTATION_PATHS[(genome_version, basic_or_comprehensive_param)])
+    scores = process_position_using_pangolin(0, chrom, int(pos), features_db, pangolin_models, PangolinArgs)
+
+    if not scores:
+        return {
+            "variant": variant,
+            "source": "pangolin",
+            "error": f"Pangolin was unable to compute scores for this position",
+        }
+
+    candidate_transcripts = []
+    for transcript_scores in scores:
+        transcript_id_without_version = transcript_scores.get("NAME", "").split(".")[0]
+
+        transcript_annotations = SHARED_TRANSCRIPT_ANNOTATIONS[(genome_version, basic_or_comprehensive_param)].get(transcript_id_without_version)
+        if transcript_annotations is None:
+            raise ValueError(f"Missing annotations for {transcript_id_without_version} in {genome_version} annotations")
+
+        transcript_scores.update(transcript_annotations)
+        candidate_transcripts.append(transcript_scores)
+
+    # Select transcript: highest priority, then highest |S_REF|
+    selected_transcript = None
+    best_priority = -1
+    best_score = -1.0
+    for transcript_scores in candidate_transcripts:
+        priority = TRANSCRIPT_PRIORITY_ORDER.get(transcript_scores.get('t_priority', 'N'), 0)
+        score = abs(float(transcript_scores['S_REF']))
+        if priority > best_priority or (priority == best_priority and score > best_score):
+            selected_transcript = transcript_scores
+            best_priority = priority
+            best_score = score
+
+    all_non_zero_scores = selected_transcript["ALL_NON_ZERO_SCORES"] if selected_transcript else None
+    all_non_zero_scores_strand = selected_transcript["STRAND"] if selected_transcript else None
+    all_non_zero_scores_transcript_id = selected_transcript["NAME"] if selected_transcript else None
+
+    for transcript_scores in candidate_transcripts:
+        for redundant_key in ("NAME", "STRAND", "ALL_NON_ZERO_SCORES"):
+            transcript_scores.pop(redundant_key, None)
+
+    return {
+        "variant": variant,
+        "genomeVersion": genome_version,
+        "chrom": chrom,
+        "pos": pos,
+        "distance": distance_param,
+        "scores": scores,
+        "source": "pangolin:model",
+        "isPositionOnly": True,
+        "allNonZeroScores": all_non_zero_scores,
+        "allNonZeroScoresStrand": all_non_zero_scores_strand,
+        "allNonZeroScoresTranscriptId": all_non_zero_scores_transcript_id,
+    }
+
+
 @app.route("/spliceai/", methods=['POST', 'GET'])
 def run_spliceai():
     return run_splice_prediction_tool(tool_name="spliceai")
@@ -1087,6 +1276,22 @@ def run_splice_prediction_tool(tool_name):
     if basic_or_comprehensive_param not in ("basic", "comprehensive"):
         return error_response(f'Invalid "bc" value: "{basic_or_comprehensive_param}". The value must be either "basic" or "comprehensive". For example: {example_url}\n', source=tool_name)
 
+    # A bare chrom-pos position (no ref/alt) requests REF-only scores instead
+    # of the usual REF-vs-ALT delta scores. Try the full variant format first
+    # so a well-formed variant is never misparsed as a position.
+    try:
+        parse_variant(variant)
+        is_position_only = False
+    except ValueError:
+        try:
+            parse_position(variant)
+            is_position_only = True
+        except ValueError:
+            return error_response(
+                f'Unable to parse "variant": "{variant}". Expected either a chrom-pos-ref-alt variant '
+                f'(e.g. chr8-140300615-C-G) or a chrom-pos position (e.g. chr8-140300615) for REF-only scores.\n',
+                source=tool_name)
+
     variant_consequence = params.get("variant_consequence")
 
     force = params.get("force")  # ie. don't use cache
@@ -1103,7 +1308,7 @@ def run_splice_prediction_tool(tool_name):
     results = {}
     if not force:
         with get_db_connection() as conn:
-            results = get_splicing_scores_from_cache(conn, tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param)
+            results = get_splicing_scores_from_cache(conn, tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param, is_position_only)
 
     if results:
         # Cache hit: brief log scope, then fall through to response building.
@@ -1123,7 +1328,14 @@ def run_splice_prediction_tool(tool_name):
         # acquires its own short-lived connection internally for transcript-structure
         # SELECTs after inference completes; get_pangolin_scores does no DB work.
         try:
-            if tool_name == "spliceai":
+            if is_position_only:
+                if tool_name == "spliceai":
+                    results = get_spliceai_reference_scores(variant, genome_version, distance_param, basic_or_comprehensive_param)
+                elif tool_name == "pangolin":
+                    results = get_pangolin_reference_scores(variant, genome_version, distance_param, basic_or_comprehensive_param)
+                else:
+                    raise ValueError(f"Invalid tool_name: {tool_name}")
+            elif tool_name == "spliceai":
                 results = get_spliceai_scores(variant, genome_version, distance_param, int(mask_param), basic_or_comprehensive_param)
             elif tool_name == "pangolin":
                 pangolin_mask_param = "True" if mask_param == "1" else "False"
@@ -1158,7 +1370,7 @@ def run_splice_prediction_tool(tool_name):
         with get_db_connection() as conn:
             log(conn, f"{tool_name}:computed", ip=user_ip, duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
             if "error" not in results and not skip_cache:
-                add_splicing_scores_to_cache(conn, tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param, results)
+                add_splicing_scores_to_cache(conn, tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param, results, is_position_only)
             elif "error" in results:
                 log(conn, f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
 
@@ -1171,6 +1383,11 @@ def run_splice_prediction_tool(tool_name):
         "variant", "hg", "bc", "distance", "mask", "raw", "variant_consequence",
     )
     response_json = {k: params[k] for k in ECHO_PARAM_KEYS if k in params}
+    # REF-only (position-only) results never set a "mask" key (mask has no meaning
+    # without an ALT allele) -- drop a client-supplied mask echo too, so the response
+    # never implies a mask value was applied when it wasn't.
+    if is_position_only:
+        response_json.pop("mask", None)
     response_json.update(results)
 
     response_log_string = ", ".join([f"{k}: {v}" for k, v in response_json.items() if not k.startswith("allNonZeroScores")])
