@@ -9,6 +9,10 @@ To run:
 
 To run against a different URL:
     SPLICEAI_LOOKUP_URL=https://spliceailookup.broadinstitute.org python3 -m unittest test_ui -v
+
+These tests exercise whatever is DEPLOYED at SPLICEAI_LOOKUP_URL, not the index.html
+in this working tree. A passing run therefore says nothing about uncommitted local
+changes -- to gate those, serve this directory and point SPLICEAI_LOOKUP_URL at it.
 """
 
 import os
@@ -509,6 +513,167 @@ class TestSpliceAILookupUI(unittest.TestCase):
 
         # After the request completes, loading class should be removed.
         self.page.wait_for_selector("#submit-button:not(.loading)", timeout=TIMEOUT_MS)
+
+    # ------------------------------------------------------------------
+    # Position-only (REF-only) mode
+    #
+    # A bare chrom:position input (no ref/alt) asks for scores computed on the
+    # reference sequence alone. There is no ALT allele, so everything that
+    # depends on one -- delta scores, SAI-10k-calc, the other-predictors table,
+    # the REF/ALT score columns -- must be suppressed, and the shared table
+    # headers get relabeled in place. The relabeling mutates elements that the
+    # normal delta-score path reuses, so the tests below also cover switching
+    # back out of the mode.
+    # ------------------------------------------------------------------
+
+    def test_position_only_shows_ref_score_tables(self):
+        """A bare chrom:position returns SpliceAI and Pangolin reference scores."""
+        self._submit_variant("chr8:140300616")
+
+        self.assertTrue(self.page.is_visible("#response-box"))
+        # Row counts alone would pass with both tables hidden, since the rows stay
+        # in the DOM either way.
+        self.assertTrue(self.page.is_visible("#spliceai-table"))
+        self.assertTrue(self.page.is_visible("#pangolin-table"))
+        self.assertGreater(len(self.page.query_selector_all(".spliceai-result-row")), 0,
+                           "Expected at least one SpliceAI REF-only result row")
+        self.assertGreater(len(self.page.query_selector_all(".pangolin-result-row")), 0,
+                           "Expected at least one Pangolin REF-only result row")
+
+    def test_position_only_relabels_table_headers(self):
+        """The shared delta-score headers are relabeled for REF-only results."""
+        self._submit_variant("chr8:140300616")
+
+        for tool in ("spliceai", "pangolin"):
+            with self.subTest(tool=tool):
+                self.assertEqual(self.page.inner_text(f"#{tool}-variant-header").strip(), "Position")
+                self.assertEqual(self.page.inner_text(f"#{tool}-type-header-label").strip(), "site type")
+                self.assertEqual(self.page.inner_text(f"#{tool}-score-header-label").strip(), "REF score")
+
+    def test_position_only_hides_alt_dependent_sections(self):
+        """SAI-10k-calc and the other-predictors table both need an ALT allele."""
+        self._submit_variant("chr8:140300616")
+
+        self.assertFalse(self.page.is_visible("#sai10k-table"),
+                         "SAI-10k-calc predictions require an ALT allele and should be hidden")
+        self.assertFalse(self.page.is_visible("#other-predictors-table"),
+                         "Other-predictors scores require an ALT allele and should be hidden")
+
+    def test_position_only_hides_ref_alt_columns_even_when_requested(self):
+        """The REF/ALT columns stay hidden in REF-only mode regardless of the checkbox.
+
+        The checkbox is disabled on entering the mode but keeps whatever value the
+        user set beforehand, so the column toggle has to check the mode too.
+        """
+        self._click_label("input[name='show-ref-alt']")
+        self._submit_variant("chr8:140300616")
+
+        self.assertTrue(self.page.locator("input[name='show-ref-alt']").is_checked(),
+                        "Precondition: the REF & ALT scores checkbox should still be checked")
+        expect(self.page.locator("#spliceai-table th.ref-score-column")).to_be_hidden()
+        expect(self.page.locator("#spliceai-table th.alt-score-column")).to_be_hidden()
+
+    def test_position_only_disables_inapplicable_controls(self):
+        """Controls that have no effect without an ALT allele are disabled."""
+        self._submit_variant("chr8:140300616")
+
+        for name in ("mask", "show-ref-alt", "igv-spliceai-delta-scores", "igv-pangolin-delta-scores"):
+            with self.subTest(name=name):
+                self.assertTrue(self.page.locator(f"input[name='{name}']").is_disabled(),
+                                f"Expected '{name}' to be disabled in position-only mode")
+
+        # The delta-track checkboxes are also unchecked, so they don't look
+        # active for a track that isn't being rendered.
+        for name in ("igv-spliceai-delta-scores", "igv-pangolin-delta-scores"):
+            with self.subTest(name=name):
+                self.assertFalse(self.page.locator(f"input[name='{name}']").is_checked(),
+                                 f"Expected '{name}' to be unchecked in position-only mode")
+
+    def test_position_only_relabels_igv_track_checkboxes(self):
+        """The variant track becomes a reference-position track and the REF/ALT track drops ALT."""
+        self._submit_variant("chr8:140300616")
+
+        self.assertEqual(
+            self.page.locator("input[name='igv-variant']").locator("xpath=..").locator("label").inner_text().strip(),
+            "Ref. position")
+        self.assertEqual(
+            self.page.locator("input[name='igv-spliceai-ref-alt']").locator("xpath=..").locator("label").inner_text().strip(),
+            "SpliceAI REF scores")
+
+    def test_normal_search_after_position_only_restores_the_ui(self):
+        """Switching back to a real variant undoes every position-only change.
+
+        The headers, tooltips and controls are shared between the two modes, so a
+        position-only search leaves them mutated until the next normal search
+        puts them back.
+        """
+        self._submit_variant("chr8:140300616")
+        self._submit_variant("8-140300616-T-G")
+
+        self.assertEqual(self.page.inner_text("#spliceai-variant-header").strip(), "Variant")
+        self.assertIn("score", self.page.inner_text("#spliceai-score-header-label").lower())
+        self.assertNotIn("REF score", self.page.inner_text("#spliceai-score-header-label"))
+        self.assertTrue(self.page.is_visible("#sai10k-table"),
+                        "SAI-10k-calc should reappear for a variant with an ALT allele")
+        self.assertTrue(self.page.is_visible("#other-predictors-table"),
+                        "Other-predictors should reappear for a variant with an ALT allele")
+        self.assertFalse(self.page.locator("input[name='mask']").is_disabled())
+        self.assertEqual(
+            self.page.locator("input[name='igv-variant']").locator("xpath=..").locator("label").inner_text().strip(),
+            "variant track")
+
+    def test_delta_track_checkbox_state_survives_position_only_mode(self):
+        """A delta-track checkbox forced off by position-only mode is restored afterwards.
+
+        Position-only unchecks these while disabling them, which is not the user's
+        preference — it must not leak into the restored state (or into the
+        localStorage the next page load reads).
+        """
+        self.assertTrue(self.page.locator("input[name='igv-spliceai-delta-scores']").is_checked(),
+                        "Precondition: the SpliceAI delta-track checkbox starts checked")
+
+        self._submit_variant("chr8:140300616")
+        self.assertFalse(self.page.locator("input[name='igv-spliceai-delta-scores']").is_checked())
+
+        self._submit_variant("8-140300616-T-G")
+        self.assertTrue(self.page.locator("input[name='igv-spliceai-delta-scores']").is_checked(),
+                        "The pre-position-only checked state should be restored")
+
+    def test_position_only_accepts_alternate_separators(self):
+        """Space- and dash-separated positions are recognized, like the variant formats.
+
+        Each separator gets a freshly loaded page. Sharing one page would let a
+        submission that silently did nothing inherit the previous separator's
+        "Position" header and pass.
+        """
+        for position in ("chr8 140300616", "chr8-140300616"):
+            with self.subTest(position=position):
+                # Via about:blank, because _build_url() can differ from the current
+                # URL only in its fragment (after a submit rewrites the hash), and a
+                # fragment-only goto does not reload the document.
+                self.page.goto("about:blank")
+                self.page.goto(_build_url(), wait_until="domcontentloaded")
+                self._submit_variant(position)
+
+                self.assertEqual(self.page.inner_text("#spliceai-variant-header").strip(), "Position",
+                                 f"'{position}' should be recognized as a position-only query")
+                # Proves this page actually rendered REF-only results, rather than
+                # carrying over a header left behind by an earlier submission. The
+                # position cell echoes the query exactly as it was typed.
+                self.assertIn(position, self.page.inner_text("#spliceai-table"),
+                              f"'{position}' should render results for the queried position")
+
+    def test_full_variant_is_not_treated_as_position_only(self):
+        """A well-formed variant must stay on the delta-score path.
+
+        handleSubmit tests POSITION_ONLY_RE first and never consults VARIANT_RE, so
+        the only thing keeping a full variant off the REF-only path is that pattern's
+        end anchor -- the trailing -REF-ALT leaves it unsatisfied.
+        """
+        self._submit_variant("8-140300616-T-G")
+
+        self.assertEqual(self.page.inner_text("#spliceai-variant-header").strip(), "Variant")
+        self.assertTrue(self.page.is_visible("#other-predictors-table"))
 
 
 if __name__ == "__main__":
