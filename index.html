@@ -941,6 +941,9 @@
     // store user settings at the time of the last 'submit', as well as the resulting responses from the server
     let lastGenomeVersion, lastSpliceaiResponseJson, lastPangolinResponseJson
     let currentSubmissionId = 0
+    // set by applyUrlSettingsToFormElements when it triggers a search, so handleSubmit can
+    // tell a url-driven search (example link, back/forward) from one typed into the form
+    let submitCameFromUrl = false
 
     // Tracks position-only mode across submits so the delta-score checkbox state is
     // captured/restored only on an actual normal <-> position-only transition (see
@@ -1514,8 +1517,10 @@
                 </td>`
     }
 
-    const generateSplicingResultsTable = async (normalizedVariant, variantConsequence, tool, variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltScoreColumns, isPositionOnly) => {
-        /* Generate the results table to show either the SpliceAI or Pangolin scores */
+    const generateSplicingResultsTable = async (normalizedVariant, variantConsequence, tool, variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltScoreColumns, isPositionOnly, submissionId) => {
+        /* Generate the results table to show either the SpliceAI or Pangolin scores.
+           submissionId identifies the handleSubmit call this table belongs to, so a slow
+           response can be discarded once a newer search has superseded it. */
 
         const variantTokens = (normalizedVariant || "---").split("-")
         const chrom = variantTokens[0]
@@ -1545,6 +1550,12 @@
 
         if (!apiResponse.ok || apiResponseJson.error) {
             throw Error(`${tool} API call error ${apiResponseJson.error ? `: ${apiResponseJson.error}` : ""}`)
+        }
+
+        if (submissionId !== currentSubmissionId) {
+            //a newer search started while this request was in flight, so don't render
+            //these now-stale results over the newer ones
+            return null
         }
 
         if (isPositionOnly) {
@@ -1977,8 +1988,11 @@
     }
 
 
-    const generateOtherPredictorsTable = async (normalizedVariant, variantConsequence, variant, genomeVersion) => {
-        /* Generate the results table to show either the SpliceAI or Pangolin scores */
+    const generateOtherPredictorsTable = async (normalizedVariant, variantConsequence, variant, genomeVersion, submissionId) => {
+        /* Generate the 'Other scores' table from the PrimateAI-3D / PromoterAI lookup
+           tables and the gnomAD and myvariant.info queries.
+           submissionId identifies the handleSubmit call this table belongs to, so a slow
+           response can be discarded once a newer search has superseded it. */
         console.log(`Generating other scores table for ${normalizedVariant} from ${primateAndPromoterAiTableUrls[genomeVersion]}`)
 
         const variantTokens = (normalizedVariant || "---").split("-")
@@ -2156,6 +2170,12 @@
 
         console.log("Querying lookup tables, gnomAD, and myvariant.info")
         await Promise.all([queryLookupTable(), queryGnomAD(), queryMyVariantInfo()]) //.map(p => p.catch(e => ({'error': e.message})))
+
+        if (submissionId !== currentSubmissionId) {
+            //a newer search started while these requests were in flight, so don't render
+            //these now-stale results over the newer ones
+            return null
+        }
 
         console.log("Other predictors scores:", otherPredictorScores)
         const noDifferenceDueToNormalization = variant.toLowerCase().trim().replace(/^chr/, "").replace(/[>: _-]+/g, "-") == normalizedVariant.toLowerCase().trim().replace(/^chr/, "").replace(/[>: _-]+/g, "-")
@@ -2748,23 +2768,31 @@
 
 
     const handleSubmit = async () => {
-        // Tag this submission so any in-flight API calls from prior submissions
-        // can be detected (and their late showError calls suppressed) once a new
-        // submission starts.
-        const submissionId = ++currentSubmissionId
-        const showErrorIfCurrent = (msg) => {
-            if (submissionId === currentSubmissionId) showError(msg)
-        }
+        // Read this before the input checks below, so that a rejected input can't leave the
+        // flag set for whichever search runs next.
+        const cameFromUrl = submitCameFromUrl
+        submitCameFromUrl = false
 
         // get user inputs from form elements
         // Strip surrounding whitespace, and also any trailing commas/semicolons
         // (with whitespace around them) left over from pasting a variant out of a
         // delimited list.
         const variant = $("#search-box").val().trim().replace(/[\s,;]+$/, "")
+        // These input checks run before the submission id is bumped below, so that a
+        // rejected input doesn't supersede (and orphan the loading state of) a search
+        // that's still in flight.
         if (!variant) return
         if (variant.length > 10000) {
-            showErrorIfCurrent("Input cannot be larger than 10,000 characters")
+            showError("Input cannot be larger than 10,000 characters")
             return
+        }
+
+        // Tag this submission so any in-flight API calls from prior submissions
+        // can be detected (and their late showError calls suppressed) once a new
+        // submission starts.
+        const submissionId = ++currentSubmissionId
+        const showErrorIfCurrent = (msg) => {
+            if (submissionId === currentSubmissionId) showError(msg)
         }
 
         // A bare chrom+pos input (no ref/alt) requests REF-only scores: SpliceAI/Pangolin
@@ -2844,11 +2872,23 @@
                 }
             }
 
+            if (submissionId !== currentSubmissionId) {
+                //superseded while normalizing, so don't spend API calls on this search
+                return
+            }
+
             let [spliceaiResponseJson, pangolinResponseJson, otherPredictorsResponseJson] = await Promise.all([
-                generateSplicingResultsTable(normalizedVariant, variantConsequence, "SpliceAI", variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltColumns, isPositionOnly),
-                generateSplicingResultsTable(normalizedVariant, variantConsequence, "Pangolin", variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltColumns, isPositionOnly),
-                isPositionOnly ? Promise.resolve(null) : generateOtherPredictorsTable(normalizedVariant, variantConsequence, variant, genomeVersion),
+                generateSplicingResultsTable(normalizedVariant, variantConsequence, "SpliceAI", variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltColumns, isPositionOnly, submissionId),
+                generateSplicingResultsTable(normalizedVariant, variantConsequence, "Pangolin", variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltColumns, isPositionOnly, submissionId),
+                isPositionOnly ? Promise.resolve(null) : generateOtherPredictorsTable(normalizedVariant, variantConsequence, variant, genomeVersion, submissionId),
             ].map(p => p.catch(e => ({'error': e.message}))))  // if an error is thrown, return {'error': e} instead of the JSON response
+
+            if (submissionId !== currentSubmissionId) {
+                //a newer search started while these API calls were in flight. It owns the
+                //display, the loading state, and the url hash from here on, so stop before
+                //overwriting any of them with this search's stale results.
+                return
+            }
 
             $("#response-box").show()
             $("#other-predictors-table").toggle(!isPositionOnly)
@@ -2914,15 +2954,33 @@
                 updateTranscriptButtons(Object.keys(transcriptCategories).length > 1 ? "main" : "all")
             }
 
-            // update url params
-            window.location.hash = "#" + $.param({
+            // update url params. Use replaceState rather than assigning window.location.hash
+            // so that rewriting the hash into this canonical form doesn't add a second
+            // history entry (which browser Back would immediately bounce off of) and doesn't
+            // fire the hashchange handler below.
+            const urlHashParams = {
                 variant: variant,
                 hg: genomeVersion,
                 bc: basicOrComprehensive,
                 distance: maxDistance,
                 mask: mask,
                 ra: showRefAltColumns,
-            })
+            }
+            if ($.urlParam('api')) {
+                //keep the api= override (see the baseApiUrl block at the top of this file)
+                //from being dropped by the rewrite
+                urlHashParams.api = $.urlParam('api')
+            }
+            //a search the user typed in gets its own history entry. One that came from the
+            //url (an example link, or back/forward) just canonicalizes the entry that the
+            //navigation already created, and so does re-running an unchanged search - a
+            //duplicate entry would make Back look like it does nothing.
+            const newHash = "#" + $.param(urlHashParams)
+            if (cameFromUrl || newHash === window.location.hash) {
+                window.history.replaceState(null, "", newHash)
+            } else {
+                window.history.pushState(null, "", newHash)
+            }
 
             lastGenomeVersion = genomeVersion
             lastSpliceaiResponseJson = spliceaiResponseJson
@@ -2938,58 +2996,57 @@
             showErrorIfCurrent(e.message)
         }
 
-        //done processing submit
-        $("#submit-button").removeClass("loading disabled")
+        //done processing submit, unless a newer search has taken over - it owns the
+        //loading state now, so clearing it here would hide that it's still running
+        if (submissionId === currentSubmissionId) {
+            $("#submit-button").removeClass("loading disabled")
+        }
     }
 
     const applyUrlSettingsToFormElements = () => {
-        // get optional settings from the url and update form settings
-        let hgFromUrl = $.urlParam('hg')
-        if (hgFromUrl == "19") {
-            hgFromUrl = "37"
-        }
-        if (hgFromUrl && (hgFromUrl == "38" || hgFromUrl == "37")) {
-            $(`input[name='hg'][value='${hgFromUrl}']`).prop("checked", true)
-        }
-
-        const bcFromUrl = $.urlParam('bc')
-        if (bcFromUrl && (bcFromUrl == "basic" || bcFromUrl == "comprehensive")) {
-            $(`input[name='gencode-gene-set'][value='${bcFromUrl}']`).prop("checked", true)
-        }
-
-        const maxDistanceFromUrl = $.urlParam('distance')
-        if (maxDistanceFromUrl) {
-            $("#max-distance-input").val(maxDistanceFromUrl)
-        }
-
-        const maskFromUrl = $.urlParam('mask')
-        if (maskFromUrl) {
-            $(`input[name='mask']`).prop("checked", maskFromUrl == "1")
-        }
-
-        const showRefAltColumnsFromUrl = $.urlParam('ra')
-        if (showRefAltColumnsFromUrl) {
-            $(`input[name='show-ref-alt']`).prop("checked", showRefAltColumnsFromUrl == "1")
-        }
+        // Get settings from the url and update the form. Settings missing from the url are
+        // reset to their defaults rather than left over from a previous search, since this
+        // also runs on hash changes (eg. browser back/forward) when the page already shows
+        // results for an earlier variant.
+        const hgFromUrl = $.urlParam('hg')
+        $(`input[name='hg'][value='${hgFromUrl == "37" || hgFromUrl == "19" ? "37" : "38"}']`).prop("checked", true)
+        $(`input[name='gencode-gene-set'][value='${$.urlParam('bc') == "comprehensive" ? "comprehensive" : "basic"}']`).prop("checked", true)
+        $("#max-distance-input").val($.urlParam('distance') || "500")
+        $(`input[name='mask']`).prop("checked", $.urlParam('mask') == "1")
+        $(`input[name='show-ref-alt']`).prop("checked", $.urlParam('ra') == "1")
 
         //update the variant input box last and (unless `nosubmit=1` is set in
         //the hash) trigger a search. The `nosubmit=1` knob exists so UI tests
         //that only want to verify form-state restoration don't depend on a
         //full backend round-trip — see test_url_hash_restores_form_state.
         const variantFromUrl = $.urlParam('variant')
-        if (variantFromUrl) {
-            $("#search-box").val(variantFromUrl)
-            if ($.urlParam('nosubmit') !== "1") {
-                $("#submit-button").click()
-            }
+        $("#search-box").val(variantFromUrl || "")
+        if (!variantFromUrl) {
+            //the url no longer describes a search (eg. the user navigated back to the bare
+            //page), so clear the previous search's results instead of leaving them on screen.
+            //Bumping currentSubmissionId also supersedes any search still in flight, which
+            //would otherwise repaint the tables that were just hidden.
+            currentSubmissionId++
+            $("#submit-button").removeClass("loading disabled")
+            updateControlsForPositionOnlyMode(false)
+            $("#response-box, #spliceai-table, #pangolin-table, #sai10k-table, #transcript-button-table, #error-box, #igv-table, #igv-div").hide()
+            return
+        }
+        if ($.urlParam('nosubmit') !== "1") {
+            submitCameFromUrl = true
+            $("#submit-button").click()
+        } else {
+            //nosubmit=1 restores the form without searching, so supersede any search still
+            //in flight, which would otherwise render over the state just restored
+            currentSubmissionId++
+            $("#submit-button").removeClass("loading disabled")
         }
     }
 
-    // define function for parsing url parameters like ?variant=chr1-1234567-T-G
-    $.urlParam = (name) => {
-        const results = new RegExp('[\?&#]?' + name + '=([^&#]*)').exec(window.location.hash);
-        return (results !== null) ? decodeURIComponent(results[1]) || "" : false;
-    }
+    // define function for parsing url parameters like #variant=chr1-1234567-T-G.
+    // URLSearchParams (rather than decodeURIComponent) is what correctly decodes the
+    // '+'-for-space encoding that $.param uses when handleSubmit writes the hash back.
+    $.urlParam = (name) => new URLSearchParams(window.location.hash.replace(/^[#?]+/, "")).get(name) ?? false
 
     $(document).ready(() => {
         $("#gencode-version").text(GENCODE_VERSION)
@@ -3025,6 +3082,54 @@
         updateVisualizationCheckboxes(true, "38")
 
         applyUrlSettingsToFormElements()
+
+        //re-apply the url settings when the hash changes without a page load, which is
+        //how the browser's back/forward buttons move between searches. handleSubmit
+        //writes its own hash via history.pushState/replaceState, neither of which fires
+        //this event. A hash that changes api= needs a full reload instead, since
+        //baseApiUrl (top of this file) resolves that override only at page load.
+        const apiAtPageLoad = $.urlParam('api')
+        $(window).on("hashchange", () => {
+            if ($.urlParam('api') !== apiAtPageLoad) {
+                window.location.reload()
+                return
+            }
+            applyUrlSettingsToFormElements()
+        })
+
+        //the example links point at this same page with a different hash. A hash-only
+        //navigation never reloads the page, and doesn't even fire hashchange when the
+        //clicked hash matches the current one, so run the search directly here. Links
+        //that open in a new tab, that point at a different page, or that the user
+        //modifier-clicked to open in a new tab/window are left to the browser.
+        $(`a[href*="#variant="]`).click(function(event) {
+            const url = new URL(this.href, window.location.href)
+            if (this.target || url.origin !== window.location.origin || url.pathname !== window.location.pathname) {
+                return
+            }
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.which > 1) {
+                return
+            }
+            event.preventDefault()
+            //the example urls don't carry the api= override, so re-add it (see the
+            //baseApiUrl block at the top of this file) rather than silently dropping it
+            const newParams = new URLSearchParams(url.hash.replace(/^[#?]+/, ""))
+            if ($.urlParam('api')) {
+                newParams.set("api", $.urlParam('api'))
+            }
+            //compare the decoded params rather than the raw hashes, since the same search
+            //spells spaces '%20' in an href but '+' once $.param has canonicalized it. A
+            //duplicate history entry would look like Back doing nothing.
+            if ([...newParams].some(([key, value]) => $.urlParam(key) !== value)) {
+                window.history.pushState(null, "", "#" + newParams)
+            }
+            applyUrlSettingsToFormElements()
+        })
+
+        //the [more details] / [show more examples] / [show older updates] toggles are
+        //href="#" anchors, which would otherwise clear the hash and make the hashchange
+        //handler above treat that as navigating away from the current search
+        $(document).on("click", `a[href="#"]`, (event) => event.preventDefault())
     })
 
 </script>
