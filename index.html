@@ -3043,10 +3043,14 @@
         }
     }
 
-    // define function for parsing url parameters like #variant=chr1-1234567-T-G.
-    // URLSearchParams (rather than decodeURIComponent) is what correctly decodes the
-    // '+'-for-space encoding that $.param uses when handleSubmit writes the hash back.
-    $.urlParam = (name) => new URLSearchParams(window.location.hash.replace(/^[#?]+/, "")).get(name) ?? false
+    // Parse a url hash like "#variant=chr1-1234567-T-G&hg=38" into its params. A '+' is
+    // escaped first so it survives as a literal plus (HGVS intronic offsets like
+    // c.672+1G>A) rather than being read as an encoded space -- jQuery's $.param, which
+    // writes the hash in handleSubmit, spells spaces '%20' and a literal plus '%2B'.
+    const parseHashParams = (hash) => new URLSearchParams(hash.replace(/^[#?]+/, "").replace(/\+/g, "%2B"))
+
+    // define function for parsing url parameters like #variant=chr1-1234567-T-G
+    $.urlParam = (name) => parseHashParams(window.location.hash).get(name) ?? false
 
     $(document).ready(() => {
         $("#gencode-version").text(GENCODE_VERSION)
@@ -3113,15 +3117,13 @@
             event.preventDefault()
             //the example urls don't carry the api= override, so re-add it (see the
             //baseApiUrl block at the top of this file) rather than silently dropping it
-            const newParams = new URLSearchParams(url.hash.replace(/^[#?]+/, ""))
-            if ($.urlParam('api')) {
-                newParams.set("api", $.urlParam('api'))
-            }
-            //compare the decoded params rather than the raw hashes, since the same search
-            //spells spaces '%20' in an href but '+' once $.param has canonicalized it. A
-            //duplicate history entry would look like Back doing nothing.
-            if ([...newParams].some(([key, value]) => $.urlParam(key) !== value)) {
-                window.history.pushState(null, "", "#" + newParams)
+            const apiFromUrl = $.urlParam('api')
+            const newHash = url.hash + (apiFromUrl ? `&api=${encodeURIComponent(apiFromUrl)}` : "")
+            //compare the decoded params rather than the raw hashes, since an href and the
+            //hash $.param writes can spell the same search differently. A duplicate history
+            //entry would look like Back doing nothing.
+            if ([...parseHashParams(newHash)].some(([key, value]) => $.urlParam(key) !== value)) {
+                window.history.pushState(null, "", newHash)
             }
             applyUrlSettingsToFormElements()
         })
