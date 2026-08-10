@@ -673,20 +673,33 @@ SAI10K_VERSION = "v21"
 CACHE_VERSION = "v2"
 
 
+def is_score_above_threshold(row):
+    """Whether one ALL_NON_ZERO_SCORES row cleared the model's reporting threshold.
+
+    The model packages also report the variant's own position and the delta-score maxima, whose
+    scores can be below their threshold. Judging each row by its own scores keeps that
+    distinction here, where the consumers live, instead of asking the model packages to mark
+    rows on their behalf.
+
+    The scores are strings the model already rounded to 3 decimals, so a true score just under
+    the threshold (0.0095 renders as "0.010") still passes. That residual is the safe direction
+    for the count below, and for the visualization it is a rare single-position overshoot.
+
+    Args:
+        row (dict): one ALL_NON_ZERO_SCORES entry from a delta-score response. REF-only
+            responses carry a different, smaller set of row fields and are not handled here.
+
+    Returns:
+        bool
+    """
+    return max(float(row[score_field]) for score_field in PER_POSITION_SCORE_FIELDS) >= MIN_SCORE_THRESHOLD
+
+
 def count_scores_above_threshold(transcript_scores):
-    """Count the per-position rows that actually cleared the model's reporting threshold.
+    """Count the per-position rows that cleared the model's reporting threshold.
 
-    Each row is judged on its own scores rather than on the absence of a tableOnly tag: the
-    model packages always report the delta-score argmax positions, and tag as tableOnly only
-    the rows they added purely for readability (gap fillers, and the variant's own position).
-    An argmax row whose scores are below threshold therefore carries no tag, so counting
-    untagged rows would overcount it and could never report zero -- and zero is what tells the
-    UI to disable that transcript's table icon.
-
-    The row scores are strings the model already rounded to 2 decimals, so a true score just
-    under the threshold (0.0099 renders as "0.01") still counts here. That leaves a residual
-    overcount for scores within 0.005 of the threshold, which is the safe direction to err:
-    undercounting would disable the icon on a transcript that does have reportable rows.
+    Zero is what tells the UI to disable that transcript's table icon, so the positions the
+    model adds below its threshold must not be counted here.
 
     Args:
         transcript_scores (dict): one transcript's entry, carrying ALL_NON_ZERO_SCORES.
@@ -694,10 +707,7 @@ def count_scores_above_threshold(transcript_scores):
     Returns:
         int
     """
-    return sum(
-        1 for row in (transcript_scores.get("ALL_NON_ZERO_SCORES") or [])
-        if max(float(row[score_field]) for score_field in PER_POSITION_SCORE_FIELDS) >= MIN_SCORE_THRESHOLD
-    )
+    return sum(1 for row in (transcript_scores.get("ALL_NON_ZERO_SCORES") or []) if is_score_above_threshold(row))
 
 
 def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic", is_position_only=False):
@@ -847,7 +857,13 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
     # to return to the client and (b) which transcript to feed into SAI-10k-calc.
     sai10k_t0 = time.perf_counter()
     selected_transcript = sai10k_select_transcript(candidate_transcripts)
-    all_non_zero_scores = selected_transcript["ALL_NON_ZERO_SCORES"] if selected_transcript else None
+    # The visualization tracks re-filter these rows with their own cutoffs, which are looser
+    # than the model's, so hand them only the rows that cleared the model threshold. Otherwise
+    # the positions the model adds below threshold would be drawn as marks that were never
+    # drawn before. The /scores endpoints serve the full set from the cached copy.
+    all_non_zero_scores = [
+        row for row in selected_transcript["ALL_NON_ZERO_SCORES"] if is_score_above_threshold(row)
+    ] if selected_transcript else None
     # Prefer STRAND (from the SpliceAI annotator, structurally guaranteed) and
     # fall back to t_strand from the external transcript-annotations JSON. This
     # matches sai10k_predictions.py:1150 so the strand reported in the JSON
@@ -1156,7 +1172,13 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
             best_priority = priority
             best_score_sum = score_sum
 
-    all_non_zero_scores = selected_transcript["ALL_NON_ZERO_SCORES"] if selected_transcript else None
+    # The visualization tracks re-filter these rows with their own cutoffs, which are looser
+    # than the model's, so hand them only the rows that cleared the model threshold. Otherwise
+    # the positions the model adds below threshold would be drawn as marks that were never
+    # drawn before. The /scores endpoints serve the full set from the cached copy.
+    all_non_zero_scores = [
+        row for row in selected_transcript["ALL_NON_ZERO_SCORES"] if is_score_above_threshold(row)
+    ] if selected_transcript else None
     all_non_zero_scores_strand = selected_transcript["STRAND"] if selected_transcript else None
     all_non_zero_scores_transcript_id = selected_transcript["NAME"] if selected_transcript else None
 
