@@ -1477,13 +1477,13 @@
     // that transcript's cell. The rows come from the /scores endpoint rather than the main
     // response, so opening a table costs one small request instead of enlarging every search.
 
-    // gaps of this many skipped positions or more collapse into a single "-- Nbp span --" row.
-    // The backend fills shorter gaps in, so anything reaching the table is already this wide.
-    const MIN_GAP_TO_SHOW = 3
-
+    // Pangolin reports two pairs per position: the REF and ALT splice-site probabilities behind
+    // its splice-loss delta score, and the pair behind its splice-gain delta score. Both are
+    // shown because they are the numbers the delta scores are computed from and the ones the
+    // IGV track draws, and they disagree often enough that collapsing them would hide data.
     const PER_POSITION_COLUMNS = {
         spliceai: [["REF acceptor score", "RA"], ["REF donor score", "RD"], ["ALT acceptor score", "AA"], ["ALT donor score", "AD"]],
-        pangolin: [["REF score", "S_REF"], ["ALT score", "S_ALT"]],
+        pangolin: [["REF score (loss)", "SL_REF"], ["ALT score (loss)", "SL_ALT"], ["REF score (gain)", "SG_REF"], ["ALT score (gain)", "SG_ALT"]],
     }
 
     // Keyed by the id embedded in each transcript's table icon, and populated while the results
@@ -1514,13 +1514,15 @@
     }
 
     const buildPerPositionRows = (rows, context) => {
-        /* Interleave the score rows returned by the API with gap rows wherever the table skips
-           MIN_GAP_TO_SHOW or more positions. Both the table and the CSV render from this. */
+        /* Interleave the score rows returned by the API with a gap row wherever the table skips
+           any positions at all, so a jump is never mistaken for adjacency. The API reports only
+           the positions that cleared the model's threshold, plus the variant's own position, so
+           holes are expected and common. Both the table and the CSV render from this. */
         const rowsToRender = []
         let previousPos = null
         for (const row of rows) {
             const pos = parseInt(row.pos)
-            if (previousPos !== null && pos - previousPos - 1 >= MIN_GAP_TO_SHOW) {
+            if (previousPos !== null && pos > previousPos + 1) {
                 rowsToRender.push({isGap: true, nSkipped: pos - previousPos - 1})
             }
             rowsToRender.push({
@@ -1572,7 +1574,7 @@
 
     const perPositionRowsToCsv = (rows, context) => {
         const columns = PER_POSITION_COLUMNS[context.tool]
-        const lines = [["chrom", "position", "ref", "alt", ...columns.map(([label]) => label.toLowerCase().replace(/ /g, "_")), "notes"].join(",")]
+        const lines = [["chrom", "position", "ref", "alt", ...columns.map(([label]) => label.toLowerCase().replace(/[()]/g, "").trim().replace(/ +/g, "_")), "notes"].join(",")]
         for (const row of buildPerPositionRows(rows, context)) {
             if (row.isGap) {
                 continue
@@ -2720,15 +2722,6 @@
                 maxPos = (maxPos === null) ? scores["pos"] : Math.max(maxPos, scores["pos"])
             }
         }
-        // Rows tagged tableOnly are below the reporting threshold and exist only for the
-        // per-position table: gap fillers that keep it contiguous, and the variant's own
-        // position so the table always has a row to anchor on. The IGV tracks re-filter
-        // features with their own cutoffs (looser than Pangolin's, and looser than the
-        // rounding the scores are serialized with), so handing them those rows would draw
-        // marks that were never drawn before. Keep the visualization on the reported positions.
-        const spliceaiTrackFeatures = (spliceaiResponseJson?.allNonZeroScores || []).filter((feature) => !feature.tableOnly)
-        const pangolinTrackFeatures = (pangolinResponseJson?.allNonZeroScores || []).filter((feature) => !feature.tableOnly)
-
         // Fall back to the variant position if both responses had no non-zero
         // scores (empty array bypasses the apiResponse.allNonZeroScores guard).
         // Without this, the locus formula below would yield a reversed-range
@@ -2813,7 +2806,7 @@
                     rawOrDelta: "raw",
                     tool: "SpliceAI",
                     type: "spliceprediction",
-                    features: spliceaiTrackFeatures,
+                    features: spliceaiResponseJson.allNonZeroScores || [],
                     strand: spliceaiResponseJson.allNonZeroScoresStrand || "+",
                 })
             }
@@ -2831,7 +2824,7 @@
                     rawOrDelta: "delta",
                     tool: "SpliceAI",
                     type: "spliceprediction",
-                    features: spliceaiTrackFeatures,
+                    features: spliceaiResponseJson.allNonZeroScores || [],
                     strand: spliceaiResponseJson.allNonZeroScoresStrand || "+",
                 })
             }
@@ -2853,7 +2846,7 @@
                     rawOrDelta: "delta",
                     tool: "Pangolin",
                     type: "spliceprediction",
-                    features: pangolinTrackFeatures,
+                    features: pangolinResponseJson.allNonZeroScores || [],
                     strand: pangolinResponseJson.allNonZeroScoresStrand || "+",
                 })
             }
