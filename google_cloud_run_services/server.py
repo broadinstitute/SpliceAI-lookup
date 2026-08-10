@@ -122,7 +122,14 @@ if GENOME_VERSION not in ("37", "38"):
     raise ValueError(f'Environment variable "GENOME_VERSION" should be set to either "37" or "38" instead of: "{os.environ.get("GENOME_VERSION")}"')
 
 if TOOL == "spliceai":
-    from spliceai.utils import Annotator, get_delta_scores, get_reference_scores
+    from spliceai.utils import Annotator, get_delta_scores, get_reference_scores, MIN_SCORE_THRESHOLD
+
+    # The per-position score fields of an ALL_NON_ZERO_SCORES row from a delta-score response,
+    # and the threshold a row must clear to count as reportable. Both are tool-specific;
+    # MIN_SCORE_THRESHOLD is imported from the model package so it can't drift from the value the
+    # model itself filtered on. REF-only responses carry a different, smaller set of row fields,
+    # which is why count_scores_above_threshold is only called on the delta-score path.
+    PER_POSITION_SCORE_FIELDS = ("RA", "AA", "RD", "AD")
 
     class VariantRecord:
         def __init__(self, chrom, pos, ref, alt):
@@ -152,6 +159,10 @@ elif TOOL == "pangolin":
     from pkg_resources import resource_filename
     from pangolin.pangolin import process_variant as process_variant_using_pangolin
     from pangolin.pangolin import process_position as process_position_using_pangolin
+    from pangolin.pangolin import MIN_SCORE_THRESHOLD
+
+    # see the comment on the spliceai branch above
+    PER_POSITION_SCORE_FIELDS = ("SL_REF", "SL_ALT", "SG_REF", "SG_ALT")
     from pangolin.model import torch, Pangolin, L, W, AR
     import gffutils
 
@@ -656,12 +667,44 @@ def exceeds_rate_limit(conn, user_ip, params):
 # invalidated and recomputed.
 SAI10K_VERSION = "v21"
 
+# Bump CACHE_VERSION whenever the shape of the cached response changes for either tool.
+# v2 added the per-position rows (ALL_NON_ZERO_SCORES) and nNonZeroScores to the cached copy
+# so the /scores endpoints can serve any transcript without re-running the model.
+CACHE_VERSION = "v2"
+
+
+def count_scores_above_threshold(transcript_scores):
+    """Count the per-position rows that actually cleared the model's reporting threshold.
+
+    Each row is judged on its own scores rather than on the absence of a tableOnly tag: the
+    model packages always report the delta-score argmax positions, and tag as tableOnly only
+    the rows they added purely for readability (gap fillers, and the variant's own position).
+    An argmax row whose scores are below threshold therefore carries no tag, so counting
+    untagged rows would overcount it and could never report zero -- and zero is what tells the
+    UI to disable that transcript's table icon.
+
+    The row scores are strings the model already rounded to 2 decimals, so a true score just
+    under the threshold (0.0099 renders as "0.01") still counts here. That leaves a residual
+    overcount for scores within 0.005 of the threshold, which is the safe direction to err:
+    undercounting would disable the icon on a transcript that does have reportable rows.
+
+    Args:
+        transcript_scores (dict): one transcript's entry, carrying ALL_NON_ZERO_SCORES.
+
+    Returns:
+        int
+    """
+    return sum(
+        1 for row in (transcript_scores.get("ALL_NON_ZERO_SCORES") or [])
+        if max(float(row[score_field]) for score_field in PER_POSITION_SCORE_FIELDS) >= MIN_SCORE_THRESHOLD
+    )
+
 
 def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic", is_position_only=False):
     # REF-only (position-only) spliceai responses never run SAI-10k-calc (it requires
     # an ALT allele), so bumping SAI10K_VERSION should not invalidate their cache entries.
     suffix = f"__sai10k-{SAI10K_VERSION}" if tool_name == "spliceai" and not is_position_only else ""
-    return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}__{basic_or_comprehensive}{suffix}"
+    return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}__{basic_or_comprehensive}__{CACHE_VERSION}{suffix}"
 
 
 def get_splicing_scores_from_cache(conn, tool_name, variant, genome_version, distance, mask, basic_or_comprehensive="basic", is_position_only=False):
@@ -872,8 +915,14 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
         flush=True,
     )
 
+    # ALL_NON_ZERO_SCORES stays in the dict so it reaches the cache, which lets the
+    # /spliceai/scores endpoint serve any transcript's per-position rows without re-running
+    # the model. run_splice_prediction_tool drops it from the HTTP response and keeps only
+    # nNonZeroScores, which is all the results table needs in order to decide whether the
+    # per-position table is worth offering for a given transcript.
     for transcript_scores in candidate_transcripts:
-        for redundant_key in ("ALLELE", "NAME", "STRAND", "ALL_NON_ZERO_SCORES"):
+        transcript_scores["nNonZeroScores"] = count_scores_above_threshold(transcript_scores)
+        for redundant_key in ("ALLELE", "NAME", "STRAND"):
             transcript_scores.pop(redundant_key, None)
 
     return {
@@ -1062,6 +1111,39 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
         transcript_scores.update(transcript_annotations)
         candidate_transcripts.append(transcript_scores)
 
+    # Brief DB scope: add EXON_STARTS/EXON_ENDS so the per-position table can label annotated
+    # acceptors and donors for Pangolin the same way it does for SpliceAI. As on the SpliceAI
+    # path, a failed lookup means the response is degraded (here: a blank Notes column), so
+    # don't cache it -- otherwise it would be re-served long after the DB recovered.
+    skip_cache = False
+    if candidate_transcripts:
+        candidate_ids = [transcript_scores.get("NAME", "").split(".")[0] for transcript_scores in candidate_transcripts]
+        with get_db_connection() as conn:
+            structures = get_transcript_structures(conn, candidate_ids, genome_version) if conn is not None else None
+
+        if structures is None:
+            # The DB was unreachable or the query failed. That is usually transient, so don't
+            # cache a response whose Notes column would stay blank long after it recovered.
+            print(f"WARNING: transcript-structure lookup unavailable for {variant}; the Pangolin "
+                  f"per-position table will have no exon annotations and the result will not be cached.", flush=True)
+            skip_cache = True
+        else:
+            for transcript_scores, transcript_id_without_version in zip(candidate_transcripts, candidate_ids):
+                transcript_structure = structures.get(transcript_id_without_version)
+                if transcript_structure:
+                    # Copy only the exon coordinates. get_transcript_structures also returns
+                    # CDS_START/CDS_END/STRAND, and merging those wholesale would replace
+                    # Pangolin's own STRAND, which is read below into allNonZeroScoresStrand.
+                    for exon_key in ("EXON_STARTS", "EXON_ENDS"):
+                        transcript_scores[exon_key] = transcript_structure[exon_key]
+                else:
+                    # The query worked, this transcript simply has no row. That won't change on a
+                    # retry, so cache the response anyway rather than recomputing it forever --
+                    # only the Notes column is affected, and CACHE_VERSION can flush it later.
+                    print(f"WARNING: transcript {transcript_id_without_version} not found in "
+                          f"transcripts_hg{genome_version} for {variant}; the Pangolin per-position "
+                          f"table will have no exon annotations for it.", flush=True)
+
     # Select transcript: highest priority, then highest sum of |DS_SL| + |DS_SG|
     selected_transcript = None
     best_priority = -1
@@ -1078,8 +1160,11 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
     all_non_zero_scores_strand = selected_transcript["STRAND"] if selected_transcript else None
     all_non_zero_scores_transcript_id = selected_transcript["NAME"] if selected_transcript else None
 
+    # see the matching comment in get_spliceai_scores: the per-position rows stay in the dict
+    # so they reach the cache for /pangolin/scores, and are stripped from the HTTP response
     for transcript_scores in candidate_transcripts:
-        for redundant_key in ("NAME", "STRAND", "ALL_NON_ZERO_SCORES"):
+        transcript_scores["nNonZeroScores"] = count_scores_above_threshold(transcript_scores)
+        for redundant_key in ("NAME", "STRAND"):
             transcript_scores.pop(redundant_key, None)
 
     return {
@@ -1096,6 +1181,10 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
         "allNonZeroScores": all_non_zero_scores,
         "allNonZeroScoresStrand": all_non_zero_scores_strand,
         "allNonZeroScoresTranscriptId": all_non_zero_scores_transcript_id,
+        # Internal sentinel, stripped by run_splice_prediction_tool before the response is
+        # returned. True when the transcript-structure lookup failed, so the exon annotations
+        # are missing and the response should not be cached past the underlying recovery.
+        "_skip_cache": skip_cache,
     }
 
 
@@ -1195,19 +1284,70 @@ def run_pangolin():
     return run_splice_prediction_tool(tool_name="pangolin")
 
 
+@app.route("/spliceai/scores/", strict_slashes=False, methods=['POST', 'GET'])
+def run_spliceai_scores():
+    return run_splice_prediction_tool(tool_name="spliceai", scores_for_one_transcript=True)
+
+
+@app.route("/pangolin/scores/", strict_slashes=False, methods=['POST', 'GET'])
+def run_pangolin_scores():
+    return run_splice_prediction_tool(tool_name="pangolin", scores_for_one_transcript=True)
+
+
+def per_transcript_scores_response(results, transcript_id, tool_name):
+    """Build the /scores response: the per-position rows for a single transcript.
+
+    The rows are read out of the same cached result the main endpoint produced, so opening the
+    per-position table for a transcript never re-runs the model.
+
+    Args:
+        results (dict): a full result dict, from the cache or freshly computed.
+        transcript_id (str): the t_id to return rows for, e.g. "ENST00000234420.11".
+        tool_name (str): "spliceai" or "pangolin".
+
+    Returns:
+        A flask Response.
+    """
+    if "error" in results:
+        return error_response(results["error"], source=tool_name)
+
+    if not transcript_id:
+        return error_response('"transcript" not specified.\n', source=tool_name)
+
+    if results.get("isPositionOnly"):
+        return error_response("Per-position scores are not available for position-only queries.\n", source=tool_name)
+
+    for transcript_scores in results.get("scores") or []:
+        if transcript_scores.get("t_id") == transcript_id:
+            return Response(json.dumps({
+                "transcript": transcript_id,
+                "strand": transcript_scores.get("t_strand"),
+                "rows": transcript_scores.get("ALL_NON_ZERO_SCORES") or [],
+            }), status=200, mimetype='application/json', headers=[
+                ('Access-Control-Allow-Origin', '*'),
+            ])
+
+    return error_response(f'Transcript "{transcript_id}" not found in the results for this variant.\n', source=tool_name)
+
+
 _FIRST_REQUEST_LOGGED = False
 
 
-def run_splice_prediction_tool(tool_name):
+def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
     """Handles API request for splice prediction.
 
     DB connections are taken from the pool only for short bursts (cache lookup,
     rate-limit check, log writes, cache writes, and per-call transcript-structure
-    SELECTs inside get_spliceai_scores). The model inference runs without holding
-    any pooled connection, so a slow inference can't starve the pool.
+    SELECTs inside get_spliceai_scores and get_pangolin_scores). The model inference
+    runs without holding any pooled connection, so a slow inference can't starve the pool.
 
     Args:
         tool_name (str): "spliceai" or "pangolin"
+        scores_for_one_transcript (bool): when True, respond with just the per-position rows
+            for the transcript named by the "transcript" param (the /scores endpoints) instead
+            of the full results. Everything up to that point -- param validation, rate limiting,
+            the cache lookup and the cache write -- is shared with the main endpoint, so a
+            /scores call for an already-computed variant is a cache read.
     """
 
     global _FIRST_REQUEST_LOGGED
@@ -1325,8 +1465,8 @@ def run_splice_prediction_tool(tool_name):
             return error_response(error_message, source=tool_name, status=429)
 
         # Model inference runs without a pooled DB connection. get_spliceai_scores
-        # acquires its own short-lived connection internally for transcript-structure
-        # SELECTs after inference completes; get_pangolin_scores does no DB work.
+        # and get_pangolin_scores each acquire their own short-lived connection
+        # internally for transcript-structure SELECTs after inference completes.
         try:
             if is_position_only:
                 if tool_name == "spliceai":
@@ -1360,9 +1500,9 @@ def run_splice_prediction_tool(tool_name):
             )
 
         # Strip the internal sentinel before anything downstream sees `results`.
-        # Set by get_spliceai_scores when the per-request DB connection couldn't
-        # be acquired, so the transcript-structure enrichment was skipped and
-        # the result reflects degraded inputs — don't cache it.
+        # Set by get_spliceai_scores or get_pangolin_scores when the transcript-structure
+        # lookup couldn't run (no DB connection, or the query failed), so that enrichment
+        # was skipped and the result reflects degraded inputs — don't cache it.
         skip_cache = results.pop("_skip_cache", False)
 
         # Post-inference: log + cache write + (if error) error log, all in one short DB scope.
@@ -1373,6 +1513,15 @@ def run_splice_prediction_tool(tool_name):
                 add_splicing_scores_to_cache(conn, tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param, results, is_position_only)
             elif "error" in results:
                 log(conn, f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
+
+    if scores_for_one_transcript:
+        return per_transcript_scores_response(results, params.get("transcript"), tool_name)
+
+    # The per-position rows are kept in the cached copy (see get_spliceai_scores) but not sent
+    # with the main response: the results table only needs nNonZeroScores, and the /scores
+    # endpoints serve the rows for whichever transcript the user opens.
+    for transcript_scores in results.get("scores") or []:
+        transcript_scores.pop("ALL_NON_ZERO_SCORES", None)
 
     # Echo only a whitelist of input params back to the client. A prior version
     # used `response_json.update(params)`, which reflected every query-string

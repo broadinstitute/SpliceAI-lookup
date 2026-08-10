@@ -223,15 +223,32 @@ class TestPositionOnlyCacheKey(ServerHelperTestCase):
                 "REF-only cache entries never contain SAI-10k output and should survive the bump",
             )
 
-    def test_default_argument_preserves_the_pre_feature_key_format(self):
-        """Callers that omit is_position_only must produce the key format already in production.
+    def test_default_argument_produces_the_documented_key_format(self):
+        """Pin the exact key format so it can only ever change deliberately.
 
-        Changing it would orphan every existing cache entry at once.
+        Every component is part of the cache identity, so changing any of them orphans all
+        existing entries at once. That is intended when CACHE_VERSION or SAI10K_VERSION is
+        bumped, and a bug in every other case.
         """
         self.assertEqual(
             server.get_splicing_scores_cache_key("spliceai", TEST_VARIANT, "38", "500", "0", "basic"),
-            f"spliceai__{TEST_VARIANT}__hg38__d500__m0__basic__sai10k-{server.SAI10K_VERSION}",
+            f"spliceai__{TEST_VARIANT}__hg38__d500__m0__basic__{server.CACHE_VERSION}__sai10k-{server.SAI10K_VERSION}",
         )
+
+    def test_cache_version_appears_in_every_key(self):
+        """Bumping CACHE_VERSION must invalidate pangolin and REF-only entries too.
+
+        Those keys carry no SAI-10k suffix, so SAI10K_VERSION alone cannot invalidate them --
+        which is the whole reason CACHE_VERSION exists as a separate component.
+        """
+        for tool_name in ("spliceai", "pangolin"):
+            for is_position_only in (False, True):
+                self.assertIn(
+                    f"__{server.CACHE_VERSION}",
+                    server.get_splicing_scores_cache_key(
+                        tool_name, TEST_VARIANT, "38", "500", "0", "basic", is_position_only),
+                    f"CACHE_VERSION missing from the {tool_name} key (is_position_only={is_position_only})",
+                )
 
     def test_the_flag_changes_the_key_for_an_otherwise_identical_query(self):
         """Hold every other argument fixed, so only is_position_only can explain the difference.
