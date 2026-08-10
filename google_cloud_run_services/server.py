@@ -669,8 +669,10 @@ SAI10K_VERSION = "v21"
 
 # Bump CACHE_VERSION whenever the shape of the cached response changes for either tool.
 # v2 added the per-position rows (ALL_NON_ZERO_SCORES) and nNonZeroScores to the cached copy
-# so the /scores endpoints can serve any transcript without re-running the model.
-CACHE_VERSION = "v2"
+# so the /scores endpoints can serve any transcript without re-running the model. v3 discards
+# the v2 entries, which were written by a revision whose model packages predated the per-position
+# ref/alt bases, and so hold rows the current code cannot render.
+CACHE_VERSION = "v3"
 
 
 def is_score_above_threshold(row):
