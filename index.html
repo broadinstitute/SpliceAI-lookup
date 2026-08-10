@@ -384,6 +384,10 @@
                 <div>
                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website<br />
                     <br/>
+                    <b>August 9th, 2026</b>
+                    <br />
+                    - Added a table of per-position SpliceAI and Pangolin scores, opened from the table icon in the top-right corner of each transcript. It lists every position in the scoring window that has a non-zero score, marks annotated exon acceptors and donors, and can be downloaded as CSV.<br/>
+                    <br />
                     <b>August 7th, 2026</b>
                     <br />
                     - Can now search for chrom:position to see REF scores (eg. <a href="https://spliceailookup.broadinstitute.org/#variant=8%3A140300616&hg=38&bc=basic&distance=5000&mask=0&ra=0">chr8:140300616</a>)<br/>
@@ -703,6 +707,19 @@
         </div>
         <div class="one wide column only-large-screen"></div>
     </div>
+</div>
+
+<!-- Shared modal for the per-position score table. One element reused by every transcript's
+     table icon, with its heading and body replaced each time it's opened. -->
+<div id="per-position-modal" class="ui modal">
+    <i class="close icon"></i>
+    <div class="header">
+        <span id="per-position-modal-heading"></span>
+        <button id="per-position-download-button" class="ui tiny basic button" style="float:right; margin-right:30px">
+            <i class="download icon"></i>Download CSV
+        </button>
+    </div>
+    <div id="per-position-modal-content" class="scrolling content"></div>
 </div>
 
 <script>
@@ -1456,6 +1473,201 @@
         return `+${maxScorePosition} bp position within the inserted sequence`
     }
 
+    // The per-position score table: one modal per transcript, opened from the table icon in
+    // that transcript's cell. The rows come from the /scores endpoint rather than the main
+    // response, so opening a table costs one small request instead of enlarging every search.
+
+    // gaps of this many skipped positions or more collapse into a single "-- Nbp span --" row.
+    // The backend fills shorter gaps in, so anything reaching the table is already this wide.
+    const MIN_GAP_TO_SHOW = 3
+
+    const PER_POSITION_COLUMNS = {
+        spliceai: [["REF acceptor score", "RA"], ["REF donor score", "RD"], ["ALT acceptor score", "AA"], ["ALT donor score", "AD"]],
+        pangolin: [["REF score", "S_REF"], ["ALT score", "S_ALT"]],
+    }
+
+    // Keyed by the id embedded in each transcript's table icon, and populated while the results
+    // table is built so the click handler has the transcript's exon structure and query params.
+    const perPositionTableContext = {}
+
+    const getExonNoteForPosition = (pos, scores) => {
+        /* Return "exon N acceptor" or "exon N donor" if pos is an annotated splice site of this
+           transcript, otherwise "". Exons are numbered in transcript direction, and which end of
+           an exon is the acceptor depends on the strand. The transcript's outermost boundaries
+           (the first exon's start and the last exon's end) are the transcription start and end
+           sites rather than splice sites -- there is no intron on their outer side -- so they get
+           no label, and a single-exon transcript therefore gets none at all. */
+        const exonStarts = scores['EXON_STARTS'] || []
+        const exonEnds = scores['EXON_ENDS'] || []
+        const isMinusStrand = scores['t_strand'] == "-"
+        for (let i = 0; i < exonStarts.length; i++) {
+            const exonNumber = isMinusStrand ? exonStarts.length - i : i + 1
+            if (pos == exonStarts[i] && i > 0) {
+                return `exon ${exonNumber} ${isMinusStrand ? "donor" : "acceptor"}`
+            }
+            if (pos == exonEnds[i] && i < exonEnds.length - 1) {
+                return `exon ${exonNumber} ${isMinusStrand ? "acceptor" : "donor"}`
+            }
+        }
+
+        return ""
+    }
+
+    const buildPerPositionRows = (rows, context) => {
+        /* Interleave the score rows returned by the API with gap rows wherever the table skips
+           MIN_GAP_TO_SHOW or more positions. Both the table and the CSV render from this. */
+        const rowsToRender = []
+        let previousPos = null
+        for (const row of rows) {
+            const pos = parseInt(row.pos)
+            if (previousPos !== null && pos - previousPos - 1 >= MIN_GAP_TO_SHOW) {
+                rowsToRender.push({isGap: true, nSkipped: pos - previousPos - 1})
+            }
+            rowsToRender.push({
+                ...row,
+                pos: pos,
+                isVariant: pos == context.variantPos,
+                note: [pos == context.variantPos ? "variant" : "", getExonNoteForPosition(pos, context.scores)].filter(Boolean).join("; "),
+            })
+            previousPos = pos
+        }
+
+        return rowsToRender
+    }
+
+    const renderPerPositionTable = (rows, context) => {
+        const columns = PER_POSITION_COLUMNS[context.tool]
+        const bodyRows = buildPerPositionRows(rows, context).map((row) => {
+            if (row.isGap) {
+                return `<tr><td colspan="2" style="text-align:center; color:#888888">&#8212;&nbsp;${row.nSkipped}bp span&nbsp;&#8212;</td>
+                            <td></td><td></td>${columns.map(() => `<td style="color:#888888">0</td>`).join("")}<td></td></tr>`
+            }
+
+            // escapeHtml every backend-supplied field: this markup goes through jQuery.html()
+            const boldIfVariant = row.isVariant ? "font-weight:bold;" : ""
+            return `<tr class="${row.isVariant ? "per-position-variant-row" : ""}">
+                        <td style="${boldIfVariant}">${escapeHtml(context.chrom)}</td>
+                        <td style="text-align:right; ${boldIfVariant}">${escapeHtml(row.pos)}</td>
+                        <td>${escapeHtml(row.ref)}</td>
+                        <td>${escapeHtml(row.alt)}</td>
+                        ${columns.map(([, key]) => `<td ${getScoreStyle(parseFloat(row[key]))}>${parseFloat(row[key])}</td>`).join("")}
+                        <td>${escapeHtml(row.note)}</td>
+                    </tr>`
+        })
+
+        return `<table class="ui celled table">
+                    <thead>
+                        <tr style="text-align:center">
+                            <th style="width:1%">chrom</th>
+                            <th>position</th>
+                            <th style="width:1%">REF</th>
+                            <th style="width:1%">ALT</th>
+                            ${columns.map(([label]) => `<th style="width:1%">${label}</th>`).join("")}
+                            <th style="width:1%">Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>${bodyRows.join("")}</tbody>
+                </table>`
+    }
+
+    const perPositionRowsToCsv = (rows, context) => {
+        const columns = PER_POSITION_COLUMNS[context.tool]
+        const lines = [["chrom", "position", "ref", "alt", ...columns.map(([label]) => label.toLowerCase().replace(/ /g, "_")), "notes"].join(",")]
+        for (const row of buildPerPositionRows(rows, context)) {
+            if (row.isGap) {
+                continue
+            }
+            lines.push([context.chrom, row.pos, row.ref, row.alt, ...columns.map(([, key]) => row[key]), `"${row.note}"`].join(","))
+        }
+
+        return lines.join("\n")
+    }
+
+    const downloadCsv = (filename, csvText) => {
+        const url = URL.createObjectURL(new Blob([csvText], {type: "text/csv"}))
+        const link = document.createElement("a")
+        link.href = url
+        link.download = filename
+        link.click()
+        URL.revokeObjectURL(url)
+    }
+
+    // Identifies the most recent modal open, so a slow response for one transcript can't paint
+    // over a newer one. Same guard as generateSplicingResultsTable's currentSubmissionId check.
+    let currentPerPositionRequestId = 0
+
+    const openPerPositionModal = async (iconId) => {
+        const context = perPositionTableContext[iconId]
+        if (!context) {
+            return
+        }
+
+        currentPerPositionRequestId++
+        const requestId = currentPerPositionRequestId
+        // also pin the search this modal belongs to, so a new search (or a back/forward
+        // navigation that restores one) supersedes a response still in flight for the old one
+        const submissionId = currentSubmissionId
+
+        $("#per-position-modal-heading").text(`${context.geneName}  ${context.transcriptId}  (${context.strand} strand)`)
+        $("#per-position-download-button").hide()
+        $("#per-position-modal-content").html(`<div class="ui active inline loader"></div>`)
+        $("#per-position-modal").modal("show")
+
+        let response
+        try {
+            response = await makeRequest(`${context.scoresUrl}&transcript=${encodeURIComponent(context.transcriptId)}`)
+        } catch(e) {
+            console.error("Per-position scores request failed:", e)
+            if (requestId !== currentPerPositionRequestId || submissionId !== currentSubmissionId) {
+                return
+            }
+            $("#per-position-modal-content").html(`<div style="color:darkred">Unable to load the per-position scores.</div>`)
+            return
+        }
+
+        if (requestId !== currentPerPositionRequestId || submissionId !== currentSubmissionId) {
+            //another transcript's table was opened while this request was in flight, so don't
+            //paint these now-stale rows under the newer heading
+            return
+        }
+
+        if (!response.ok || response.error) {
+            $("#per-position-modal-content").html(`<div style="color:darkred">${escapeHtml(response.error || "Unable to load the per-position scores.")}</div>`)
+            return
+        }
+
+        const rows = response.rows || []
+        $("#per-position-modal-content").html(renderPerPositionTable(rows, context))
+        $("#per-position-download-button").show().off("click").on("click", () => downloadCsv(
+            `${context.tool}_${context.chrom}-${context.variantPos}-${context.ref}-${context.alt}_${context.transcriptId}.csv`,
+            perPositionRowsToCsv(rows, context)))
+
+        const variantRow = $("#per-position-modal-content .per-position-variant-row")[0]
+        if (variantRow) {
+            variantRow.scrollIntoView({block: "center"})
+        }
+    }
+
+    const buildPerPositionIconHtml = (iconId, nNonZeroScores) => {
+        /* The table icon shown in the top-right corner of a transcript's cell. Transcripts whose
+           scoring window contains no reportable position get a disabled icon instead, since there
+           would be nothing to put in the table. */
+        // deliberately not semantic-ui's own "disabled" class, which suppresses pointer events
+        // on some elements and would take the hover tooltip with it
+        //
+        // nNonZeroScores missing entirely means the API revision being talked to predates the
+        // per-position table, so /scores would fail too. That's a different message from a
+        // count of 0, which means the API did look and found nothing worth tabulating.
+        if (!nNonZeroScores) {
+            return `<i class="table icon per-position-table-icon per-position-table-icon-disabled" data-position="left center"
+                       data-content="${nNonZeroScores == null ? 'Table of scores is not available' : 'All scores are zero'}" style="position:absolute; top:8px; right:8px; color:#cccccc"></i>`
+        }
+
+        return `<i class="table icon per-position-table-icon" data-icon-id="${escapeHtml(iconId)}" data-position="left center"
+                   data-content="Show the predicted scores at each position in the scoring window"
+                   style="position:absolute; top:8px; right:8px; color:#000080; cursor:pointer"></i>`
+    }
+
     const getGnomadDataVersion = (genomeVersion) => {
         return genomeVersion === "38" ? "gnomad_r4" : "gnomad_r2_1"
     }
@@ -1513,12 +1725,14 @@
                 </td>`
     }
 
-    const buildTranscriptCellHtml = (scores, genomeVersion, rowspan) => {
+    const buildTranscriptCellHtml = (scores, genomeVersion, rowspan, perPositionIconHtml = "") => {
         const gnomadVersion = getGnomadDataVersion(genomeVersion)
         const strand = scores['t_strand'] == "-" ? "minus" : "plus"
         const refSeqLink = scores['t_refseq_ids']? `/ <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${encodeURIComponent(scores['t_refseq_ids'][0])}" target="_blank">${escapeHtml(scores['t_refseq_ids'][0])}</a>` : ""
 
-        return `<td rowspan="${rowspan}" style="vertical-align: top">
+        // position:relative anchors the per-position table icon to the cell's top-right corner
+        return `<td rowspan="${rowspan}" style="vertical-align: top; position: relative; padding-right: 30px">
+                    ${perPositionIconHtml}
                     <div style="margin-right:10px; display: inline-block">
                         ${escapeHtml(scores['g_name'])}
                             <div class="small-link"> (&nbsp;<a href="https://useast.ensembl.org/Homo_sapiens/Gene/Summary?g=${encodeURIComponent(scores['g_id'].split('.')[0])}" target="_blank">${escapeHtml(scores['g_id'])}</a>
@@ -1651,9 +1865,26 @@
             const variantCellHtml = transcriptIndex === 0
                 ? buildVariantCellHtml(variant, normalizedVariant, variantConsequence, genomeVersion, subRowCount)
                 : `<td rowspan="${subRowCount}"></td>`
+
+            // everything the per-position table modal needs for this transcript, so its icon
+            // only has to carry an id
+            const perPositionIconId = `${tool.toLowerCase()}-${transcriptIndex}`
+            perPositionTableContext[perPositionIconId] = {
+                tool: tool.toLowerCase(),
+                scores: scores,
+                chrom: chrom,
+                variantPos: parseInt(pos),
+                ref: ref,
+                alt: alt,
+                geneName: scores['g_name'],
+                transcriptId: scores['t_id'],
+                strand: scores['t_strand'] == "-" ? "minus" : "plus",
+                scoresUrl: `${baseUrl}/${tool.toLowerCase()}/scores/?${urlArgs}`,
+            }
+
             let row = `<tr class="${resultRowClasses.join(' ')}">
                 ${variantCellHtml}
-                ${buildTranscriptCellHtml(scores, genomeVersion, subRowCount)}`
+                ${buildTranscriptCellHtml(scores, genomeVersion, subRowCount, buildPerPositionIconHtml(perPositionIconId, scores['nNonZeroScores']))}`
 
             for (const [i, label, scoreKey, positionKey, REF_scoreKey, ALT_scoreKey] of (
                 isPangolin ? [
@@ -2489,6 +2720,15 @@
                 maxPos = (maxPos === null) ? scores["pos"] : Math.max(maxPos, scores["pos"])
             }
         }
+        // Rows tagged tableOnly are below the reporting threshold and exist only for the
+        // per-position table: gap fillers that keep it contiguous, and the variant's own
+        // position so the table always has a row to anchor on. The IGV tracks re-filter
+        // features with their own cutoffs (looser than Pangolin's, and looser than the
+        // rounding the scores are serialized with), so handing them those rows would draw
+        // marks that were never drawn before. Keep the visualization on the reported positions.
+        const spliceaiTrackFeatures = (spliceaiResponseJson?.allNonZeroScores || []).filter((feature) => !feature.tableOnly)
+        const pangolinTrackFeatures = (pangolinResponseJson?.allNonZeroScores || []).filter((feature) => !feature.tableOnly)
+
         // Fall back to the variant position if both responses had no non-zero
         // scores (empty array bypasses the apiResponse.allNonZeroScores guard).
         // Without this, the locus formula below would yield a reversed-range
@@ -2573,7 +2813,7 @@
                     rawOrDelta: "raw",
                     tool: "SpliceAI",
                     type: "spliceprediction",
-                    features: spliceaiResponseJson.allNonZeroScores || [],
+                    features: spliceaiTrackFeatures,
                     strand: spliceaiResponseJson.allNonZeroScoresStrand || "+",
                 })
             }
@@ -2591,7 +2831,7 @@
                     rawOrDelta: "delta",
                     tool: "SpliceAI",
                     type: "spliceprediction",
-                    features: spliceaiResponseJson.allNonZeroScores || [],
+                    features: spliceaiTrackFeatures,
                     strand: spliceaiResponseJson.allNonZeroScoresStrand || "+",
                 })
             }
@@ -2613,7 +2853,7 @@
                     rawOrDelta: "delta",
                     tool: "Pangolin",
                     type: "spliceprediction",
-                    features: pangolinResponseJson.allNonZeroScores || [],
+                    features: pangolinTrackFeatures,
                     strand: pangolinResponseJson.allNonZeroScoresStrand || "+",
                 })
             }
@@ -2940,6 +3180,8 @@
             $(".question").css({"color": "#666666", "cursor": "pointer"})
             $(".exclamation").css({"cursor": "pointer"})
             $(".score-table").css({"color": "#000080", "cursor": "pointer"})
+            // hover rather than click, so the disabled icons can explain why they're disabled
+            $(".per-position-table-icon").popup({"on": "hover", "lastResort": "bottom left"})
             $(".ui.modal").modal()
 
             if (spliceaiResponseJson.error) {
@@ -3103,6 +3345,11 @@
 
         // init event handlers
         $("#submit-button").click(handleSubmit)
+
+        // delegated so it keeps working for the icons added by each new search
+        $(document).on("click", ".per-position-table-icon:not(.per-position-table-icon-disabled)", function() {
+            openPerPositionModal($(this).attr("data-icon-id"))
+        })
 
         $("#search-box, #max-distance-input").keydown((event) => {
             if ((event.keyCode || event.which) == 13) {
