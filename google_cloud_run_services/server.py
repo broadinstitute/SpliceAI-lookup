@@ -1,6 +1,7 @@
 import time
 _PROCESS_START_TIME = time.time()
 from datetime import datetime
+import gc
 import gzip
 import json
 import logging
@@ -172,6 +173,20 @@ elif TOOL == "pangolin":
         ("37", "comprehensive"): f"/gencode.{GENCODE_VERSION}lift37.annotation.without_chr_prefix.db",
         ("38", "comprehensive"): f"/gencode.{GENCODE_VERSION}.annotation.db",
     }
+
+    # The 12 Pangolin models (4 splice-score types x 3 replicates each), populated by
+    # init_pangolin(). Their weights ship with the pangolin package and depend on neither the
+    # genome version nor the basic/comprehensive gene set, so one flat list serves every request.
+    #
+    # DANGER, and the reason init_pangolin() builds a local list and publishes it in a single
+    # assignment: pangolin.compute_score() slices this list positionally, `for model in
+    # models[3*j: 3*j+3]` with j in range(4). Python slicing returns a short (or empty) slice
+    # instead of raising, so a list observed while it is still being filled yields *silently
+    # wrong* scores. That is exactly the April-November 2024 bug, when the cache was a dict of
+    # lists appended to in place behind a `if not PANGOLIN_MODELS[key]` guard: a second
+    # concurrent request saw the guard satisfied after the first append and scored against a
+    # 1-of-12-model list. Never append to the published list; rebuild and reassign.
+    PANGOLIN_MODELS = None
 else:
     raise ValueError(f'Environment variable "TOOL" should be set to either "spliceai" or "pangolin" instead of: "{os.environ.get("TOOL")}"')
 
@@ -202,6 +217,38 @@ def init_spliceai(genome_version, basic_or_comprehensive):
                 if candidate in keys:
                     MITO_CHROM_NAME[genome_version] = candidate[3:] if candidate.startswith('chr') else candidate
                     break
+
+
+def init_pangolin():
+    """Populate the module-level PANGOLIN_MODELS cache with all 12 Pangolin models.
+
+    Idempotent, and safe to call from concurrent requests: the models are built into a local
+    list and published in one assignment, so PANGOLIN_MODELS is only ever None or a complete
+    12-model list. Two callers racing here both build a full list and one overwrites the other
+    -- wasteful but correct. See the PANGOLIN_MODELS comment for why a partially published
+    list would silently corrupt scores.
+    """
+    global PANGOLIN_MODELS
+    if PANGOLIN_MODELS is not None:
+        return
+
+    t0 = time.time()
+    models = []
+    for i in 0, 2, 4, 6:
+        for j in 1, 2, 3:
+            model = Pangolin(L, W, AR)
+            if torch.cuda.is_available():
+                model.cuda()
+                weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)))
+            else:
+                weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)), map_location=torch.device('cpu'))
+            model.load_state_dict(weights)
+            model.eval()
+            models.append(model)
+
+    PANGOLIN_MODELS = models
+    print(f"[startup pid={os.getpid()}] init_pangolin() loaded {len(models)} models in {time.time() - t0:.2f}s "
+          f"(+{time.time() - _PROCESS_START_TIME:.2f}s since start)", flush=True)
 
 
 def init_transcript_annotations(genome_version, basic_or_comprehensive):
@@ -1088,23 +1135,15 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
         score_cutoff = None
         score_exons = "False"
 
-    pangolin_models = []
+    init_pangolin()
 
-    for i in 0, 2, 4, 6:
-        for j in 1, 2, 3:
-            model = Pangolin(L, W, AR)
-            if torch.cuda.is_available():
-                model.cuda()
-                weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)))
-            else:
-                weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)), map_location=torch.device('cpu'))
-            model.load_state_dict(weights)
-            model.eval()
-            pangolin_models.append(model)
-
+    # FeatureDB stays per-request: it wraps a sqlite3 connection, which is bound to the thread
+    # that opened it, and opening one is a few milliseconds against an on-disk index (unlike the
+    # models, it does not read the database into memory). Caching it would trade nothing for a
+    # cross-thread sharing hazard.
     features_db = gffutils.FeatureDB(PANGOLIN_ANNOTATION_PATHS[(genome_version, basic_or_comprehensive_param)])
     scores = process_variant_using_pangolin(
-        0, chrom, int(pos), ref, alt, features_db, pangolin_models, PangolinArgs)
+        0, chrom, int(pos), ref, alt, features_db, PANGOLIN_MODELS, PangolinArgs)
 
     if not scores:
         return {
@@ -1228,22 +1267,11 @@ def get_pangolin_reference_scores(variant, genome_version, distance_param, basic
         reference_file = FASTA_PATH[genome_version]
         distance = distance_param
 
-    pangolin_models = []
+    init_pangolin()
 
-    for i in 0, 2, 4, 6:
-        for j in 1, 2, 3:
-            model = Pangolin(L, W, AR)
-            if torch.cuda.is_available():
-                model.cuda()
-                weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)))
-            else:
-                weights = torch.load(resource_filename("pangolin", "models/final.%s.%s.3.v2" % (j, i)), map_location=torch.device('cpu'))
-            model.load_state_dict(weights)
-            model.eval()
-            pangolin_models.append(model)
-
+    # Per-request FeatureDB: see the note in get_pangolin_scores.
     features_db = gffutils.FeatureDB(PANGOLIN_ANNOTATION_PATHS[(genome_version, basic_or_comprehensive_param)])
-    scores = process_position_using_pangolin(0, chrom, int(pos), features_db, pangolin_models, PangolinArgs)
+    scores = process_position_using_pangolin(0, chrom, int(pos), features_db, PANGOLIN_MODELS, PangolinArgs)
 
     if not scores:
         return {
@@ -1685,6 +1713,46 @@ def catch_all(path):
         mimetype='text/plain',
     )
 
+
+def preload_models():
+    """Load every model and annotation set this service can serve, before serving anything.
+
+    This runs at import time, which under `gunicorn --preload` means it runs once in the arbiter
+    *before* it forks its workers. The workers then inherit the loaded objects and share their
+    pages copy-on-write instead of each building a private copy. Loading them lazily on first use
+    instead put one full copy in every worker: 3 workers x (basic + comprehensive) annotators
+    exceeded the instance's 4Gi limit, and the kernel OOM killer then SIGKILLed a worker, failing
+    every request it was holding with a 503.
+
+    Each load is attempted independently and failures are logged rather than raised, because
+    init_spliceai / init_pangolin / init_transcript_annotations all remain lazily callable from
+    the request path. A local instance that only has some of the annotation files therefore still
+    starts and serves the gene sets it does have, exactly as it did before this preload existed.
+    """
+    if TOOL == "pangolin":
+        try:
+            init_pangolin()
+        except Exception as e:
+            print(f"WARNING: preload of the Pangolin models failed; they will be loaded on first "
+                  f"use instead: {type(e).__name__}: {e}", flush=True)
+
+    for basic_or_comprehensive in ("basic", "comprehensive"):
+        try:
+            if TOOL == "spliceai":
+                init_spliceai(GENOME_VERSION, basic_or_comprehensive)
+            init_transcript_annotations(GENOME_VERSION, basic_or_comprehensive)
+        except Exception as e:
+            print(f"WARNING: preload of the hg{GENOME_VERSION} {basic_or_comprehensive} annotations failed; "
+                  f"they will be loaded on first use instead: {type(e).__name__}: {e}", flush=True)
+
+
+preload_models()
+
+# Move everything loaded above into the GC's permanent generation, which the collector never
+# walks. Without this, the first full collection inside each forked worker touches the GC header
+# of every preloaded object and copy-on-write faults those pages into private memory, undoing
+# most of what preload_models() just bought.
+gc.freeze()
 
 print(f"[startup pid={os.getpid()}] server.py module loaded in "
       f"{time.time() - _PROCESS_START_TIME:.2f}s (tool={TOOL}, genome={GENOME_VERSION})", flush=True)
