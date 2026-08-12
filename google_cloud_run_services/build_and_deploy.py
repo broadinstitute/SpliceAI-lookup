@@ -447,11 +447,11 @@ def main():
                 # timeout (SIGABRT -> 500/503). 3 workers is a modest 1.5x over 2 cores, so a
                 # single slow inference can't starve the others into the timeout; extra burst
                 # concurrency comes from scaling out across instances, not more workers.
+                # This is the count baked into the image; the comprehensive services override it
+                # per deploy below. Cloud Run's --concurrency is always set to match, since a
+                # sync gunicorn worker serves one request at a time and any excess concurrency
+                # would queue inside the instance rather than scaling out.
                 workers = 3
-                # Cloud Run requests served concurrently per instance. Kept equal to
-                # `workers` (sync gunicorn workers serve one request each, so extra
-                # concurrency would just queue inside the instance instead of scaling out).
-                concurrency = 3
                 min_instances = 0  # if tool == 'pangolin' else 2
                 # Raised 3 -> 6 so bursts of cache-miss traffic scale out across instances
                 # instead of saturating a few and timing out (504). This is only a ceiling:
@@ -499,8 +499,17 @@ def main():
                     # slow part -- 4 multi-GB image builds -- unchanged by the split.
                     for gene_set in gene_sets:
                         service = get_service_name(tool, genome_version, gene_set)
-                        print(f"Deploying {service} (GENE_SET={gene_set}) with image sha256 {sha256}"
-                              f"{' (dev revision, no traffic)' if args.dev else ''}")
+                        # The comprehensive gene set carries several times more transcripts, so
+                        # both its annotator and the working memory of a request over a
+                        # many-isoform gene are larger, and 3 workers of it on a 4Gi instance
+                        # was enough for the kernel to OOM-kill one mid-request. Its share of
+                        # traffic is ~2%, so trading per-instance concurrency for headroom costs
+                        # little and bursts still scale out to max_instances. WORKERS is read
+                        # from the environment by the image's gunicorn command, so this overrides
+                        # the value baked in at build time without needing a separate image.
+                        service_workers = workers if gene_set == "basic" else 2
+                        print(f"Deploying {service} (GENE_SET={gene_set}, WORKERS={service_workers}) "
+                              f"with image sha256 {sha256}{' (dev revision, no traffic)' if args.dev else ''}")
 
                         # Cloud Run rejects --no-traffic when it has to create the service,
                         # since a first revision has nothing to hold traffic back from. Deploy
@@ -527,14 +536,22 @@ def main():
                         # get_splicing_scores_cache_key).
                         env_vars = (f'BLOCKED_IPS={os.environ.get("BLOCKED_IPS", "").strip()}'
                                     f'@GENE_SET={gene_set}'
-                                    f'@DEPLOYMENT={"dev" if args.dev else "prod"}')
+                                    f'@DEPLOYMENT={"dev" if args.dev else "prod"}'
+                                    f'@WORKERS={service_workers}')
+                        # Attach the Cloud SQL instance explicitly. The original four services
+                        # carry this annotation from however they were first set up, and
+                        # `gcloud run deploy` preserves it for them, so its absence here went
+                        # unnoticed until the split created services that did not have it: they
+                        # came up with no database at all, which silently disables response
+                        # caching, per-IP rate limiting and transcript-structure enrichment.
                         run(f"""gcloud \
 --project {GCLOUD_PROJECT} beta run deploy {service} \
 --image {tag}@{sha256} \
+--add-cloudsql-instances {GCLOUD_PROJECT}:us-central1:spliceai-lookup-db \
 --min-instances {min_instances} \
 --service-min-instances {min_instances} \
 --max-instances {max_instances} \
---concurrency {concurrency} \
+--concurrency {service_workers} \
 --service-account 1042618492363-compute@developer.gserviceaccount.com \
 --execution-environment gen2 \
 --region us-central1 \
