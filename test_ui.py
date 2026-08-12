@@ -393,8 +393,8 @@ class TestSpliceAILookupUI(unittest.TestCase):
         # detail view (gain score at position 0).
         self._submit_variant("2-47790924-C-CAGTTG")
 
-        # Look for the modal trigger icon (window maximize outline icon)
-        modal_icons = self.page.query_selector_all("#spliceai-table .window.maximize.outline.icon")
+        # Look for the modal trigger icon (table icon with a table-icon<id> id)
+        modal_icons = self.page.query_selector_all("#spliceai-table i[id^='table-icon']")
         if not modal_icons:
             self.skipTest("No modal icons found for this insertion variant")
 

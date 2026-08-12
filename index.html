@@ -1085,6 +1085,11 @@
         $box.show()
     }
 
+    // Largest "Max distance" the API accepts (server.py MAX_DISTANCE_LIMIT). Keep the two in
+    // sync: without this check the API rejects an over-limit value with a 400 for both SpliceAI
+    // and Pangolin, which reads to the user as the site being broken rather than as bad input.
+    const MAX_DISTANCE_LIMIT = 10000
+
     const ENSEMBL_TIMEOUT_MS = 90000  // 90 second timeout for Ensembl API calls
     const VARIANTVALIDATOR_TIMEOUT_MS = 30000  // 30 second timeout for the VariantValidator fallback
     // Guidance appended to variant-resolution errors when HGVS lookup is unavailable.
@@ -1366,9 +1371,9 @@
             const AA = parseFloat(scoreObj.AA)
             const AD = parseFloat(scoreObj.AD)
 
-            // This table HTML is later stored in a data-html attribute that
-            // Semantic-UI's popup renders via jQuery.html(), so any HTML in
-            // backend-supplied fields (chrom/pos/ref/alt) would execute.
+            // This table HTML ends up inside the modal below, which is injected into
+            // the page via jQuery .after(), so any HTML in backend-supplied fields
+            // (chrom/pos/ref/alt) would execute.
             // RA/RD/AA/AD are parseFloat-ed above so they're safe as numbers.
             tableRows.push(
                 `<tr><td>${escapeHtml(scoreObj.chrom)}</td>
@@ -1383,7 +1388,7 @@
 
         const table = (
             `<div>
-               Detailed SpliceAI predictions for bases within and around the inserted sequence: <br>
+               Detailed SpliceAI predictions for bases within the inserted sequence as well as +/-5bp around the insertion position: <br>
                <table class='ui celled table'>
                 <thead>
                     <tr style='text-align:center'>
@@ -1408,10 +1413,9 @@
         //const isSafari = /Safari/.test(navigator.userAgent) && /Apple Computer/.test(navigator.vendor)
         //const isFirefox = /Firefox/.test(navigator.userAgent)
 
-        const popupIcon = `<i style="margin-left:10px; color:#000000" class="table icon score-table" data-position="right center" data-html="${table}"></i>`
         const modal = `<div id='modal-with-table${modalId}' class='ui modal'><i class='close icon'></i><div class='scrolling content'>${table}</div></div>`
-        const modalIcon = `<i id='table-icon${modalId}' style='margin-left:10px;color:#000080;cursor:pointer' class='window maximize outline icon'></i>`
-        return `${modalIcon}${modal} ${popupIcon}`
+        const modalIcon = `<i id='table-icon${modalId}' style='margin-left:10px;color:#000080;cursor:pointer' class='table icon'></i>`
+        return `${modalIcon}${modal}`
 
     }
 
@@ -2795,6 +2799,15 @@
             showError("Input cannot be larger than 10,000 characters")
             return
         }
+        // Read up here with the other input checks, rather than alongside the remaining form
+        // fields below, so an out-of-range distance is rejected before the submission id is
+        // bumped. The regex also rejects a blank or non-numeric box, which the API answers with
+        // the same 400 as an over-limit value.
+        const maxDistance = $("#max-distance-input").val().trim()
+        if (!/^\d+$/.test(maxDistance) || parseInt(maxDistance) > MAX_DISTANCE_LIMIT) {
+            showError(`"Max distance" must be a whole number between 0 and ${MAX_DISTANCE_LIMIT.toLocaleString()}bp`)
+            return
+        }
 
         // Tag this submission so any in-flight API calls from prior submissions
         // can be detected (and their late showError calls suppressed) once a new
@@ -2813,7 +2826,6 @@
 
         const genomeVersion = $("input[name='hg']:checked").val().trim()
         const basicOrComprehensive = $("input[name='gencode-gene-set']:checked").val().trim()
-        const maxDistance = $("#max-distance-input").val().trim()
         const mask = $(`input[name='mask']`).prop("checked") ? "1" : "0";
         const showRefAltColumns = $(`input[name='show-ref-alt']`).prop("checked") ? "1" : "0";
 
