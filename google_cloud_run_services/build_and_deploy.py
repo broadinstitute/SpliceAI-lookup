@@ -202,9 +202,23 @@ def get_tag(tool, genome_version, repo_name="gcr.io"):
     else:
         raise ValueError(f"Invalid repo_name arg: {repo_name}")
 
-def run(c):
+def run(c, check=True):
+    """Run a shell command, raising by default if it fails.
+
+    os.system's exit status used to be discarded, so a failed `gcloud run deploy` looked
+    exactly like a successful one: a deploy that never happened was reported green by CI, and
+    the missing service was only noticed by hand afterwards. Raising makes the CI job fail on
+    the step that actually broke.
+    """
     logging.info(c)
-    os.system(c)
+    # os.system returns a wait status, not an exit code: the low byte carries the signal that
+    # killed the process and the high byte the exit code, so a plain `!= 0` would report the
+    # right thing for the wrong reason and mangle the code it prints.
+    status = os.system(c)
+    exit_code = os.waitstatus_to_exitcode(status)
+    if check and exit_code != 0:
+        raise RuntimeError(f"Command failed with exit code {exit_code}: {c}")
+    return exit_code
 
 def main():
     parser = argparse.ArgumentParser()
@@ -488,7 +502,19 @@ def main():
                         print(f"Deploying {service} (GENE_SET={gene_set}) with image sha256 {sha256}"
                               f"{' (dev revision, no traffic)' if args.dev else ''}")
 
-                        dev_flags = "--no-traffic --tag dev " if args.dev else ""
+                        # Cloud Run rejects --no-traffic when it has to create the service,
+                        # since a first revision has nothing to hold traffic back from. Deploy
+                        # that one without it; the service is brand new, so nothing is pointing
+                        # at it yet and letting its first revision serve costs nothing. Every
+                        # later --dev deploy takes the normal no-traffic path.
+                        service_exists = run(
+                            f"gcloud --project {GCLOUD_PROJECT} run services describe {service} "
+                            f"--region us-central1 --format='value(name)' > /dev/null 2>&1",
+                            check=False) == 0
+                        if args.dev:
+                            dev_flags = "--tag dev " + ("--no-traffic " if service_exists else "")
+                        else:
+                            dev_flags = ""
                         # Comma-separated list of IPs to hard-block at the API door
                         # (server.py block_ips). Sourced from the BLOCKED_IPS
                         # env var (set as a GitHub Actions repo Variable, or exported
