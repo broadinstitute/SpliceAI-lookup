@@ -15,7 +15,15 @@ RUN apt update && apt-get install --no-install-recommends -y \
 # bundles CUDA/cuDNN/cuBLAS (~2 GB on disk) that we never use on Cloud Run.
 # Important: this must come before the requirements.txt install below; if
 # pip first resolves torch from PyPI it will pick the GPU build.
-RUN python3 -m pip install torch==2.2.1 --index-url https://download.pytorch.org/whl/cpu
+#
+# --extra-index-url, not --index-url: the latter REPLACES PyPI, so any build
+# dependency pip needs that the PyTorch index doesn't carry is simply
+# unfindable ("No matching distribution found for flit_core"). That failure
+# stayed hidden for as long as this layer was restored from the build cache
+# and only appeared once a cache miss forced a cold rebuild. Keeping PyPI in
+# the search path fixes it, and the explicit "+cpu" local version still pins
+# the CPU wheel unambiguously, since only the PyTorch index publishes it.
+RUN python3 -m pip install torch==2.2.1+cpu --extra-index-url https://download.pytorch.org/whl/cpu
 
 RUN apt update && apt-get install --no-install-recommends -y build-essential libpq-dev
 
