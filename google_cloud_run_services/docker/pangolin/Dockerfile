@@ -55,4 +55,7 @@ ENV RUNNING_ON_GOOGLE_CLOUD_RUN=1
 # complete instead of being killed. Trade-off: a sync worker (1 of WORKERS) is tied up for
 # up to 870s on such a request, lowering the instance's effective concurrency while it runs.
 # --graceful-timeout gives in-flight requests 30s to finish on restart.
-CMD exec gunicorn --preload --bind :$PORT --workers ${WORKERS} --threads 1 --timeout 870 --graceful-timeout 30 server:app
+#
+# No --preload: kept identical to the spliceai image so both tools load their models in the
+# worker rather than in the arbiter before the fork. See that Dockerfile and preload_models().
+CMD exec gunicorn --bind :$PORT --workers ${WORKERS} --threads 1 --timeout 870 --graceful-timeout 30 server:app

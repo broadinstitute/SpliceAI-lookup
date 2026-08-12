@@ -122,6 +122,21 @@ GENOME_VERSION = os.environ.get("GENOME_VERSION")
 if GENOME_VERSION not in ("37", "38"):
     raise ValueError(f'Environment variable "GENOME_VERSION" should be set to either "37" or "38" instead of: "{os.environ.get("GENOME_VERSION")}"')
 
+# The single Gencode gene set this service answers for, pinned the same way GENOME_VERSION is.
+# Each container therefore loads exactly one annotator instead of accumulating one per gene set
+# its workers happened to be asked for, which is what pushed instances past their memory limit.
+# Defaults to "basic" so the long-standing service URLs keep their existing behaviour; the
+# comprehensive services set GENE_SET=comprehensive explicitly at deploy time.
+GENE_SET = os.environ.get("GENE_SET", "basic")
+if GENE_SET not in ("basic", "comprehensive"):
+    raise ValueError(f'Environment variable "GENE_SET" should be set to either "basic" or "comprehensive" instead of: "{GENE_SET}"')
+
+# "prod" or "dev". Mixed into the cache key (see get_splicing_scores_cache_key) so a dev
+# revision experimenting against the shared database can neither read nor overwrite the entries
+# production serves. Defaults to "prod" and contributes nothing to the key in that case, so
+# every existing production cache entry stays valid.
+DEPLOYMENT = os.environ.get("DEPLOYMENT", "prod")
+
 if TOOL == "spliceai":
     from spliceai.utils import Annotator, get_delta_scores, get_reference_scores, MIN_SCORE_THRESHOLD
 
@@ -711,8 +726,11 @@ def exceeds_rate_limit(conn, user_ip, params):
 
 # Bump SAI10K_VERSION whenever sai10k_predictions.py changes its classification
 # logic or output shape, so cached responses from older algorithm versions are
-# invalidated and recomputed.
-SAI10K_VERSION = "v21"
+# invalidated and recomputed. v22 discards the v21 entries, whose protein windows are
+# null for variants whose footprint straddles a shifted splice boundary (issue #134) --
+# those entries predate the substitution-clipping fix and would otherwise keep serving
+# a response with no protein sequence for exactly the variants the fix targets.
+SAI10K_VERSION = "v22"
 
 # Bump CACHE_VERSION whenever the shape of the cached response changes for either tool.
 # v2 added the per-position rows (ALL_NON_ZERO_SCORES) and nNonZeroScores to the cached copy
@@ -763,6 +781,11 @@ def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, 
     # REF-only (position-only) spliceai responses never run SAI-10k-calc (it requires
     # an ALT allele), so bumping SAI10K_VERSION should not invalidate their cache entries.
     suffix = f"__sai10k-{SAI10K_VERSION}" if tool_name == "spliceai" and not is_position_only else ""
+    # Dev revisions share production's database, so without this a dev revision computing a
+    # result would write it onto the key production reads -- publishing unreviewed output to
+    # every user. Production adds nothing to the key, keeping existing entries valid.
+    if DEPLOYMENT != "prod":
+        suffix += f"__{DEPLOYMENT}"
     return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}__{basic_or_comprehensive}__{CACHE_VERSION}{suffix}"
 
 
@@ -1468,6 +1491,17 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
     if basic_or_comprehensive_param not in ("basic", "comprehensive"):
         return error_response(f'Invalid "bc" value: "{basic_or_comprehensive_param}". The value must be either "basic" or "comprehensive". For example: {example_url}\n', source=tool_name)
 
+    # Each service pins one gene set (see GENE_SET) and loads only that annotator, so a request
+    # for the other one has to go to the service that has it. The message names that service
+    # rather than just refusing, since API clients that predate the split will land here.
+    if basic_or_comprehensive_param != GENE_SET:
+        other_service = f"{tool_name}-{GENOME_VERSION}" + ("" if basic_or_comprehensive_param == "basic" else "-comprehensive")
+        return error_response(
+            f'This service only handles bc={GENE_SET} requests, but received bc={basic_or_comprehensive_param}. '
+            f'Send bc={basic_or_comprehensive_param} requests to the "{other_service}" service instead '
+            f'(https://{other_service}-xwkwwwxdwq-uc.a.run.app/{tool_name}/).\n',
+            source=tool_name)
+
     # A bare chrom-pos position (no ref/alt) requests REF-only scores instead
     # of the usual REF-vs-ALT delta scores. Try the full variant format first
     # so a well-formed variant is never misparsed as a position.
@@ -1491,10 +1525,10 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
     print(f"{logging_prefix}: ======================", flush=True)
     print(f"{logging_prefix}: {variant} tool={tool_name} hg={genome_version}, distance={distance_param}, mask={mask_param}, bc={basic_or_comprehensive_param}", flush=True)
 
-    if tool_name == "spliceai":
-        init_spliceai(genome_version, basic_or_comprehensive_param)
-
-    init_transcript_annotations(genome_version, basic_or_comprehensive_param)
+    # Everything this service can serve was loaded at startup by preload_models(), so there is
+    # no init_* call on the request path any more -- the first request is as fast as the
+    # thousandth. That also means a request for the other gene set has nothing loaded to answer
+    # it, hence the check above.
 
     # check cache before processing the variant (short DB scope)
     results = {}
@@ -1715,43 +1749,42 @@ def catch_all(path):
 
 
 def preload_models():
-    """Load every model and annotation set this service can serve, before serving anything.
+    """Load everything this service can serve, before it accepts any request.
 
-    This runs at import time, which under `gunicorn --preload` means it runs once in the arbiter
-    *before* it forks its workers. The workers then inherit the loaded objects and share their
-    pages copy-on-write instead of each building a private copy. Loading them lazily on first use
-    instead put one full copy in every worker: 3 workers x (basic + comprehensive) annotators
-    exceeded the instance's 4Gi limit, and the kernel OOM killer then SIGKILLed a worker, failing
-    every request it was holding with a 503.
+    A service answers for exactly one (GENOME_VERSION, GENE_SET) pair, so the full set is known
+    at startup and there is nothing left to load lazily. That is the point: the request path no
+    longer calls init_*, so no user's request pays a model load, and a container that cannot
+    load its models fails at startup instead of 500ing on the unlucky first request.
 
-    Each load is attempted independently and failures are logged rather than raised, because
-    init_spliceai / init_pangolin / init_transcript_annotations all remain lazily callable from
-    the request path. A local instance that only has some of the annotation files therefore still
-    starts and serves the gene sets it does have, exactly as it did before this preload existed.
+    This must run in the WORKER, not in the gunicorn arbiter, which is why the Dockerfiles no
+    longer pass `--preload`: without it gunicorn imports this module separately in each worker
+    after forking, so each worker builds its own copies. That is deliberate. Annotator.__init__
+    opens the reference FASTA with pyfastx (an open file descriptor plus a sqlite .fxi index)
+    and loads 5 Keras models, and neither a sqlite connection nor the TensorFlow runtime
+    survives fork(): sharing them across forked workers hung every SpliceAI inference until
+    gunicorn's --timeout killed the worker, turning each request into a 503. The DB pool comment
+    above describes the same hazard for psycopg2, and takes the same way out.
+
+    The cost of not forking shared copies is that each worker holds its own annotator. Pinning
+    one gene set per service is what makes that affordable: a worker can no longer accumulate
+    both, which is what exhausted the instance's memory before the split.
     """
-    if TOOL == "pangolin":
-        try:
-            init_pangolin()
-        except Exception as e:
-            print(f"WARNING: preload of the Pangolin models failed; they will be loaded on first "
-                  f"use instead: {type(e).__name__}: {e}", flush=True)
-
-    for basic_or_comprehensive in ("basic", "comprehensive"):
-        try:
-            if TOOL == "spliceai":
-                init_spliceai(GENOME_VERSION, basic_or_comprehensive)
-            init_transcript_annotations(GENOME_VERSION, basic_or_comprehensive)
-        except Exception as e:
-            print(f"WARNING: preload of the hg{GENOME_VERSION} {basic_or_comprehensive} annotations failed; "
-                  f"they will be loaded on first use instead: {type(e).__name__}: {e}", flush=True)
+    t0 = time.time()
+    if TOOL == "spliceai":
+        init_spliceai(GENOME_VERSION, GENE_SET)
+    elif TOOL == "pangolin":
+        init_pangolin()
+    init_transcript_annotations(GENOME_VERSION, GENE_SET)
+    print(f"[startup pid={os.getpid()}] preload_models() ready for hg{GENOME_VERSION} {GENE_SET} "
+          f"in {time.time() - t0:.2f}s", flush=True)
 
 
 preload_models()
 
 # Move everything loaded above into the GC's permanent generation, which the collector never
-# walks. Without this, the first full collection inside each forked worker touches the GC header
-# of every preloaded object and copy-on-write faults those pages into private memory, undoing
-# most of what preload_models() just bought.
+# walks again. The transcript annotations alone are hundreds of thousands of nested dicts that
+# live for the life of the process, and every full collection would otherwise re-traverse all
+# of them to prove what is already known: none of it is garbage.
 gc.freeze()
 
 print(f"[startup pid={os.getpid()}] server.py module loaded in "

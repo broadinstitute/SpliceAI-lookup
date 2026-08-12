@@ -59,4 +59,10 @@ ENV RUNNING_ON_GOOGLE_CLOUD_RUN=1
 # instead of being killed. Trade-off: a sync worker (1 of WORKERS) is tied up for up to 870s
 # on such a request, lowering the instance's effective concurrency while it runs.
 # --graceful-timeout gives in-flight requests 30s to finish on restart.
-CMD exec gunicorn --preload --bind :$PORT --workers ${WORKERS} --threads 1 --timeout 870 --graceful-timeout 30 server:app
+#
+# No --preload: server.py loads its annotator at import, and with --preload that import runs in
+# the arbiter before it forks, so every worker would inherit one pyfastx sqlite handle and one
+# TensorFlow runtime. Neither survives fork() -- every inference hung until --timeout killed the
+# worker. Without --preload gunicorn imports the module separately in each worker after the
+# fork, so each builds its own. See preload_models() in server.py.
+CMD exec gunicorn --bind :$PORT --workers ${WORKERS} --threads 1 --timeout 870 --graceful-timeout 30 server:app

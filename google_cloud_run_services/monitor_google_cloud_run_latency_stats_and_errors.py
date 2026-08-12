@@ -34,7 +34,12 @@ from google.cloud import bigquery
 
 PROJECT = "spliceai-lookup-412920"
 REGION = "us-central1"
-SERVICES = ["liftover", "spliceai-37", "spliceai-38", "pangolin-37", "pangolin-38"]
+# The un-suffixed services serve the basic gene set (their original names, kept so the
+# published API URLs stay valid); the "-comprehensive" ones serve the comprehensive gene set.
+SERVICES = ["liftover",
+            "spliceai-37", "spliceai-38", "pangolin-37", "pangolin-38",
+            "spliceai-37-comprehensive", "spliceai-38-comprehensive",
+            "pangolin-37-comprehensive", "pangolin-38-comprehensive"]
 
 # Cache populated by `~/.claude/skills/analyze-gcloud-costs/scripts/cost_analysis.py`.
 # If absent, the cost section is skipped with a warning instead of failing.

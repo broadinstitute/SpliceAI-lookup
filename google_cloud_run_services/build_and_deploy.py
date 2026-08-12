@@ -185,8 +185,14 @@ def update_transcript_tables(genome_versions, gencode_version):
     logging.info(f"Done! Inserted {total_records:,d} total transcript records into the database.")
 
 
-def get_service_name(tool, genome_version):
-    return f"{tool}-{genome_version}"
+def get_service_name(tool, genome_version, gene_set="basic"):
+    """Cloud Run service name for one (tool, genome, gene set) combination.
+
+    The basic services keep their original un-suffixed names so the API URLs published in the
+    docs, and used by external clients, keep working. Only the comprehensive services, which
+    are new, carry a suffix.
+    """
+    return f"{tool}-{genome_version}" + ("" if gene_set == "basic" else f"-{gene_set}")
 
 def get_tag(tool, genome_version, repo_name="gcr.io"):
     if repo_name == "gcr.io":
@@ -204,6 +210,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-g", "--genome-version", choices=["37", "38"], help="If not specified, command will run for both GRCh37 and GRCh38")
     parser.add_argument("-t", "--tool", choices=["spliceai", "pangolin"], help="If not specified, command will run for both spliceai and pangolin")
+    parser.add_argument("-s", "--gene-set", choices=["basic", "comprehensive"],
+                        help="Which Gencode gene set's service to deploy. If not specified, deploys both. "
+                             "One image serves either, so this only affects the deploy step, not the build.")
     parser.add_argument("-d", "--docker-command", choices=["docker", "podman"], default="docker", help="Whether to use docker or podman to build the image")
     g = parser.add_mutually_exclusive_group()
     g.add_argument("--gencode-version",
@@ -233,6 +242,11 @@ def main():
         tools = [args.tool]
     else:
         tools = ["spliceai", "pangolin"]
+
+    if args.gene_set:
+        gene_sets = [args.gene_set]
+    else:
+        gene_sets = ["basic", "comprehensive"]
 
     if args.gencode_version:
         if not re.fullmatch(r"v\d+", args.gencode_version):
@@ -407,7 +421,9 @@ def main():
             for tool in tools:
                 tag = get_tag(tool, genome_version)
                 dockerhub_tag = get_tag(tool, genome_version, repo_name="dockerhub")
-                service = get_service_name(tool, genome_version)
+                # Names the image, and so the per-image buildx cache scope below. The services
+                # deployed from it are named per gene set inside the deploy block.
+                image_name = get_service_name(tool, genome_version)
                 # gunicorn worker processes per instance (the `--workers` count baked into
                 # the image). Each worker is single-threaded (TF/torch thread pools are
                 # capped to 1 in the Dockerfile) so `workers` alone sets how many model
@@ -439,13 +455,13 @@ def main():
                     # In CI (USE_BUILDX_CACHE set; see deploy-on-tag.yml) build with buildx and a
                     # per-service GitHub Actions layer cache, so unchanged layers (base image,
                     # tensorflow-cpu, pip deps) restore instead of rebuilding from scratch on the
-                    # fresh runner. `scope={service}` keeps the 4 matrix builds from clobbering each
+                    # fresh runner. `scope={image_name}` keeps the 4 matrix builds from clobbering each
                     # other's cache. --load puts the built image into the local docker store so the
                     # push / pull / digest-capture steps below work unchanged. Locally the buildx
                     # container driver and the gha backend aren't set up, so fall back to a plain build.
                     build_cmd = (
                         f"docker buildx build --load "
-                        f"--cache-from type=gha,scope={service} --cache-to type=gha,mode=max,scope={service} "
+                        f"--cache-from type=gha,scope={image_name} --cache-to type=gha,mode=max,scope={image_name} "
                         if os.environ.get("USE_BUILDX_CACHE") else f"{args.docker_command} build "
                     )
                     run(f"{build_cmd}-f docker/{tool}/Dockerfile --build-arg=\"WORKERS={workers}\" --build-arg=\"GENOME_VERSION={genome_version}\" -t {tag}:latest -t {dockerhub_tag}:latest .")
@@ -462,18 +478,31 @@ def main():
                     if not re.match("^sha256:[a-f0-9]{64}$", sha256):
                         raise ValueError(f"Invalid sha256 value found in {sha256_path}: {sha256}")
 
-                    print(f"Deploying {service} with image sha256 {sha256}{' (dev revision, no traffic)' if args.dev else ''}")
+                    # One image, deployed once per gene set. The image carries both gene sets'
+                    # annotation files (the Dockerfile COPYs per genome, not per gene set), so
+                    # the two services differ only by the GENE_SET env var that tells server.py
+                    # which single annotator to load. Deploying rather than rebuilding keeps the
+                    # slow part -- 4 multi-GB image builds -- unchanged by the split.
+                    for gene_set in gene_sets:
+                        service = get_service_name(tool, genome_version, gene_set)
+                        print(f"Deploying {service} (GENE_SET={gene_set}) with image sha256 {sha256}"
+                              f"{' (dev revision, no traffic)' if args.dev else ''}")
 
-                    dev_flags = "--no-traffic --tag dev " if args.dev else ""
-                    # Comma-separated list of IPs to hard-block at the API door
-                    # (server.py block_ips). Sourced from the BLOCKED_IPS
-                    # env var (set as a GitHub Actions repo Variable, or exported
-                    # locally); unset -> empty, which clears any previous value and
-                    # disables blocking. The "^@^" prefix tells gcloud to split
-                    # env-var assignments on "@" instead of ",", so the commas
-                    # between IPs stay inside the single BLOCKED_IPS value.
-                    blocked_ips_flag = f'--update-env-vars "^@^BLOCKED_IPS={os.environ.get("BLOCKED_IPS", "").strip()}" '
-                    run(f"""gcloud \
+                        dev_flags = "--no-traffic --tag dev " if args.dev else ""
+                        # Comma-separated list of IPs to hard-block at the API door
+                        # (server.py block_ips). Sourced from the BLOCKED_IPS
+                        # env var (set as a GitHub Actions repo Variable, or exported
+                        # locally); unset -> empty, which clears any previous value and
+                        # disables blocking. The "^@^" prefix tells gcloud to split
+                        # env-var assignments on "@" instead of ",", so the commas
+                        # between IPs stay inside the single BLOCKED_IPS value.
+                        # GENE_SET pins the gene set, and DEPLOYMENT keeps a dev revision's
+                        # cache entries off the keys production reads (server.py
+                        # get_splicing_scores_cache_key).
+                        env_vars = (f'BLOCKED_IPS={os.environ.get("BLOCKED_IPS", "").strip()}'
+                                    f'@GENE_SET={gene_set}'
+                                    f'@DEPLOYMENT={"dev" if args.dev else "prod"}')
+                        run(f"""gcloud \
 --project {GCLOUD_PROJECT} beta run deploy {service} \
 --image {tag}@{sha256} \
 --min-instances {min_instances} \
@@ -489,16 +518,16 @@ def main():
 --cpu 2 \
 --cpu-boost \
 --timeout 900s \
-{blocked_ips_flag}{dev_flags}""")
+--update-env-vars "^@^{env_vars}" {dev_flags}""")
 
-                    if args.dev:
-                        print(f"To promote the dev revision of {service} to production, run:")
-                        print(f"  gcloud --project {GCLOUD_PROJECT} run services update-traffic {service} "
-                              f"--region us-central1 --to-tags dev=100")
-                    else:
-                        # Required when a previous --dev deploy left the service in manual-traffic mode; otherwise `gcloud run deploy` keeps traffic on the old revision.
-                        run(f"gcloud --project {GCLOUD_PROJECT} run services update-traffic {service} "
-                            f"--region us-central1 --to-latest")
+                        if args.dev:
+                            print(f"To promote the dev revision of {service} to production, run:")
+                            print(f"  gcloud --project {GCLOUD_PROJECT} run services update-traffic {service} "
+                                  f"--region us-central1 --to-tags dev=100")
+                        else:
+                            # Required when a previous --dev deploy left the service in manual-traffic mode; otherwise `gcloud run deploy` keeps traffic on the old revision.
+                            run(f"gcloud --project {GCLOUD_PROJECT} run services update-traffic {service} "
+                                f"--region us-central1 --to-latest")
 
                                 # --add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
                 # --add-volume-mount=volume=ref,mount-path=/ref \
