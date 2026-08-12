@@ -2649,6 +2649,41 @@ class TestApplyVariantToAlteredExonSeqs(unittest.TestCase):
         )
         self.assertEqual(result, "variant straddles splice boundary")
 
+    def test_substitution_straddling_donor_is_clipped_to_kept_span(self):
+        # Issue #134 shape: a 2 bp MNV across a donor that SpliceAI shifts. Span (11, 20)
+        # ends at the last exonic base 20; the variant covers 20 (exonic) and 21 (now
+        # intronic). Only the exonic base reaches the mRNA, so the ALT base for pos 20
+        # is applied and the one for pos 21 is dropped.
+        chrom_seq = "X" * 10 + "ACGTACGTAC" + "A"  # pos 20 = "C", pos 21 = "A"
+        fasta = self._stub(chr1=chrom_seq)
+        result = _apply_variant_to_altered_exon_seqs(
+            [(11, 20)], ["ACGTACGTAC"], 20, "CA", "TG",
+            fasta, "1", cds_start=1, cds_end=10000,
+        )
+        self.assertEqual(result, "0_ACGTACGTA" + "T")
+
+    def test_substitution_straddling_acceptor_is_clipped_to_kept_span(self):
+        # Mirror of the donor case: the variant starts one base before the span, so the
+        # leading ALT base is dropped and the trailing one lands at the span's first base.
+        chrom_seq = "X" * 9 + "T" + "ACGTACGTAC"  # pos 10 = "T", pos 11 = "A"
+        fasta = self._stub(chr1=chrom_seq)
+        result = _apply_variant_to_altered_exon_seqs(
+            [(11, 20)], ["ACGTACGTAC"], 10, "TA", "GC",
+            fasta, "1", cds_start=1, cds_end=10000,
+        )
+        self.assertEqual(result, "0_C" + "CGTACGTAC")
+
+    def test_substitution_straddling_two_kept_spans_still_skips(self):
+        # A footprint reaching into two kept spans would need two writes, which the
+        # single-index return protocol cannot express, so it keeps the skip sentinel.
+        chrom_seq = "X" * 10 + "ACGT" + "AC" + "GTAC"  # spans (11,14) and (17,20)
+        fasta = self._stub(chr1=chrom_seq)
+        result = _apply_variant_to_altered_exon_seqs(
+            [(11, 14), (17, 20)], ["ACGT", "GTAC"], 14, "TACG", "AAAA",
+            fasta, "1", cds_start=1, cds_end=10000,
+        )
+        self.assertEqual(result, "variant straddles splice boundary")
+
     def test_anchored_insertion_at_trailing_edge_treated_as_straddle(self):
         # VCF-anchored insertion at the last base of a kept span: ref='C', alt='CTAA' at
         # pos=20 in span (11, 20). The anchor 'C' is the last exonic base; by VCF

@@ -1745,7 +1745,10 @@ def _apply_variant_to_altered_exon_seqs(altered_exon_spans, exon_seqs, var_pos, 
         "impacts native start or stop site" — variant footprint hits the 6 bp of
                                              the start codon or stop codon.
         "variant straddles splice boundary" — footprint partially overlaps a
-                                             kept span (indels only). Caller skips.
+                                             kept span and cannot be clipped to it
+                                             (indels, or an overlap spanning two kept
+                                             spans). Caller skips. A straddling
+                                             substitution is clipped and applied instead.
         "cannot determine"               — footprint is entirely outside every
                                              kept span (variant in a non-retained
                                              intron). Caller proceeds with the
@@ -1777,16 +1780,38 @@ def _apply_variant_to_altered_exon_seqs(altered_exon_spans, exon_seqs, var_pos, 
 
     # Find a kept span that fully contains the variant footprint.
     fully_contained_idx = None
-    partial_overlap = False
+    partially_overlapping_idxs = []
     for i, (span_start, span_end) in enumerate(altered_exon_spans):
         if var_pos >= span_start and var_end <= span_end:
             fully_contained_idx = i
             break
         if not (var_end < span_start or var_pos > span_end):
-            partial_overlap = True
+            partially_overlapping_idxs.append(i)
 
     if fully_contained_idx is None:
-        if partial_overlap:
+        # A substitution (len(ref) == len(alt)) maps every ALT base 1:1 onto a genomic
+        # position, so the part of the footprint that lands inside a kept span can be applied
+        # on its own and the part outside can be dropped: it sits in sequence that this
+        # altered transcript splices out, and so cannot reach the protein. Its only effect is
+        # on splicing itself, which is already modelled by the aberration we are translating.
+        # The case this covers is an MNV across a donor that SpliceAI shifts, e.g. the
+        # 2 bp 9-131235320-CA-TG of issue #134, where the variant covers the last exonic base
+        # and the first intronic base and only the exonic base changes the coding sequence.
+        # Indels get no such 1:1 mapping (nothing determines how many inserted bases fall
+        # inside the span), and a footprint reaching into two kept spans would need two
+        # writes, which the single-index return protocol cannot express. Both still skip.
+        if len(ref) == len(alt) and len(partially_overlapping_idxs) == 1:
+            overlap_idx = partially_overlapping_idxs[0]
+            span_start, span_end = altered_exon_spans[overlap_idx]
+            clipped_start = max(var_pos, span_start)
+            clipped_end = min(var_end, span_end)
+            affected_exon = exon_seqs[overlap_idx]
+            offset = clipped_start - span_start
+            adjusted = (affected_exon[:offset]
+                        + alt[clipped_start - var_pos:clipped_end - var_pos + 1]
+                        + affected_exon[offset + (clipped_end - clipped_start + 1):])
+            return f'{overlap_idx}_{adjusted}'
+        if partially_overlapping_idxs:
             return 'variant straddles splice boundary'
         return 'cannot determine'
 
