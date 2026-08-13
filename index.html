@@ -1499,6 +1499,33 @@
         pangolin: [["REF score (loss)", "SL_REF"], ["ALT score (loss)", "SL_ALT"], ["REF score (gain)", "SG_REF"], ["ALT score (gain)", "SG_ALT"]],
     }
 
+    /* Delta columns, derived here from the REF and ALT columns above rather than sent by the
+       API. The signs follow each model's own definition, so a delta here matches the delta the
+       model reports for the whole window:
+         SpliceAI (spliceai/utils.py) takes its gain index from argmax(alt - ref) and its loss
+         index from argmax(ref - alt), separately for the acceptor and donor channels.
+         Pangolin (pangolin/pangolin.py) asserts `loss == loss_alt - loss_ref`, and derives gain
+         the same way, which is why both of its deltas are alt - ref.
+       Rounded to 3 decimals to match the precision the scores arrive in, and because binary
+       floating point would otherwise turn 0.013 - 0.012 into 0.0009999999999999992. */
+    const perPositionDelta = (a, b) => Math.round((parseFloat(a) - parseFloat(b)) * 1000) / 1000
+
+    // The API echoes back whichever form the user typed, so the chromosome arrives with or
+    // without the prefix depending on how the variant was entered.
+    const withChrPrefix = (chrom) => String(chrom).startsWith("chr") ? String(chrom) : `chr${chrom}`
+    const PER_POSITION_DELTA_COLUMNS = {
+        spliceai: [
+            ["Acceptor Loss Δ score", (r) => perPositionDelta(r.RA, r.AA)],
+            ["Donor Loss Δ score", (r) => perPositionDelta(r.RD, r.AD)],
+            ["Acceptor Gain Δ score", (r) => perPositionDelta(r.AA, r.RA)],
+            ["Donor Gain Δ score", (r) => perPositionDelta(r.AD, r.RD)],
+        ],
+        pangolin: [
+            ["Loss Δ score", (r) => perPositionDelta(r.SL_ALT, r.SL_REF)],
+            ["Gain Δ score", (r) => perPositionDelta(r.SG_ALT, r.SG_REF)],
+        ],
+    }
+
     // Keyed by the id embedded in each transcript's table icon, and populated while the results
     // table is built so the click handler has the transcript's exon structure and query params.
     const perPositionTableContext = {}
@@ -1552,20 +1579,22 @@
 
     const renderPerPositionTable = (rows, context) => {
         const columns = PER_POSITION_COLUMNS[context.tool]
+        const deltaColumns = PER_POSITION_DELTA_COLUMNS[context.tool]
         const bodyRows = buildPerPositionRows(rows, context).map((row) => {
             if (row.isGap) {
                 return `<tr><td colspan="2" style="text-align:center; color:#888888">&#8212;&nbsp;${Number(row.nSkipped).toLocaleString()}bp span&nbsp;&#8212;</td>
-                            <td></td><td></td>${columns.map(() => `<td ${getScoreStyle(0)}>0</td>`).join("")}<td></td></tr>`
+                            <td></td><td></td>${[...columns, ...deltaColumns].map(() => `<td ${getScoreStyle(0)}>0</td>`).join("")}<td></td></tr>`
             }
 
             // escapeHtml every backend-supplied field: this markup goes through jQuery.html()
             const boldIfVariant = row.isVariant ? "font-weight:bold;" : ""
             return `<tr class="${row.isVariant ? "per-position-variant-row" : ""}">
-                        <td style="${boldIfVariant}">${escapeHtml(context.chrom)}</td>
+                        <td style="${boldIfVariant}">${escapeHtml(withChrPrefix(context.chrom))}</td>
                         <td style="text-align:right; ${boldIfVariant}">${escapeHtml(row.pos)}</td>
                         <td>${escapeHtml(row.ref)}</td>
                         <td>${row.isVariant ? escapeHtml(row.alt) : ""}</td>
                         ${columns.map(([, key]) => `<td ${getScoreStyle(parseFloat(row[key]))}>${parseFloat(row[key])}</td>`).join("")}
+                        ${deltaColumns.map(([, compute]) => { const d = compute(row); return `<td ${getScoreStyle(d)}>${d}</td>` }).join("")}
                         <td>${escapeHtml(row.note)}</td>
                     </tr>`
         })
@@ -1577,7 +1606,7 @@
                             <th>position</th>
                             <th style="width:1%">REF</th>
                             <th style="width:1%">ALT</th>
-                            ${columns.map(([label]) => `<th style="width:1%">${label}</th>`).join("")}
+                            ${[...columns, ...deltaColumns].map(([label]) => `<th style="width:1%">${label}</th>`).join("")}
                             <th style="width:1%">Notes</th>
                         </tr>
                     </thead>
@@ -1592,12 +1621,20 @@
 
     const perPositionRowsToCsv = (rows, context) => {
         const columns = PER_POSITION_COLUMNS[context.tool]
-        const lines = [["chrom", "position", "ref", "alt", ...columns.map(([label]) => label.toLowerCase().replace(/[()]/g, "").trim().replace(/ +/g, "_")), "notes"].join(",")]
+        const deltaColumns = PER_POSITION_DELTA_COLUMNS[context.tool]
+        // "Δ" is replaced rather than carried into the header so the column names stay ASCII,
+        // which spreadsheet imports handle more predictably than a non-ASCII byte.
+        const header = [...columns, ...deltaColumns].map(([label]) =>
+            label.toLowerCase().replace(/Δ/gi, "delta").replace(/[()]/g, "").trim().replace(/ +/g, "_"))
+        const lines = [["chrom", "position", "ref", "alt", ...header, "notes"].join(",")]
         for (const row of buildPerPositionRows(rows, context)) {
             if (row.isGap) {
                 continue
             }
-            lines.push([context.chrom, row.pos, row.ref, row.alt, ...columns.map(([, key]) => row[key]), `"${row.note}"`].join(","))
+            lines.push([withChrPrefix(context.chrom), row.pos, row.ref, row.alt,
+                        ...columns.map(([, key]) => row[key]),
+                        ...deltaColumns.map(([, compute]) => compute(row)),
+                        `"${row.note}"`].join(","))
         }
 
         return lines.join("\n")
