@@ -1543,7 +1543,7 @@
         const bodyRows = buildPerPositionRows(rows, context).map((row) => {
             if (row.isGap) {
                 return `<tr><td colspan="2" style="text-align:center; color:#888888">&#8212;&nbsp;${Number(row.nSkipped).toLocaleString()}bp span&nbsp;&#8212;</td>
-                            <td></td><td></td>${columns.map(() => `<td style="color:#888888">0</td>`).join("")}<td></td></tr>`
+                            <td></td><td></td>${columns.map(() => `<td ${getScoreStyle(0)}>0</td>`).join("")}<td></td></tr>`
             }
 
             // escapeHtml every backend-supplied field: this markup goes through jQuery.html()
