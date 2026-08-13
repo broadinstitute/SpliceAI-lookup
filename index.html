@@ -1541,16 +1541,21 @@
     const withChrPrefix = (chrom) => String(chrom).startsWith("chr") ? String(chrom) : `chr${chrom}`
     const PER_POSITION_DELTA_COLUMNS = {
         spliceai: [
-            ["Acceptor Loss Δ score", (r) => perPositionDelta(r.RA, r.AA)],
-            ["Donor Loss Δ score", (r) => perPositionDelta(r.RD, r.AD)],
-            ["Acceptor Gain Δ score", (r) => perPositionDelta(r.AA, r.RA)],
-            ["Donor Gain Δ score", (r) => perPositionDelta(r.AD, r.RD)],
+            ["Δ score acceptor loss", (r) => perPositionDelta(r.RA, r.AA)],
+            ["Δ score donor loss", (r) => perPositionDelta(r.RD, r.AD)],
+            ["Δ score acceptor gain", (r) => perPositionDelta(r.AA, r.RA)],
+            ["Δ score donor gain", (r) => perPositionDelta(r.AD, r.RD)],
         ],
         pangolin: [
-            ["Loss Δ score", (r) => perPositionDelta(r.SL_ALT, r.SL_REF)],
-            ["Gain Δ score", (r) => perPositionDelta(r.SG_ALT, r.SG_REF)],
+            ["Δ score loss", (r) => perPositionDelta(r.SL_ALT, r.SL_REF)],
+            ["Δ score gain", (r) => perPositionDelta(r.SG_ALT, r.SG_REF)],
         ],
     }
+
+    // Keeps "Δ score" on one line while the rest of a header may still wrap, so the column does
+    // not have to be wide enough for the whole label. The labels are constants defined above,
+    // never user input, so injecting markup here introduces nothing to escape.
+    const headerLabelHtml = (label) => label.replace("Δ score", `<span style="white-space:nowrap">Δ score</span>`)
 
     // Keyed by the id embedded in each transcript's table icon, and populated while the results
     // table is built so the click handler has the transcript's exon structure and query params.
@@ -1608,32 +1613,29 @@
         const deltaColumns = PER_POSITION_DELTA_COLUMNS[context.tool]
         const bodyRows = buildPerPositionRows(rows, context).map((row) => {
             if (row.isGap) {
-                return `<tr><td colspan="2" style="text-align:center; color:#888888">&#8212;&nbsp;${Number(row.nSkipped).toLocaleString()}bp span&nbsp;&#8212;</td>
-                            <td></td><td></td>${[...columns, ...deltaColumns].map(() => `<td ${getScoreStyle(0)}>0</td>`).join("")}<td></td></tr>`
+                return `<tr><td style="text-align:center; color:#888888">&#8212;&nbsp;${Number(row.nSkipped).toLocaleString()}bp span&nbsp;&#8212;</td>
+                            <td></td>${[...columns, ...deltaColumns].map(() => `<td ${getScoreStyle(0)}>0</td>`).join("")}</tr>`
             }
 
-            // escapeHtml every backend-supplied field: this markup goes through jQuery.html()
+            // escapeHtml every backend-supplied field: this markup goes through jQuery.html().
+            // Built as one string and escaped once, which also turns the '>' into &gt;.
             const boldIfVariant = row.isVariant ? "font-weight:bold;" : ""
+            const locus = `${withChrPrefix(context.chrom)}:${row.pos} ${row.ref}`
+                + (row.isVariant ? ` > ${row.alt}` : "")
             return `<tr class="${row.isVariant ? "per-position-variant-row" : ""}">
-                        <td style="${boldIfVariant}">${escapeHtml(withChrPrefix(context.chrom))}</td>
-                        <td style="text-align:right; ${boldIfVariant}">${escapeHtml(row.pos)}</td>
-                        <td>${escapeHtml(row.ref)}</td>
-                        <td>${row.isVariant ? escapeHtml(row.alt) : ""}</td>
+                        <td style="white-space:nowrap; ${boldIfVariant}">${escapeHtml(locus)}</td>
+                        <td>${escapeHtml(row.note)}</td>
                         ${columns.map(([, key]) => `<td ${getScoreStyle(parseFloat(row[key]))}>${parseFloat(row[key])}</td>`).join("")}
                         ${deltaColumns.map(([, compute]) => { const d = compute(row); return `<td ${getScoreStyle(d)}>${d}</td>` }).join("")}
-                        <td>${escapeHtml(row.note)}</td>
                     </tr>`
         })
 
         return `<table class="ui celled table">
                     <thead>
                         <tr style="text-align:center">
-                            <th style="width:1%">chrom</th>
-                            <th>position</th>
-                            <th style="width:1%">REF</th>
-                            <th style="width:1%">ALT</th>
-                            ${[...columns, ...deltaColumns].map(([label]) => `<th style="width:1%">${label}</th>`).join("")}
-                            <th style="width:1%">Notes</th>
+                            <th>chrom:pos ref (&gt; alt)</th>
+                            <th style="width:1%">notes</th>
+                            ${[...columns, ...deltaColumns].map(([label]) => `<th style="width:1%">${headerLabelHtml(label)}</th>`).join("")}
                         </tr>
                     </thead>
                     <tbody>${bodyRows.join("")}</tbody>
