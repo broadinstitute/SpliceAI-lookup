@@ -87,6 +87,18 @@
             background: #F9FAFB;
         }
 
+        /* The header pins to the top of the scrollport, but the container's own top padding and
+           the table's top margin sit above that line, leaving a band that rows scroll up through
+           before they reach the header. Removing both closes it so the header meets the modal
+           heading. The side and bottom padding are left alone, so only the gap is affected. */
+        #per-position-modal-content {
+            padding-top: 0;
+        }
+
+        #per-position-modal-content > table {
+            margin-top: 0;
+        }
+
         :root {
             --MAIN_TRANSCRIPT_BACKGROUND_COLOR: #eaf3ff;
             --CODING_TRANSCRIPT_BACKGROUND_COLOR: white;
