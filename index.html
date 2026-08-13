@@ -1557,6 +1557,13 @@
     // never user input, so injecting markup here introduces nothing to escape.
     const headerLabelHtml = (label) => label.replace("Δ score", `<span style="white-space:nowrap">Δ score</span>`)
 
+    /* Styling for the REF and ALT columns. Those are the model's raw probabilities, where a high
+       value is simply what an annotated splice site looks like and means nothing on its own, so
+       shading them competes for attention with the delta columns, which are what actually
+       indicate a change. Only the near-zero grey is kept, so those values recede the same way
+       they do everywhere else in the table. */
+    const getRawScoreStyle = (score) => Math.abs(parseFloat(score)) < 0.01 ? `style='color:#BBBBBB;'` : ""
+
     // Keyed by the id embedded in each transcript's table icon, and populated while the results
     // table is built so the click handler has the transcript's exon structure and query params.
     const perPositionTableContext = {}
@@ -1614,7 +1621,7 @@
         const bodyRows = buildPerPositionRows(rows, context).map((row) => {
             if (row.isGap) {
                 return `<tr><td style="text-align:center; color:#888888">&#8212;&nbsp;${Number(row.nSkipped).toLocaleString()}bp span&nbsp;&#8212;</td>
-                            <td></td>${[...columns, ...deltaColumns].map(() => `<td ${getScoreStyle(0)}>0</td>`).join("")}</tr>`
+                            <td></td>${[...deltaColumns, ...columns].map(() => `<td ${getScoreStyle(0)}>0</td>`).join("")}</tr>`
             }
 
             // escapeHtml every backend-supplied field: this markup goes through jQuery.html().
@@ -1625,8 +1632,8 @@
             return `<tr class="${row.isVariant ? "per-position-variant-row" : ""}">
                         <td style="white-space:nowrap; ${boldIfVariant}">${escapeHtml(locus)}</td>
                         <td>${escapeHtml(row.note)}</td>
-                        ${columns.map(([, key]) => `<td ${getScoreStyle(parseFloat(row[key]))}>${parseFloat(row[key])}</td>`).join("")}
                         ${deltaColumns.map(([, compute]) => { const d = compute(row); return `<td ${getScoreStyle(d)}>${d}</td>` }).join("")}
+                        ${columns.map(([, key]) => `<td ${getRawScoreStyle(row[key])}>${parseFloat(row[key])}</td>`).join("")}
                     </tr>`
         })
 
@@ -1635,7 +1642,7 @@
                         <tr style="text-align:center">
                             <th>chrom:pos ref (&gt; alt)</th>
                             <th style="width:1%">notes</th>
-                            ${[...columns, ...deltaColumns].map(([label]) => `<th style="width:1%">${headerLabelHtml(label)}</th>`).join("")}
+                            ${[...deltaColumns, ...columns].map(([label]) => `<th style="width:1%">${headerLabelHtml(label)}</th>`).join("")}
                         </tr>
                     </thead>
                     <tbody>${bodyRows.join("")}</tbody>
