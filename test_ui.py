@@ -256,11 +256,22 @@ class TestSpliceAILookupUI(unittest.TestCase):
         self.assertIn("mask=1", self._get_url_hash())
 
     def test_gencode_comprehensive_option(self):
-        """Selecting 'comprehensive' gencode set includes bc=comprehensive in the URL hash."""
+        """Selecting 'comprehensive' routes to the comprehensive services and shows results."""
         self._click_label("input[name='gencode-gene-set'][value='comprehensive']")
         self._submit_variant("8-140300616-T-G")
 
         self.assertIn("bc=comprehensive", self._get_url_hash())
+        # The hash is written even when both API calls fail, so assert on the results
+        # themselves: comprehensive is served by its own Cloud Run services now, and a broken
+        # url mapping would otherwise leave this test green while the page showed nothing.
+        # Asserting on score rows rather than on the error box keeps this specific to routing --
+        # the box is also where any variant-resolution message would land.
+        self.assertTrue(self.page.is_visible("#spliceai-table"))
+        self.assertTrue(self.page.is_visible("#pangolin-table"))
+        self.assertGreater(len(self.page.query_selector_all("#spliceai-table tbody tr")), 0,
+                           "comprehensive SpliceAI request returned no score rows")
+        self.assertGreater(len(self.page.query_selector_all("#pangolin-table tbody tr")), 0,
+                           "comprehensive Pangolin request returned no score rows")
 
     def test_ref_alt_score_columns(self):
         """Enabling REF/ALT scores checkbox shows the REF and ALT score columns."""

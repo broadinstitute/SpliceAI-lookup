@@ -2,6 +2,7 @@ import argparse
 import logging
 import os
 import platform
+import subprocess
 import time
 
 from dotenv import load_dotenv
@@ -240,8 +241,9 @@ def main():
     parser.add_argument("--dev", action="store_true",
                         help="Deploy as a 'dev'-tagged revision with --no-traffic so production keeps "
                              "serving the existing revision. Test against the tagged URL printed by "
-                             "gcloud, then promote with: "
-                             "gcloud run services update-traffic <service> --region us-central1 --to-tags dev=100")
+                             "gcloud, then promote by re-running this script WITHOUT --dev. Do not "
+                             "promote by switching traffic to the dev revision: DEPLOYMENT=dev is baked "
+                             "into that revision, so production would keep using the dev cache namespace.")
     parser.add_argument("command", nargs="?", choices=VALID_COMMANDS,
                         help="Command to run. If not specified, it will run 'build' and then 'deploy'")
 
@@ -297,10 +299,19 @@ def main():
                 parser.error(f"File not found: {args.gencode_gtf}")
             gencode_gtf_paths[(args.genome_version, "basic")] = args.gencode_gtf
 
-        for genome_version, _ in gencode_gtf_paths.keys():
-            run(f"rm ./docker/ref/GRCh{genome_version}/gencode.*.basic.annotation.transcript_annotations.json.gz")
-            run(f"rm ./docker/spliceai/annotations/GRCh{genome_version}/gencode.*.annotation*.txt.gz")
-            run(f"rm ./docker/pangolin/annotations/GRCh{genome_version}/gencode.*.annotation*.db")
+        # Deduplicated: gencode_gtf_paths holds one key per (genome_version, gene set), so
+        # iterating it directly ran each rm twice per genome. `rm -f` because a glob that matches
+        # nothing is the normal state on a clean checkout and must not abort the run now that
+        # run() raises on a non-zero exit.
+        for genome_version in sorted({gv for gv, _ in gencode_gtf_paths}):
+            # Deliberately still only ".basic.": --gencode-gtf mode regenerates just the basic
+            # transcript_annotations file, so widening this to match the comprehensive one too
+            # would delete a file that mode never rebuilds. (The comprehensive file from a
+            # previous Gencode release is therefore left in place here -- pre-existing, and not
+            # something this change set set out to alter.)
+            run(f"rm -f ./docker/ref/GRCh{genome_version}/gencode.*.basic.annotation.transcript_annotations.json.gz")
+            run(f"rm -f ./docker/spliceai/annotations/GRCh{genome_version}/gencode.*.annotation*.txt.gz")
+            run(f"rm -f ./docker/pangolin/annotations/GRCh{genome_version}/gencode.*.annotation*.db")
 
         for (genome_version, basic_or_comprehensive), gencode_gtf_path in gencode_gtf_paths.items():
             # generate genePred files to use as gene tracks in IGV.js
@@ -508,22 +519,52 @@ def main():
                         # from the environment by the image's gunicorn command, so this overrides
                         # the value baked in at build time without needing a separate image.
                         service_workers = workers if gene_set == "basic" else 2
-                        print(f"Deploying {service} (GENE_SET={gene_set}, WORKERS={service_workers}) "
-                              f"with image sha256 {sha256}{' (dev revision, no traffic)' if args.dev else ''}")
 
                         # Cloud Run rejects --no-traffic when it has to create the service,
                         # since a first revision has nothing to hold traffic back from. Deploy
                         # that one without it; the service is brand new, so nothing is pointing
                         # at it yet and letting its first revision serve costs nothing. Every
                         # later --dev deploy takes the normal no-traffic path.
-                        service_exists = run(
-                            f"gcloud --project {GCLOUD_PROJECT} run services describe {service} "
-                            f"--region us-central1 --format='value(name)' > /dev/null 2>&1",
-                            check=False) == 0
+                        #
+                        # Only a confirmed "not found" counts as absent. Treating every non-zero
+                        # exit as absence would fail open in the worst possible direction: an
+                        # expired credential or a transient API error during a --dev deploy of an
+                        # EXISTING service would drop --no-traffic and hand an untested dev
+                        # revision 100% of production traffic. Anything that is not a clean
+                        # "exists" or a clean "not found" aborts the deploy instead.
+                        probe = subprocess.run(
+                            ["gcloud", f"--project={GCLOUD_PROJECT}", "run", "services", "describe", service,
+                             "--region=us-central1", "--format=value(name)"],
+                            capture_output=True, text=True)
+                        if probe.returncode == 0:
+                            service_exists = True
+                        # "Cannot find service [x]" is what gcloud actually prints for an absent
+                        # service; the other spellings are kept in case the wording changes.
+                        elif re.search(r"cannot find service|NOT_FOUND|could not be found|does not exist",
+                                       probe.stderr, re.IGNORECASE):
+                            service_exists = False
+                        else:
+                            raise RuntimeError(
+                                f"Could not determine whether the Cloud Run service {service} exists "
+                                f"(gcloud exit {probe.returncode}). Refusing to deploy, since guessing "
+                                f"wrong would route production traffic to this revision. stderr:\n{probe.stderr}")
+
                         if args.dev:
                             dev_flags = "--tag dev " + ("--no-traffic " if service_exists else "")
                         else:
                             dev_flags = ""
+
+                        # Printed after the flags are settled: a first --dev deploy of a service
+                        # that does not exist yet DOES take traffic, so saying otherwise here
+                        # would misdescribe exactly the case worth noticing.
+                        if not args.dev:
+                            traffic_note = ""
+                        elif service_exists:
+                            traffic_note = " (dev revision, no traffic)"
+                        else:
+                            traffic_note = " (dev revision, NEW service so its first revision serves traffic)"
+                        print(f"Deploying {service} (GENE_SET={gene_set}, WORKERS={service_workers}) "
+                              f"with image sha256 {sha256}{traffic_note}")
                         # Comma-separated list of IPs to hard-block at the API door
                         # (server.py block_ips). Sourced from the BLOCKED_IPS
                         # env var (set as a GitHub Actions repo Variable, or exported
@@ -564,9 +605,21 @@ def main():
 --update-env-vars "^@^{env_vars}" {dev_flags}""")
 
                         if args.dev:
-                            print(f"To promote the dev revision of {service} to production, run:")
-                            print(f"  gcloud --project {GCLOUD_PROJECT} run services update-traffic {service} "
-                                  f"--region us-central1 --to-tags dev=100")
+                            # Promote by re-running this script WITHOUT --dev, not by switching
+                            # traffic to the dev revision. DEPLOYMENT is baked into a revision's
+                            # environment, so a traffic-only promotion would leave production
+                            # running a revision stamped DEPLOYMENT=dev: it would then read and
+                            # write the "__dev"-suffixed cache keys forever, never seeing the
+                            # entries production already has (see get_splicing_scores_cache_key).
+                            # A non-dev deploy of the same image digest creates an otherwise
+                            # identical revision with DEPLOYMENT=prod and routes traffic to it.
+                            # No `deploy` sub-command: that would skip the build and read
+                            # sha256_grch<hg>.txt, which is the PREVIOUS production digest, not
+                            # the dev digest just tested (sha256_grch<hg>_dev.txt). Building
+                            # again from the same checkout reproduces the tested image and
+                            # records its digest in the production file.
+                            print(f"To promote {service} to production, re-run this script without --dev:")
+                            print(f"  python3 build_and_deploy.py -t {tool} -g {genome_version} -s {gene_set}")
                         else:
                             # Required when a previous --dev deploy left the service in manual-traffic mode; otherwise `gcloud run deploy` keeps traffic on the old revision.
                             run(f"gcloud --project {GCLOUD_PROJECT} run services update-traffic {service} "

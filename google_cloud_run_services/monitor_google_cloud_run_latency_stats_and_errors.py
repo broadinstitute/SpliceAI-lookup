@@ -53,15 +53,22 @@ def parse_iso(s):
 def get_production_revisions():
     """Return {service_name: revision_name} for the revision currently serving 100% production traffic.
 
-    Picks any traffic entry with `percent == 100`, including a `--tag`-decorated one
-    (e.g. after `--to-tags dev=100` promotes a dev revision to production).
+    Picks any traffic entry with `percent == 100`.
+
+    A service that can't be described is warned about and skipped rather than raising: the
+    deploy workflow runs one job per tool/genome, so a partial or in-progress rollout can
+    legitimately leave some of the services in SERVICES absent, and one missing service must
+    not blank out the error counts and latencies of the ones that are up.
     """
     out = {}
     for svc in SERVICES:
         proc = subprocess.run([
             "gcloud", "run", "services", "describe", svc,
             f"--project={PROJECT}", f"--region={REGION}", "--format=json",
-        ], capture_output=True, text=True, check=True)
+        ], capture_output=True, text=True)
+        if proc.returncode != 0:
+            print(f"  WARNING: skipping {svc}: {proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else 'gcloud describe failed'}")
+            continue
         for entry in json.loads(proc.stdout)["status"].get("traffic", []):
             if entry.get("percent", 0) != 100:
                 continue
@@ -350,11 +357,14 @@ def snapshot(client, args, bq_client=None, billing_table=None):
     else:
         prod_map = get_production_revisions()
         if not prod_map:
-            # No service has a revision at 100% traffic (e.g. all simultaneously rolling out).
-            # Fall back explicitly: an empty list would otherwise be falsy in the per-query
-            # `if revisions:` guards and silently query all revisions under a misleading label.
+            # Either no service has a revision at 100% traffic (e.g. all simultaneously rolling
+            # out) or every describe call failed. Fall back explicitly: an empty list would
+            # otherwise be falsy in the per-query `if revisions:` guards and silently query all
+            # revisions under a misleading label. Say plainly that dev/test traffic is now mixed
+            # in, since these numbers are no longer production's.
             prod_revs = None
-            rev_label = "(all revisions — no service had a 100% production revision)"
+            rev_label = ("WARNING: could not identify a production revision for ANY service, so the "
+                         "figures below cover ALL revisions and include dev/test traffic.")
         else:
             prod_revs = list(prod_map.values())
             rev_label = "production revisions only:  " + ", ".join(f"{s}={r}" for s, r in sorted(prod_map.items()))

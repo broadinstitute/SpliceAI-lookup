@@ -17,7 +17,7 @@ from psycopg2.pool import ThreadedConnectionPool
 from contextlib import contextmanager
 
 # flask imports
-from flask import Flask, g, request, Response
+from flask import Flask, g, redirect, request, Response
 from flask_cors import CORS
 from flask_talisman import Talisman
 
@@ -33,9 +33,12 @@ app = Flask(__name__)
 CORS(app)
 
 
+# Set by the Dockerfiles, so it distinguishes a deployed container from a local checkout.
+RUNNING_ON_GOOGLE_CLOUD_RUN = bool(os.environ.get('RUNNING_ON_GOOGLE_CLOUD_RUN'))
+
 # On Cloud Run, disable Werkzeug's debug PIN / interactive traceback; keep it
 # on for local development.
-DEBUG = not os.environ.get('RUNNING_ON_GOOGLE_CLOUD_RUN')
+DEBUG = not RUNNING_ON_GOOGLE_CLOUD_RUN
 
 # Security headers: HSTS, CSP, X-Frame-Options, X-Content-Type-Options, etc.
 # force_https=False because Cloud Run's load balancer terminates TLS and
@@ -359,9 +362,10 @@ if not BLOCKED_IPS:
 # Module-level connection pool for Cloud SQL. Flask under Cloud Run typically
 # serves multiple concurrent requests per instance via threaded workers, so use
 # ThreadedConnectionPool (thread-safe) rather than SimpleConnectionPool.
-# Each gunicorn worker is a separate process (forked under --preload) with its
-# own pool and runs single-threaded (--threads 1), so it serves one request at a
-# time and needs only one DB connection. maxconn=2 keeps a one-slot safety margin
+# Each gunicorn worker is a separate process (the Dockerfiles deliberately omit --preload, so
+# every worker imports this module itself after the fork) with its own pool, and runs
+# single-threaded (--threads 1), so it serves one request at a time and needs only one DB
+# connection. maxconn=2 keeps a one-slot safety margin
 # while bounding the total: workers x instances x services x maxconn must stay
 # under the server's max_connections (75). The previous maxconn=80 assumed Cloud
 # Run's default concurrency of 80, but the deploy pins --workers/--concurrency to
@@ -452,11 +456,12 @@ def _try_init_database_pool():
             print(f"WARNING: DB connection pool init failed; falling back to per-request connections: {e}", flush=True)
 
 
-# The pool is initialised lazily on the first request (see get_db_connection),
-# not at import time. Under gunicorn --preload the module is imported once in the
-# arbiter before workers fork; initialising the pool here would share a single
-# connection's socket across all forked workers and corrupt the protocol. Lazy
-# init means each worker opens its own pool after the fork.
+# The pool is initialised lazily on the first request (see get_db_connection), not at import
+# time. Since the Dockerfiles dropped --preload, this module is already imported per worker
+# after the fork, so a pool built at import would no longer be shared across workers the way it
+# would have been under --preload -- but lazy init is kept regardless: it lets a worker that
+# started while Cloud SQL was briefly unreachable retry (throttled) instead of being stuck
+# without a pool for the container's whole life.
 
 
 @contextmanager
@@ -1492,15 +1497,33 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
         return error_response(f'Invalid "bc" value: "{basic_or_comprehensive_param}". The value must be either "basic" or "comprehensive". For example: {example_url}\n', source=tool_name)
 
     # Each service pins one gene set (see GENE_SET) and loads only that annotator, so a request
-    # for the other one has to go to the service that has it. The message names that service
-    # rather than just refusing, since API clients that predate the split will land here.
+    # for the other one has to be answered by the service that has it. Redirect rather than
+    # refuse: these un-suffixed URLs served both gene sets for years and are published in the
+    # docs, so scripted clients that predate the split still send bc=comprehensive here. A 307
+    # preserves the method and body, and every common HTTP client (requests, curl -L, httr,
+    # XMLHttpRequest, fetch) follows it, so those callers keep working against the old URL.
     if basic_or_comprehensive_param != GENE_SET:
         other_service = f"{tool_name}-{GENOME_VERSION}" + ("" if basic_or_comprehensive_param == "basic" else "-comprehensive")
-        return error_response(
-            f'This service only handles bc={GENE_SET} requests, but received bc={basic_or_comprehensive_param}. '
-            f'Send bc={basic_or_comprehensive_param} requests to the "{other_service}" service instead '
-            f'(https://{other_service}-xwkwwwxdwq-uc.a.run.app/{tool_name}/).\n',
-            source=tool_name)
+        # K_SERVICE is the service's real name, set by Cloud Run. Comparing against a name
+        # derived from GENE_SET instead would be worthless: the two are equal by construction
+        # whenever the bc check above fails, so it could never catch the case that matters --
+        # a container deployed under a service name that disagrees with its own GENE_SET, which
+        # would redirect to itself and loop until the client gives up.
+        this_service = os.environ.get("K_SERVICE", "")
+        if this_service and this_service == other_service:
+            return error_response(
+                f"This service is misconfigured: it is deployed as {this_service} but runs with "
+                f"GENE_SET={GENE_SET}. Redeploy it with the matching GENE_SET.\n",
+                source=tool_name, status=500)
+        # Rewrite the service name inside the host actually requested, rather than hardcoding
+        # the production host, so a request that arrived at a `dev---`-tagged revision is
+        # redirected to the sibling's dev revision and stays on the dev side of the fence.
+        if this_service and this_service in request.host:
+            target_host = request.host.replace(this_service, other_service, 1)
+        else:
+            target_host = f"{other_service}-xwkwwwxdwq-uc.a.run.app"
+        print(f"{logging_prefix}: redirecting bc={basic_or_comprehensive_param} request to {target_host}", flush=True)
+        return redirect(f"https://{target_host}{request.full_path}", code=307)
 
     # A bare chrom-pos position (no ref/alt) requests REF-only scores instead
     # of the usual REF-vs-ALT delta scores. Try the full variant format first
@@ -1525,10 +1548,12 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
     print(f"{logging_prefix}: ======================", flush=True)
     print(f"{logging_prefix}: {variant} tool={tool_name} hg={genome_version}, distance={distance_param}, mask={mask_param}, bc={basic_or_comprehensive_param}", flush=True)
 
-    # Everything this service can serve was loaded at startup by preload_models(), so there is
-    # no init_* call on the request path any more -- the first request is as fast as the
-    # thousandth. That also means a request for the other gene set has nothing loaded to answer
-    # it, hence the check above.
+    # Everything this service can serve was loaded at startup by preload_models(), so the
+    # annotator and transcript annotations are ready here and the first request is as fast as
+    # the thousandth. (get_pangolin_scores still calls init_pangolin(), which returns
+    # immediately once the models are cached; it stays as a guard for direct callers.) That the
+    # gene set is fixed at startup is also why a request for the other one is redirected above
+    # rather than served: nothing is loaded here that could answer it.
 
     # check cache before processing the variant (short DB scope)
     results = {}
@@ -1752,9 +1777,10 @@ def preload_models():
     """Load everything this service can serve, before it accepts any request.
 
     A service answers for exactly one (GENOME_VERSION, GENE_SET) pair, so the full set is known
-    at startup and there is nothing left to load lazily. That is the point: the request path no
-    longer calls init_*, so no user's request pays a model load, and a container that cannot
-    load its models fails at startup instead of 500ing on the unlucky first request.
+    at startup and there is nothing left to load lazily. That is the point: no user's request
+    pays a model load, and a container that cannot load its models fails at startup instead of
+    500ing on the unlucky first request. (get_pangolin_scores still calls init_pangolin(), but
+    it returns immediately once this has run; it remains only as a guard for direct callers.)
 
     This must run in the WORKER, not in the gunicorn arbiter, which is why the Dockerfiles no
     longer pass `--preload`: without it gunicorn imports this module separately in each worker
@@ -1768,13 +1794,33 @@ def preload_models():
     The cost of not forking shared copies is that each worker holds its own annotator. Pinning
     one gene set per service is what makes that affordable: a worker can no longer accumulate
     both, which is what exhausted the instance's memory before the split.
+
+    Failures are fatal on Cloud Run, where a container that cannot load its models has nothing
+    to serve and should be replaced rather than left to 500. Off Cloud Run they are only warned
+    about, because the model files live at absolute paths that exist inside the image and
+    nowhere else: raising there would make `import server` impossible for the unit tests that
+    exercise its pure helpers (test_position_only.py imports the module for exactly that).
     """
     t0 = time.time()
-    if TOOL == "spliceai":
-        init_spliceai(GENOME_VERSION, GENE_SET)
-    elif TOOL == "pangolin":
-        init_pangolin()
-    init_transcript_annotations(GENOME_VERSION, GENE_SET)
+    try:
+        if TOOL == "spliceai":
+            init_spliceai(GENOME_VERSION, GENE_SET)
+        elif TOOL == "pangolin":
+            init_pangolin()
+        init_transcript_annotations(GENOME_VERSION, GENE_SET)
+    except OSError as e:
+        # Deliberately only OSError, and only off Cloud Run: the sole failure meant to be
+        # tolerated is "the model/annotation files aren't on this machine", which is the normal
+        # state of a checkout outside the image. Any other exception is a defect in this code
+        # and must still surface at import, or the unit tests that import server.py would
+        # silently pass over a real regression.
+        if RUNNING_ON_GOOGLE_CLOUD_RUN:
+            raise
+        print(f"WARNING: preload of the hg{GENOME_VERSION} {GENE_SET} models failed: "
+              f"{type(e).__name__}: {e}. Continuing because this is not a Cloud Run container, so "
+              f"the module is importable for unit tests, but this instance cannot serve requests.",
+              flush=True)
+        return
     print(f"[startup pid={os.getpid()}] preload_models() ready for hg{GENOME_VERSION} {GENE_SET} "
           f"in {time.time() - t0:.2f}s", flush=True)
 

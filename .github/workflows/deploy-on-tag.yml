@@ -8,9 +8,11 @@ name: Build and deploy to Cloud Run on tag
 #   - A tag whose name contains "dev" (e.g. v1.2.3-dev) updates ONLY the dev
 #     revision, leaving production serving its current revision.
 #
-# Each of the 4 services (spliceai/pangolin x GRCh37/GRCh38) is built and
-# deployed in its own matrix job so the heavy ref data + image fit on a stock
-# GitHub-hosted runner and the 4 deploys run in parallel.
+# Each of the 4 images (spliceai/pangolin x GRCh37/GRCh38) is built in its own matrix job so
+# the heavy ref data + image fit on a stock GitHub-hosted runner and the 4 builds run in
+# parallel. Each job then deploys that one image twice, once per Gencode gene set, for 8
+# services in total: the un-suffixed ones serve GENE_SET=basic and the "-comprehensive" ones
+# serve GENE_SET=comprehensive. The gene set is an env var, so it needs no separate image.
 on:
   push:
     tags:

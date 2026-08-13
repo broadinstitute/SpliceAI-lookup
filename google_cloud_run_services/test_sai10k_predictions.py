@@ -2617,7 +2617,7 @@ class TestApplyVariantToAlteredExonSeqs(unittest.TestCase):
             spans, list(exon_seqs), 13, "G", "T",
             fasta, "1", cds_start=1, cds_end=10000,
         )
-        self.assertEqual(result, "0_AC" + "T" + "TACGTAC")  # pos 13 G -> T at offset 2
+        self.assertEqual(result, [(0, "AC" + "T" + "TACGTAC")])  # pos 13 G -> T at offset 2
 
     def test_reference_mismatch(self):
         chrom_seq = "X" * 10 + "ACGTACGTAC"
@@ -2660,7 +2660,7 @@ class TestApplyVariantToAlteredExonSeqs(unittest.TestCase):
             [(11, 20)], ["ACGTACGTAC"], 20, "CA", "TG",
             fasta, "1", cds_start=1, cds_end=10000,
         )
-        self.assertEqual(result, "0_ACGTACGTA" + "T")
+        self.assertEqual(result, [(0, "ACGTACGTA" + "T")])
 
     def test_substitution_straddling_acceptor_is_clipped_to_kept_span(self):
         # Mirror of the donor case: the variant starts one base before the span, so the
@@ -2671,15 +2671,39 @@ class TestApplyVariantToAlteredExonSeqs(unittest.TestCase):
             [(11, 20)], ["ACGTACGTAC"], 10, "TA", "GC",
             fasta, "1", cds_start=1, cds_end=10000,
         )
-        self.assertEqual(result, "0_C" + "CGTACGTAC")
+        self.assertEqual(result, [(0, "C" + "CGTACGTAC")])
 
-    def test_substitution_straddling_two_kept_spans_still_skips(self):
-        # A footprint reaching into two kept spans would need two writes, which the
-        # single-index return protocol cannot express, so it keeps the skip sentinel.
-        chrom_seq = "X" * 10 + "ACGT" + "AC" + "GTAC"  # spans (11,14) and (17,20)
+    def test_substitution_spanning_two_kept_spans_is_clipped_into_both(self):
+        # Two kept spans with an intron between them. A 4bp MNV starting at 14 covers the last
+        # base of span (11,14), the two spliced-out bases 15-16, and the first base of span
+        # (17,20). Each end is clipped into its own span and the middle is dropped.
+        chrom_seq = "X" * 10 + "ACGT" + "AC" + "GTAC"  # pos 11-14, 15-16 (intron), 17-20
         fasta = self._stub(chr1=chrom_seq)
         result = _apply_variant_to_altered_exon_seqs(
             [(11, 14), (17, 20)], ["ACGT", "GTAC"], 14, "TACG", "AAAA",
+            fasta, "1", cds_start=1, cds_end=10000,
+        )
+        self.assertEqual(result, [(0, "ACGA"), (1, "ATAC")])
+
+    def test_substitution_across_abutting_spans_is_clipped_into_both(self):
+        # whole_intron_retention inserts the retained intron as a span directly abutting the
+        # flanking exon, so a splice-site variant sits on the junction between two kept spans
+        # with no gap. Both halves are exonic in the altered transcript, so both are applied.
+        chrom_seq = "X" * 100 + "A" * 30 + "C" * 60  # pos 101-130 = A, 131-190 = C
+        fasta = self._stub(chr1=chrom_seq)
+        result = _apply_variant_to_altered_exon_seqs(
+            [(101, 130), (131, 190)], ["A" * 30, "C" * 60], 130, "AC", "GT",
+            fasta, "1", cds_start=101, cds_end=190,
+        )
+        self.assertEqual(result, [(0, "A" * 29 + "G"), (1, "T" + "C" * 59)])
+
+    def test_indel_spanning_two_kept_spans_still_skips(self):
+        # An indel has no 1:1 base mapping, so nothing determines how many inserted bases
+        # belong inside either span. It keeps the skip sentinel.
+        chrom_seq = "X" * 10 + "ACGT" + "AC" + "GTAC"
+        fasta = self._stub(chr1=chrom_seq)
+        result = _apply_variant_to_altered_exon_seqs(
+            [(11, 14), (17, 20)], ["ACGT", "GTAC"], 14, "TACG", "A",
             fasta, "1", cds_start=1, cds_end=10000,
         )
         self.assertEqual(result, "variant straddles splice boundary")
@@ -2708,7 +2732,7 @@ class TestApplyVariantToAlteredExonSeqs(unittest.TestCase):
         )
         # pos 13 is at offset 2 in the exon. exon = "AC|GTA|CGTAC" — after
         # deleting "GTA": exon[:2] + "" + exon[5:] = "AC" + "CGTAC" = "ACCGTAC".
-        self.assertEqual(result, "0_ACCGTAC")
+        self.assertEqual(result, [(0, "ACCGTAC")])
 
     def test_variant_at_start_codon(self):
         # cds_start=13. A SNV at pos 14 (cds_start+1) lands on the start codon.
