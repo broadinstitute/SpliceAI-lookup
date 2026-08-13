@@ -21,8 +21,18 @@ RUN apt update && apt-get install --no-install-recommends -y build-essential lib
 COPY docker/spliceai/requirements.txt /
 RUN python3 -m pip install --upgrade -r /requirements.txt
 
-ARG RANDOM=2
-RUN python3 -m pip install https://github.com/bw2/SpliceAI/archive/refs/heads/master.zip
+# Pinned to a commit, not refs/heads/master: an unpinned URL meant every rebuild silently
+# adopted whatever was on master at that moment, so an unrelated deploy could change the scores
+# the service returns. That is not hypothetical -- SpliceAI raised its reported score precision
+# from 2 to 3 decimals on 2026-08-10, which shifted values like 0.925 across the 2-decimal
+# rounding boundary relative to a production image built three days earlier.
+#
+# Bump this deliberately when you want new model code, and re-run test_api_consistency.py
+# against the dev deployment afterwards. Changing the SHA changes the URL, which is what
+# invalidates the build cache for this layer -- the ARG RANDOM cache-buster that used to be
+# needed for that is gone.
+ARG SPLICEAI_COMMIT=7f36ca847e1b1885167dab79681dbb75c09c6743
+RUN python3 -m pip install https://github.com/bw2/SpliceAI/archive/${SPLICEAI_COMMIT}.zip
 
 ARG WORKERS="2"
 ARG GENOME_VERSION="unknown"

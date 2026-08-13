@@ -30,8 +30,14 @@ RUN apt update && apt-get install --no-install-recommends -y build-essential lib
 COPY docker/pangolin/requirements.txt /
 RUN python3 -m pip install --upgrade -r /requirements.txt
 
+# Pinned to a commit rather than whatever the default branch happens to be at build time, so a
+# rebuild cannot silently change the scores this service returns. See the equivalent comment in
+# docker/spliceai/Dockerfile. Bump deliberately, then re-run test_api_consistency.py against
+# the dev deployment.
+ARG PANGOLIN_COMMIT=31b5aef6ad74a09b630443d9672b830ec4947bb6
 RUN git clone https://github.com/bw2/Pangolin.git \
     && cd Pangolin \
+	&& git checkout ${PANGOLIN_COMMIT} \
 	&& python3 -m pip install .
 
 ARG WORKERS="2"
