@@ -75,6 +75,18 @@
         })(window, document, "clarity", "script", "xzpoa4bube");
     </script>
     <style>
+        /* Keep the per-position table's header visible while its rows scroll underneath. The
+           sticky offset is relative to #per-position-modal-content, which is the scrolling
+           ancestor. An explicit background is required because the rows would otherwise show
+           through the header as they pass behind it, and Semantic UI's own header background
+           comes from a rule that does not apply once the cells are position:sticky. */
+        #per-position-modal-content thead th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: #F9FAFB;
+        }
+
         :root {
             --MAIN_TRANSCRIPT_BACKGROUND_COLOR: #eaf3ff;
             --CODING_TRANSCRIPT_BACKGROUND_COLOR: white;
@@ -1570,7 +1582,12 @@
                         </tr>
                     </thead>
                     <tbody>${bodyRows.join("")}</tbody>
-                </table>`
+                </table>
+                <div style="padding: 5px 0 10px 0">
+                    <button id="per-position-visualize-button" class="ui primary tiny button">
+                        <i class="chart bar icon"></i>Visualize
+                    </button>
+                </div>`
     }
 
     const perPositionRowsToCsv = (rows, context) => {
@@ -3343,6 +3360,24 @@
         // delegated so it keeps working for the icons added by each new search
         $(document).on("click", ".per-position-table-icon:not(.per-position-table-icon-disabled)", function() {
             openPerPositionModal($(this).attr("data-icon-id"))
+        })
+
+        // Delegated: the button is part of the table markup, so it is recreated every time a
+        // modal is opened and a direct binding would attach to an element already thrown away.
+        $(document).on("click", "#per-position-visualize-button", () => {
+            // Run after the modal has finished hiding: Semantic UI keeps the page unscrollable
+            // while a modal is up, so scrolling before then would be undone. onHidden is set
+            // through the settings API rather than by re-initialising the modal, which would
+            // rebind the shared handler that `$(".ui.modal").modal()` installs for every modal.
+            $("#per-position-modal").modal("setting", "onHidden", () => {
+                // Reuse the Show button's own handler rather than repeating what it does, so
+                // this cannot drift from it. Clicking it again when the browser is already open
+                // would re-run updateIgvBrowser for no reason, hence the visibility check.
+                if (!$("#igv-div").is(":visible")) {
+                    $("#show-igv-button").click()
+                }
+                document.getElementById("igv-table").scrollIntoView({behavior: "smooth", block: "start"})
+            }).modal("hide")
         })
 
         $("#search-box, #max-distance-input").keydown((event) => {
