@@ -4,6 +4,13 @@
 *.json*
 *.chain.gz*
 
+# The recorded score baseline that test_api_consistency.py compares against, tracked so a
+# regression is caught against the same reference for everyone rather than against whatever
+# each checkout happened to capture locally. Anchored to the repo root, and deliberately a
+# single-file exception to the *.json* rule above: that rule is what keeps gcp_sa_key.json
+# out of the repo, so it must stay.
+!/expected_scores.json
+
 service.backup_copy.yaml
 
 .pgpass
