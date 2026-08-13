@@ -44,6 +44,25 @@ API_URLS = {
 
 TRANSCRIPT_PRIORITY = {"MS": 3, "MP": 2, "C": 1, "N": 0}
 
+# Largest delta-score difference still treated as a match. Scores are compared after rounding
+# to 2 decimals, so a model whose own output precision changes (bw2/SpliceAI and bw2/Pangolin
+# raised theirs from 2 to 3 decimals in Aug 2026) shifts a value like 0.925 to either 0.92 or
+# 0.93 depending on which side of the boundary it lands. That is a reporting difference, not a
+# scoring regression, and this tolerance is what keeps it from being reported as one. Anything
+# larger is a real change in what the model predicts.
+SCORE_TOLERANCE = 0.01
+
+
+def scores_match(actual, expected):
+    """Whether two rounded delta scores are within SCORE_TOLERANCE of each other.
+
+    The difference is rounded before the comparison because binary floating point cannot hold
+    2-decimal values exactly: abs(0.93 - 0.92) evaluates to 0.010000000000000009, which a plain
+    `<= 0.01` would reject -- rejecting precisely the off-by-one-hundredth case this exists to
+    accept.
+    """
+    return round(abs(actual - expected), 6) <= SCORE_TOLERANCE
+
 EXPECTED_SCORES_PATH = os.path.join(os.path.dirname(__file__) or ".", "expected_scores.json")
 
 # (variant, hg, label) -- one entry per (coord, assembly) pair.
@@ -321,12 +340,13 @@ class TestAPIConsistency(unittest.TestCase):
         self.assertEqual(actual["g_name"], expected["g_name"], f"{key}: gene name mismatch")
         self.assertEqual(actual["t_priority"], expected["t_priority"], f"{key}: priority mismatch")
 
-        # Compare delta scores at 2 decimal places
+        # Compare delta scores at 2 decimal places, within SCORE_TOLERANCE
         score_keys = ("DS_SL", "DS_SG") if tool == "pangolin" else ("DS_AG", "DS_AL", "DS_DG", "DS_DL")
         for sk in score_keys:
-            self.assertEqual(
-                actual[sk], expected[sk],
-                f"{key}: {sk} mismatch: got {actual[sk]}, expected {expected[sk]}",
+            self.assertTrue(
+                scores_match(actual[sk], expected[sk]),
+                f"{key}: {sk} mismatch: got {actual[sk]}, expected {expected[sk]} "
+                f"(differs by {abs(actual[sk] - expected[sk]):.3f}, tolerance {SCORE_TOLERANCE})",
             )
 
 
