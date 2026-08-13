@@ -1512,12 +1512,17 @@
     }
 
     /* Delta columns, derived here from the REF and ALT columns above rather than sent by the
-       API. The signs follow each model's own definition, so a delta here matches the delta the
-       model reports for the whole window:
-         SpliceAI (spliceai/utils.py) takes its gain index from argmax(alt - ref) and its loss
-         index from argmax(ref - alt), separately for the acceptor and donor channels.
-         Pangolin (pangolin/pangolin.py) asserts `loss == loss_alt - loss_ref`, and derives gain
-         the same way, which is why both of its deltas are alt - ref.
+       API. Every one is written so that a real effect comes out POSITIVE, because the value
+       shown is a magnitude and anything negative is suppressed (see perPositionDelta):
+         A loss means the site got weaker, so ref - alt.
+         A gain means it got stronger, so alt - ref.
+       This matches SpliceAI (spliceai/utils.py), which takes its loss index from
+       argmax(ref - alt) and its gain index from argmax(alt - ref).
+       Pangolin is the one to be careful with. Its own loss score is signed and negative for a
+       real loss -- pangolin/pangolin.py asserts `loss == loss_alt - loss_ref` -- so copying
+       that expression here would produce a negative number for exactly the positions that
+       matter, which the suppression would then render as 0. The loss delta is therefore
+       ref - alt like every other loss column, not the model's internal form.
        Rounded to 3 decimals to match the precision the scores arrive in, and because binary
        floating point would otherwise turn 0.013 - 0.012 into 0.0009999999999999992. */
     /* A delta is reported only when it is at least 0.01; anything smaller, including every
@@ -1547,7 +1552,7 @@
             ["Δ score donor gain", (r) => perPositionDelta(r.AD, r.RD)],
         ],
         pangolin: [
-            ["Δ score loss", (r) => perPositionDelta(r.SL_ALT, r.SL_REF)],
+            ["Δ score loss", (r) => perPositionDelta(r.SL_REF, r.SL_ALT)],
             ["Δ score gain", (r) => perPositionDelta(r.SG_ALT, r.SG_REF)],
         ],
     }
