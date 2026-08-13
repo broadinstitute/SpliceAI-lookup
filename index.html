@@ -1520,7 +1520,21 @@
          the same way, which is why both of its deltas are alt - ref.
        Rounded to 3 decimals to match the precision the scores arrive in, and because binary
        floating point would otherwise turn 0.013 - 0.012 into 0.0009999999999999992. */
-    const perPositionDelta = (a, b) => Math.round((parseFloat(a) - parseFloat(b)) * 1000) / 1000
+    /* A delta is reported only when it is at least 0.01; anything smaller, including every
+       negative value, is reported as 0. Two reasons, and one comparison covers both:
+         A negative delta means the change went the other way, and that direction already has
+         its own column -- a negative Acceptor Loss is an Acceptor Gain. Clamping keeps at most
+         one of each loss/gain pair non-zero instead of showing the same number twice with
+         opposite signs, which is how both models report their own deltas.
+         Below 0.01 the value is the difference between two scores rounded to 3 decimals, so
+         -0.001 and 0.001 carry no meaning about splicing. The threshold is the one
+         getScoreStyle already treats as near-zero, so a suppressed delta is greyed like every
+         other zero in the table. */
+    const PER_POSITION_DELTA_MIN = 0.01
+    const perPositionDelta = (a, b) => {
+        const delta = Math.round((parseFloat(a) - parseFloat(b)) * 1000) / 1000
+        return delta < PER_POSITION_DELTA_MIN ? 0 : delta
+    }
 
     // The API echoes back whichever form the user typed, so the chromosome arrives with or
     // without the prefix depending on how the variant was entered.
