@@ -1542,7 +1542,7 @@
         const columns = PER_POSITION_COLUMNS[context.tool]
         const bodyRows = buildPerPositionRows(rows, context).map((row) => {
             if (row.isGap) {
-                return `<tr><td colspan="2" style="text-align:center; color:#888888">&#8212;&nbsp;${row.nSkipped}bp span&nbsp;&#8212;</td>
+                return `<tr><td colspan="2" style="text-align:center; color:#888888">&#8212;&nbsp;${Number(row.nSkipped).toLocaleString()}bp span&nbsp;&#8212;</td>
                             <td></td><td></td>${columns.map(() => `<td style="color:#888888">0</td>`).join("")}<td></td></tr>`
             }
 
@@ -1552,7 +1552,7 @@
                         <td style="${boldIfVariant}">${escapeHtml(context.chrom)}</td>
                         <td style="text-align:right; ${boldIfVariant}">${escapeHtml(row.pos)}</td>
                         <td>${escapeHtml(row.ref)}</td>
-                        <td>${escapeHtml(row.alt)}</td>
+                        <td>${row.isVariant ? escapeHtml(row.alt) : ""}</td>
                         ${columns.map(([, key]) => `<td ${getScoreStyle(parseFloat(row[key]))}>${parseFloat(row[key])}</td>`).join("")}
                         <td>${escapeHtml(row.note)}</td>
                     </tr>`
