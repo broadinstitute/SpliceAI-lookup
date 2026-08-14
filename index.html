@@ -1143,6 +1143,18 @@
     // and Pangolin, which reads to the user as the site being broken rather than as bad input.
     const MAX_DISTANCE_LIMIT = 10000
 
+    // gunicorn, the WSGI server in front of the API, rejects any request line longer than
+    // 4,094 bytes with its own HTML "Bad Request" page. That page carries no JSON, so the UI
+    // has nothing to report and the user sees a generic failure. The request line is
+    // "GET /<tool>/?<query> HTTP/1.1", which leaves 4,070 bytes for the query string; 4,000
+    // keeps a margin, and also covers the longer "/<tool>/scores/?<query>&transcript=..."
+    // form that reuses the same query string. The variant travels twice in every API URL
+    // (normalized in "variant=", verbatim in "raw="), so a typed variant can use at most half
+    // that budget. Both limits verified against production: a 1,900 character variant reaches
+    // the server, 1,980 does not.
+    const MAX_QUERY_STRING_LENGTH = 4000
+    const MAX_VARIANT_LENGTH = 1900
+
     const ENSEMBL_TIMEOUT_MS = 90000  // 90 second timeout for Ensembl API calls
     const VARIANTVALIDATOR_TIMEOUT_MS = 30000  // 30 second timeout for the VariantValidator fallback
     // Guidance appended to variant-resolution errors when HGVS lookup is unavailable.
@@ -1544,6 +1556,13 @@
     // The API echoes back whichever form the user typed, so the chromosome arrives with or
     // without the prefix depending on how the variant was entered.
     const withChrPrefix = (chrom) => String(chrom).startsWith("chr") ? String(chrom) : `chr${chrom}`
+
+    // Group a genomic coordinate or an offset into thousands, so 7669671 reads as 7,669,671 and
+    // -4620 as -4,620. Pinned to en-US rather than the viewer's locale: the separator would
+    // otherwise be a period in much of Europe, which in a table of genomic coordinates reads as a
+    // decimal point. Display only -- the CSV writes these fields unformatted, since a comma
+    // inside a value would split the column.
+    const withThousandsSeparators = (value) => Number(value).toLocaleString("en-US")
     const PER_POSITION_DELTA_COLUMNS = {
         spliceai: [
             ["Δ score acceptor loss", (r) => perPositionDelta(r.RA, r.AA)],
@@ -1597,45 +1616,57 @@
     }
 
     const buildPerPositionRows = (rows, context) => {
-        /* Interleave the score rows returned by the API with a gap row wherever the table skips
-           any positions at all, so a jump is never mistaken for adjacency. The API reports only
-           the positions that cleared the model's threshold, plus the variant's own position, so
-           holes are expected and common. Both the table and the CSV render from this. */
-        const rowsToRender = []
-        let previousPos = null
-        for (const row of rows) {
+        /* Annotate the score rows returned by the API with what the table and the CSV both need
+           and the API does not send: the offset from the variant, whether this is the variant's
+           own position, and the splice-site note. The API reports only the positions that cleared
+           the model's threshold, plus the variant's own position, so the rows are not contiguous
+           and the positionDelta column is what shows where the holes are. */
+        /* An insertion's inserted bases have no genomic coordinates, so the model summarizes any
+           score inside them onto the variant's own position and reports the true offset
+           separately in SCORES_FOR_INSERTED_BASES. The main results table substitutes that offset
+           for the reported 0 ("+N bp position within the inserted sequence", see
+           updatePositionAccountingForInsertedBases), which this table cannot do because its rows
+           are genomic. Note the variant row instead, so its "0 bp" is not read as "the effect is
+           at this base" when the main table is showing a different number for the same effect. */
+        const isInsertionWithInsertedBaseScores = (context.scores["SCORES_FOR_INSERTED_BASES"] || []).length > 0
+        return rows.map((row) => {
             const pos = parseInt(row.pos)
-            if (previousPos !== null && pos > previousPos + 1) {
-                rowsToRender.push({isGap: true, nSkipped: pos - previousPos - 1})
-            }
-            rowsToRender.push({
+            return {
                 ...row,
                 pos: pos,
                 isVariant: pos == context.variantPos,
-                note: [pos == context.variantPos ? "variant" : "", getExonNoteForPosition(pos, context.scores)].filter(Boolean).join("; "),
-            })
-            previousPos = pos
-        }
-
-        return rowsToRender
+                /* Signed genomic offset, the same quantity the main results table's position
+                   column shows (SpliceAI's DP_AG/DP_AL/DP_DG/DP_DL, Pangolin's DP_SL/DP_SG), so
+                   the two tables can be read against each other row by row.
+                   One case where they deliberately differ: for an insertion whose gain falls
+                   inside the inserted sequence, the model reports the offset as 0 and the main
+                   table substitutes "+N bp position within the inserted sequence"
+                   (updatePositionAccountingForInsertedBases). The inserted bases have no genomic
+                   coordinate of their own, so every row here is anchored at the variant position
+                   and that row reads "0 bp". */
+                positionDelta: pos - context.variantPos,
+                note: [
+                    pos == context.variantPos ? "variant" : "",
+                    pos == context.variantPos && isInsertionWithInsertedBaseScores
+                        ? "scores inside the inserted bases are summarized here" : "",
+                    getExonNoteForPosition(pos, context.scores),
+                ].filter(Boolean).join("; "),
+            }
+        })
     }
 
     const renderPerPositionTable = (rows, context) => {
         const columns = PER_POSITION_COLUMNS[context.tool]
         const deltaColumns = PER_POSITION_DELTA_COLUMNS[context.tool]
         const bodyRows = buildPerPositionRows(rows, context).map((row) => {
-            if (row.isGap) {
-                return `<tr><td style="text-align:center; color:#888888">&#8212;&nbsp;${Number(row.nSkipped).toLocaleString()}bp span&nbsp;&#8212;</td>
-                            <td></td>${[...deltaColumns, ...columns].map(() => `<td ${getScoreStyle(0)}>0</td>`).join("")}</tr>`
-            }
-
             // escapeHtml every backend-supplied field: this markup goes through jQuery.html().
             // Built as one string and escaped once, which also turns the '>' into &gt;.
             const boldIfVariant = row.isVariant ? "font-weight:bold;" : ""
-            const locus = `${withChrPrefix(context.chrom)}:${row.pos} ${row.ref}`
+            const locus = `${withChrPrefix(context.chrom)}:${withThousandsSeparators(row.pos)} ${row.ref}`
                 + (row.isVariant ? ` > ${row.alt}` : "")
             return `<tr class="${row.isVariant ? "per-position-variant-row" : ""}">
                         <td style="white-space:nowrap; ${boldIfVariant}">${escapeHtml(locus)}</td>
+                        <td style="white-space:nowrap">${withThousandsSeparators(row.positionDelta)} bp</td>
                         <td>${escapeHtml(row.note)}</td>
                         ${deltaColumns.map(([, compute]) => { const d = compute(row); return `<td ${getScoreStyle(d)}>${d}</td>` }).join("")}
                         ${columns.map(([, key]) => `<td ${getRawScoreStyle(row[key])}>${parseFloat(row[key])}</td>`).join("")}
@@ -1646,6 +1677,7 @@
                     <thead>
                         <tr style="text-align:center">
                             <th>chrom:pos ref (&gt; alt)</th>
+                            <th style="width:1%"><span style="white-space:nowrap">position &#916;</span></th>
                             <th style="width:1%">notes</th>
                             ${[...deltaColumns, ...columns].map(([label]) => `<th style="width:1%">${headerLabelHtml(label)}</th>`).join("")}
                         </tr>
@@ -1653,7 +1685,8 @@
                     <tbody>${bodyRows.join("")}</tbody>
                 </table>
                 <div style="padding: 5px 0 10px 0">
-                    <button id="per-position-visualize-button" class="ui primary tiny button">
+                    <button id="per-position-visualize-button" class="ui primary tiny button"
+                            title="Go to the visualization section below. It draws the transcript the search selected, which is not necessarily this one.">
                         <i class="chart bar icon"></i>Visualize
                     </button>
                 </div>`
@@ -1662,18 +1695,18 @@
     const perPositionRowsToCsv = (rows, context) => {
         const columns = PER_POSITION_COLUMNS[context.tool]
         const deltaColumns = PER_POSITION_DELTA_COLUMNS[context.tool]
+        // Delta columns first, then the raw REF and ALT scores, matching the order
+        // renderPerPositionTable draws. The two build their cells separately (the table styles the
+        // two kinds differently), so a reorder in one has to be repeated in the other.
         // "Δ" is replaced rather than carried into the header so the column names stay ASCII,
         // which spreadsheet imports handle more predictably than a non-ASCII byte.
-        const header = [...columns, ...deltaColumns].map(([label]) =>
+        const header = [...deltaColumns, ...columns].map(([label]) =>
             label.toLowerCase().replace(/Δ/gi, "delta").replace(/[()]/g, "").trim().replace(/ +/g, "_"))
-        const lines = [["chrom", "position", "ref", "alt", ...header, "notes"].join(",")]
+        const lines = [["chrom", "position", "position_delta", "ref", "alt", ...header, "notes"].join(",")]
         for (const row of buildPerPositionRows(rows, context)) {
-            if (row.isGap) {
-                continue
-            }
-            lines.push([withChrPrefix(context.chrom), row.pos, row.ref, row.alt,
-                        ...columns.map(([, key]) => row[key]),
+            lines.push([withChrPrefix(context.chrom), row.pos, row.positionDelta, row.ref, row.alt,
                         ...deltaColumns.map(([, compute]) => compute(row)),
+                        ...columns.map(([, key]) => row[key]),
                         `"${row.note}"`].join(","))
         }
 
@@ -1876,6 +1909,17 @@
         const urlArgs = isPositionOnly
             ? `hg=${enc(genomeVersion)}&bc=${enc(basicOrComprehensive)}&distance=${enc(maxDistance)}&variant=${enc(`${chrom}-${pos}`)}&raw=${enc(variant)}`
             : `hg=${enc(genomeVersion)}&bc=${enc(basicOrComprehensive)}&distance=${enc(maxDistance)}&mask=${enc(mask)}&variant=${enc(`${chrom}-${pos}-${ref}-${alt}`)}&raw=${enc(variant)}&variant_consequence=${enc(variantConsequence)}`
+
+        // The MAX_VARIANT_LENGTH check in handleSubmit covers a variant typed or pasted as
+        // genomic coordinates, but an HGVS input is short until Ensembl resolves it, so a
+        // multi-kb deletion written as "NM_...:c.1_3000del" gets past it. Check the URL this
+        // call actually builds too, so that case reports the real reason rather than letting
+        // gunicorn answer with an HTML page the UI can't read.
+        if (urlArgs.length > MAX_QUERY_STRING_LENGTH) {
+            throw Error(`This variant is too long for the ${tool} API: its REF and ALT alleles make the `
+                + `request ${urlArgs.length.toLocaleString()} characters, over the `
+                + `${MAX_QUERY_STRING_LENGTH.toLocaleString()} character limit.`)
+        }
 
         let apiResponse
         try {
@@ -3142,8 +3186,9 @@
         // cleared further down, so without this a second rejected submit would stack another
         // copy of the message under the first.
         $("#error-box").hide().html("")
-        if (variant.length > 10000) {
-            showError("Input cannot be larger than 10,000 characters")
+        if (variant.length > MAX_VARIANT_LENGTH) {
+            showError(`Input variant is ${variant.length.toLocaleString()} characters which exceeds `
+                + `the API's request size limit of ${MAX_VARIANT_LENGTH.toLocaleString()} characters.`)
             return
         }
         // Read up here with the other input checks, rather than alongside the remaining form
@@ -3446,7 +3491,12 @@
             // while a modal is up, so scrolling before then would be undone. onHidden is set
             // through the settings API rather than by re-initialising the modal, which would
             // rebind the shared handler that `$(".ui.modal").modal()` installs for every modal.
-            $("#per-position-modal").modal("setting", "onHidden", () => {
+            $("#per-position-modal").modal("setting", "onHidden", function() {
+                // Clear the callback before doing anything else. "setting" writes into the live
+                // modal instance's settings object, which persists, so without this every later
+                // close of this modal -- the X, Escape, a click outside -- would scroll the page
+                // to the visualization as if Visualize had been clicked again.
+                $("#per-position-modal").modal("setting", "onHidden", function() {})
                 // Reuse the Show button's own handler rather than repeating what it does, so
                 // this cannot drift from it. Clicking it again when the browser is already open
                 // would re-run updateIgvBrowser for no reason, hence the visibility check.
