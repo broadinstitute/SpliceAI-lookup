@@ -404,8 +404,12 @@ _database_pool_init_lock = threading.Lock()
 # build_and_deploy.py's update_transcript_tables command), and SAI-10k degrades
 # gracefully to the bundled annotations when they are absent.
 _SCHEMA_DDL_STATEMENTS = (
+    # No separate index on cache(key): the UNIQUE constraint above already builds one
+    # (cache_key_key), and the only query against this table is an equality lookup on key, which
+    # uses it. A second btree on the same column was here until 2026-08-14, costing 70 MB and a
+    # duplicate index write on every cached response. Dropping it by hand was not enough -- this
+    # statement recreated it on the next container start.
     "CREATE TABLE IF NOT EXISTS cache (key TEXT UNIQUE, value TEXT, counter INT, accessed TIMESTAMP DEFAULT now())",
-    "CREATE INDEX IF NOT EXISTS cache_index ON cache (key)",
     "CREATE TABLE IF NOT EXISTS log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), bc VARCHAR(20), distance INT, mask INT4, details TEXT, variant_consequence TEXT)",
     "CREATE INDEX IF NOT EXISTS idx_log_ip_logtime ON log USING btree (ip, logtime DESC)",
     "CREATE INDEX IF NOT EXISTS idx_log_event_name ON log USING btree (event_name)",
