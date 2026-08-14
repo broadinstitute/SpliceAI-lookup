@@ -184,10 +184,13 @@ class TestPositionOnlyCacheKey(ServerHelperTestCase):
     """
 
     def test_delta_score_spliceai_key_includes_the_sai10k_version(self):
-        self.assertTrue(
+        # assertIn rather than endswith: the model and Gencode components are appended after this
+        # one, so the sai10k component is no longer the tail of the key.
+        self.assertIn(
+            f"__sai10k-{server.SAI10K_VERSION}",
             server.get_splicing_scores_cache_key(
                 "spliceai", TEST_VARIANT, "38", "500", "0", "basic", False,
-            ).endswith(f"__sai10k-{server.SAI10K_VERSION}")
+            ),
         )
 
     def test_position_only_spliceai_key_omits_the_sai10k_version(self):
@@ -227,13 +230,62 @@ class TestPositionOnlyCacheKey(ServerHelperTestCase):
         """Pin the exact key format so it can only ever change deliberately.
 
         Every component is part of the cache identity, so changing any of them orphans all
-        existing entries at once. That is intended when CACHE_VERSION or SAI10K_VERSION is
-        bumped, and a bug in every other case.
+        existing entries at once. That is intended when CACHE_VERSION, SAI10K_VERSION,
+        GENCODE_VERSION or the pinned model commit changes, and a bug in every other case.
         """
-        self.assertEqual(
-            server.get_splicing_scores_cache_key("spliceai", TEST_VARIANT, "38", "500", "0", "basic"),
-            f"spliceai__{TEST_VARIANT}__hg38__d500__m0__basic__{server.CACHE_VERSION}__sai10k-{server.SAI10K_VERSION}",
-        )
+        # MODEL_COMMIT is patched rather than read, so the model component is pinned as a literal
+        # here too. Left unpatched it is empty outside the container, and the expected string would
+        # then omit the component on both sides -- pinning nothing about its format. The patched
+        # value's first eight characters differ from the rest, so a truncation taken from the wrong
+        # end fails instead of matching by luck.
+        with mock.patch.object(server, "MODEL_COMMIT", "0123456789abcdef0123456789abcdef01234567"):
+            self.assertEqual(
+                server.get_splicing_scores_cache_key("spliceai", TEST_VARIANT, "38", "500", "0", "basic"),
+                f"spliceai__{TEST_VARIANT}__hg38__d500__m0__basic__{server.CACHE_VERSION}"
+                f"__sai10k-{server.SAI10K_VERSION}__model-01234567__gencode-{server.GENCODE_VERSION}",
+            )
+
+    def test_key_omits_the_model_component_when_the_commit_is_unset(self):
+        """Outside the container there is no pinned commit to name, and the key says so.
+
+        The component is omitted rather than written empty, so a checkout and an image that
+        happened to bake in an empty value cannot produce two spellings of the same key.
+        """
+        with mock.patch.object(server, "MODEL_COMMIT", ""):
+            self.assertNotIn(
+                "__model-",
+                server.get_splicing_scores_cache_key("spliceai", TEST_VARIANT, "38", "500", "0", "basic"),
+            )
+
+    def test_repinning_the_model_invalidates_cached_entries(self):
+        """The whole point of putting the model commit in the key.
+
+        Re-pinning SPLICEAI_COMMIT / PANGOLIN_COMMIT changes what the model returns, so entries
+        the previous model computed have to stop being served. Before this component existed that
+        depended on someone also bumping CACHE_VERSION by hand, and forgetting was silent.
+        """
+        for tool, is_position_only in (("spliceai", False), ("spliceai", True),
+                                       ("pangolin", False), ("pangolin", True)):
+            with self.subTest(tool=tool, is_position_only=is_position_only):
+                variant = TEST_POSITION if is_position_only else TEST_VARIANT
+                with mock.patch.object(server, "MODEL_COMMIT", "aaaaaaaa1111111111111111111111111111111111111111"[:40]):
+                    before = server.get_splicing_scores_cache_key(tool, variant, "38", "500", "0", "basic", is_position_only)
+                with mock.patch.object(server, "MODEL_COMMIT", "bbbbbbbb1111111111111111111111111111111111111111"[:40]):
+                    after = server.get_splicing_scores_cache_key(tool, variant, "38", "500", "0", "basic", is_position_only)
+                self.assertNotEqual(before, after)
+
+    def test_changing_the_gencode_version_invalidates_cached_entries(self):
+        """The annotation the model scores against decides the answer just as much as the model."""
+        for tool, is_position_only in (("spliceai", False), ("spliceai", True),
+                                       ("pangolin", False), ("pangolin", True)):
+            with self.subTest(tool=tool, is_position_only=is_position_only):
+                variant = TEST_POSITION if is_position_only else TEST_VARIANT
+                before = server.get_splicing_scores_cache_key(tool, variant, "38", "500", "0", "basic", is_position_only)
+                with mock.patch.object(server, "GENCODE_VERSION", "v-bumped"):
+                    self.assertNotEqual(
+                        before,
+                        server.get_splicing_scores_cache_key(tool, variant, "38", "500", "0", "basic", is_position_only),
+                    )
 
     def test_cache_version_appears_in_every_key(self):
         """Bumping CACHE_VERSION must invalidate pangolin and REF-only entries too.

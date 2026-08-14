@@ -122,8 +122,9 @@ def main():
         tool = data["source"].split(":")[0]
         hg = data["genomeVersion"]
         distance = data["distance"]
-        # SpliceAI keys end in `__sai10k-vN`, so cache_key[-1] isn't the mask digit.
-        # Pull the mask out of the `__m{0,1}__` field by name instead.
+        # Versioned components follow the mask in the key (the cache version, and depending on the
+        # tool and the deployment some of sai10k / model / gencode / dev), so cache_key[-1] isn't
+        # the mask digit. Pull the mask out of the `__m{0,1}__` field by name instead.
         mask_match = re.search(r"__m([01])__", cache_key)
         assert mask_match, f"Could not parse mask from cache key: {cache_key}"
         mask = mask_match.group(1)

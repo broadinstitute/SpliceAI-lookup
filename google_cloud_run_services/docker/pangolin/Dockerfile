@@ -40,6 +40,12 @@ RUN git clone https://github.com/bw2/Pangolin.git \
 	&& git checkout ${PANGOLIN_COMMIT} \
 	&& python3 -m pip install .
 
+# Carried into the container so server.py can mix it into the response cache key. Bumping the
+# pin above therefore retires the cached scores the previous model computed, without anyone
+# having to also bump CACHE_VERSION by hand -- a step whose omission failed silently, leaving
+# the service serving the retired model's scores.
+ENV MODEL_COMMIT=${PANGOLIN_COMMIT}
+
 ARG WORKERS="2"
 ARG GENOME_VERSION="unknown"
 

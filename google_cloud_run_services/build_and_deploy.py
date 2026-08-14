@@ -203,6 +203,19 @@ def get_tag(tool, genome_version, repo_name="gcr.io"):
     else:
         raise ValueError(f"Invalid repo_name arg: {repo_name}")
 
+def current_git_commit():
+    """The commit this checkout is on, marked when the working tree is dirty.
+
+    Recorded alongside a built image's digest purely so that the source of a promoted image can be
+    identified afterwards. It is deliberately NOT what promotion checks: "-dirty" is the same
+    string for every dirty tree, and an unrelated commit between building and promoting would move
+    it, so it identifies a build too loosely in one direction and too strictly in the other.
+    """
+    commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    dirty = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True).stdout.strip()
+    return f"{commit}-dirty" if dirty else commit
+
+
 def run(c, check=True):
     """Run a shell command, raising by default if it fails.
 
@@ -514,13 +527,6 @@ def main():
                     if not re.match("^sha256:[a-f0-9]{64}$", sha256):
                         raise ValueError(f"Invalid sha256 value found in {sha256_path}: {sha256}")
 
-                    if args.promote:
-                        # Record the promoted digest as the production one, so the two files agree
-                        # on what production is running rather than leaving the prod file naming
-                        # the image from whatever deploy came before this promotion.
-                        with open(f"docker/{tool}/sha256_grch{genome_version}.txt", "w") as f:
-                            f.write(f"{sha256}\n")
-
                     # One image, deployed once per gene set. The image carries both gene sets'
                     # annotation files (the Dockerfile COPYs per genome, not per gene set), so
                     # the two services differ only by the GENE_SET env var that tells server.py
@@ -528,6 +534,33 @@ def main():
                     # slow part -- 4 multi-GB image builds -- unchanged by the split.
                     for gene_set in gene_sets:
                         service = get_service_name(tool, genome_version, gene_set)
+
+                        # One stamp per SERVICE, not per image. The two gene sets share an image
+                        # but are separate Cloud Run services deployed separately, and a --dev run
+                        # can succeed for one and fail for the other. A single per-image stamp
+                        # would then have been written by the service that worked and would
+                        # authorize promoting the one that never deployed.
+                        built_here_path = f"{sha256_path}.built_here.{gene_set}"
+
+                        if args.promote:
+                            # Promote only a digest a --dev run on this machine actually deployed
+                            # to this service. The stamp is gitignored, so its presence cannot come
+                            # from a checkout: no stamp means no local dev deploy of this service,
+                            # and a stamp naming a different digest means the file moved on since.
+                            built_here = None
+                            if os.path.exists(built_here_path):
+                                with open(built_here_path) as f:
+                                    built_here = f.readline().strip()
+                            if built_here != sha256:
+                                raise RuntimeError(
+                                    f"Refusing to promote {sha256} to {service}: no --dev deploy on this "
+                                    f"machine recorded it ({built_here_path} "
+                                    f"{'names ' + built_here if built_here else 'is missing'}). Promotion "
+                                    f"deploys that digest to production and sends it all traffic, and these "
+                                    f"digest files are tracked in git, so a fresh checkout holds whatever "
+                                    f"was committed last rather than anything built here. Run the --dev "
+                                    f"deploy first, test it, then promote.")
+
                         # The comprehensive gene set carries several times more transcripts, so
                         # both its annotator and the working memory of a request over a
                         # many-isoform gene are larger, and 3 workers of it on a 4Gi instance
@@ -645,12 +678,36 @@ def main():
                             # Dockerfile's base tag and the unpinned Flask/gunicorn requirements
                             # both resolve to whatever is current at that moment -- so production
                             # could end up running something the dev testing never covered.
+                            # Written here, after the dev deploy has actually succeeded (run()
+                            # raises otherwise), rather than at build time: --promote means "ship
+                            # the image dev has been running", so the thing it checks should record
+                            # a completed dev deploy, not merely a local build.
+                            #
+                            # The stamp records the digest rather than the commit that produced it.
+                            # Commit identity looks like the more natural choice and is the wrong
+                            # one: the build rewrites the tracked sha256_*_dev.txt, and committing
+                            # that file between testing a dev revision and promoting it is this
+                            # repo's normal workflow, which would move HEAD and make the guard
+                            # reject an image dev genuinely ran. The digest does not move when
+                            # unrelated commits do. The commit goes on a second line for the
+                            # record, and is not what the check compares.
+                            with open(built_here_path, "w") as stamp:
+                                stamp.write(f"{sha256}\n{current_git_commit()}\n")
                             print(f"To promote {service} to production, deploy the digest this run recorded:")
                             print(f"  python3 build_and_deploy.py -t {tool} -g {genome_version} -s {gene_set} --promote")
                         else:
                             # Required when a previous --dev deploy left the service in manual-traffic mode; otherwise `gcloud run deploy` keeps traffic on the old revision.
                             run(f"gcloud --project {GCLOUD_PROJECT} run services update-traffic {service} "
                                 f"--region us-central1 --to-latest")
+
+                            if args.promote:
+                                # Record the promoted digest as the production one, so the two
+                                # files agree on what production runs. Written here, after the
+                                # deploy and the traffic switch have both succeeded, so a failure
+                                # partway through cannot leave the repository claiming production
+                                # runs an image that never got there.
+                                with open(f"docker/{tool}/sha256_grch{genome_version}.txt", "w") as f:
+                                    f.write(f"{sha256}\n")
 
                                 # --add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
                 # --add-volume-mount=volume=ref,mount-path=/ref \

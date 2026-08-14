@@ -34,6 +34,12 @@ RUN python3 -m pip install --upgrade -r /requirements.txt
 ARG SPLICEAI_COMMIT=7f36ca847e1b1885167dab79681dbb75c09c6743
 RUN python3 -m pip install https://github.com/bw2/SpliceAI/archive/${SPLICEAI_COMMIT}.zip
 
+# Carried into the container so server.py can mix it into the response cache key. Bumping the
+# pin above therefore retires the cached scores the previous model computed, without anyone
+# having to also bump CACHE_VERSION by hand -- a step whose omission failed silently, leaving
+# the service serving the retired model's scores.
+ENV MODEL_COMMIT=${SPLICEAI_COMMIT}
+
 ARG WORKERS="2"
 ARG GENOME_VERSION="unknown"
 

@@ -136,9 +136,23 @@ if GENE_SET not in ("basic", "comprehensive"):
 
 # "prod" or "dev". Mixed into the cache key (see get_splicing_scores_cache_key) so a dev
 # revision experimenting against the shared database can neither read nor overwrite the entries
-# production serves. Defaults to "prod" and contributes nothing to the key in that case, so
-# every existing production cache entry stays valid.
+# production serves. Defaults to "prod" and contributes nothing to the key in that case, so this
+# component alone never invalidates a production entry. (The model and Gencode components added
+# alongside it do, once, on the deploy that introduces them.)
 DEPLOYMENT = os.environ.get("DEPLOYMENT", "prod")
+
+# The model package's pinned git commit, baked into the image by the Dockerfile from
+# ARG SPLICEAI_COMMIT / ARG PANGOLIN_COMMIT. Mixed into the cache key so that changing the pin
+# retires the entries the previous model computed on its own, instead of depending on somebody
+# also remembering to bump CACHE_VERSION by hand. Forgetting that bump does not fail loudly: the
+# service keeps serving scores the retired model produced, indefinitely and silently, which is
+# exactly the kind of wrong answer that is hardest to notice.
+#
+# Empty when the variable is absent, which omits the model component from the key. That is the
+# case for a checkout run outside the image and for any image built before this was added. Note
+# that such a key is still not the pre-change key: the Gencode component below is unconditional,
+# so adding these two components retires the existing entries once, for every caller.
+MODEL_COMMIT = os.environ.get("MODEL_COMMIT", "").strip()
 
 if TOOL == "spliceai":
     from spliceai.utils import Annotator, get_delta_scores, get_reference_scores, MIN_SCORE_THRESHOLD
@@ -737,7 +751,12 @@ def exceeds_rate_limit(conn, user_ip, params):
 # a response with no protein sequence for exactly the variants the fix targets.
 SAI10K_VERSION = "v22"
 
-# Bump CACHE_VERSION whenever the shape of the cached response changes for either tool.
+# Bump CACHE_VERSION whenever the SHAPE of the cached response changes for either tool, and also
+# whenever the scores change for a reason that is not one of the two inputs already in the key.
+# Those two are the model package's pinned commit (MODEL_COMMIT) and the Gencode version
+# (GENCODE_VERSION); re-pinning or re-versioning either retires the old entries on its own. What
+# is NOT covered is score logic living in this file -- a change to how a response is derived from
+# the model's raw output still needs a bump here.
 # v2 added the per-position rows (ALL_NON_ZERO_SCORES) and nNonZeroScores to the cached copy
 # so the /scores endpoints can serve any transcript without re-running the model. v3 discards
 # the v2 entries, which were written by a revision whose model packages predated the per-position
@@ -786,9 +805,18 @@ def get_splicing_scores_cache_key(tool_name, variant, genome_version, distance, 
     # REF-only (position-only) spliceai responses never run SAI-10k-calc (it requires
     # an ALT allele), so bumping SAI10K_VERSION should not invalidate their cache entries.
     suffix = f"__sai10k-{SAI10K_VERSION}" if tool_name == "spliceai" and not is_position_only else ""
+    # The two inputs that decide what the scores are, beyond this request's own parameters: the
+    # model package, and the Gencode annotation the model scores against. Changing either changes
+    # the answer, so entries computed under the old one have to stop being served, and including
+    # both here is what makes that automatic rather than a step somebody has to remember.
+    # MODEL_COMMIT is truncated because the first 8 hex characters already distinguish any two
+    # commits this repository will ever pin, and the key is a database column.
+    if MODEL_COMMIT:
+        suffix += f"__model-{MODEL_COMMIT[:8]}"
+    suffix += f"__gencode-{GENCODE_VERSION}"
     # Dev revisions share production's database, so without this a dev revision computing a
     # result would write it onto the key production reads -- publishing unreviewed output to
-    # every user. Production adds nothing to the key, keeping existing entries valid.
+    # every user. Production adds nothing here, so this component never invalidates an entry.
     if DEPLOYMENT != "prod":
         suffix += f"__{DEPLOYMENT}"
     return f"{tool_name}__{variant}__hg{genome_version}__d{distance}__m{mask}__{basic_or_comprehensive}__{CACHE_VERSION}{suffix}"
@@ -1841,8 +1869,13 @@ def preload_models():
               f"the module is importable for unit tests, but this instance cannot serve requests.",
               flush=True)
         return
+    # MODEL_COMMIT is reported here because it is baked into the image by the Dockerfile rather
+    # than set at deploy time, so it does not appear in the revision's environment and this
+    # startup line is the only place a deploy can be checked against the commit it was meant to
+    # ship. An empty value means the ARG did not reach the ENV, which would silently leave the
+    # cache keyed as though the model were unknown.
     print(f"[startup pid={os.getpid()}] preload_models() ready for hg{GENOME_VERSION} {GENE_SET} "
-          f"in {time.time() - t0:.2f}s", flush=True)
+          f"model_commit={MODEL_COMMIT or '(unset)'} in {time.time() - t0:.2f}s", flush=True)
 
 
 preload_models()

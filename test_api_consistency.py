@@ -13,6 +13,14 @@ To run the consistency tests:
 
 The --capture step writes expected_scores.json. The test step loads it
 and compares each variant's scores against the snapshot.
+
+Note on the first run after a model re-pin: the pinned model commit is part of the
+response cache key (MODEL_COMMIT in server.py), so re-pinning retires every cached
+entry and each of these queries recomputes instead of being served from cache. A
+computed request counts against the per-IP rate limit and a cached one does not, so
+that first run costs up to 76 computed requests against a budget of 150 per 7 minutes.
+It fits, and it also repopulates what it recomputed, so a later identical run is served
+from cache and costs nothing again.
 """
 
 import json
