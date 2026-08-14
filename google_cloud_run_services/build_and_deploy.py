@@ -241,13 +241,24 @@ def main():
     parser.add_argument("--dev", action="store_true",
                         help="Deploy as a 'dev'-tagged revision with --no-traffic so production keeps "
                              "serving the existing revision. Test against the tagged URL printed by "
-                             "gcloud, then promote by re-running this script WITHOUT --dev. Do not "
-                             "promote by switching traffic to the dev revision: DEPLOYMENT=dev is baked "
-                             "into that revision, so production would keep using the dev cache namespace.")
+                             "gcloud, then promote with --promote. Do not promote by switching traffic "
+                             "to the dev revision: DEPLOYMENT=dev is baked into that revision, so "
+                             "production would keep using the dev cache namespace.")
+    parser.add_argument("--promote", action="store_true",
+                        help="Promote the image a --dev deploy already tested: skip the build, read "
+                             "docker/<tool>/sha256_grch<hg>_dev.txt, and deploy that exact digest as a "
+                             "DEPLOYMENT=prod revision that takes traffic. Use this rather than a plain "
+                             "re-run without --dev, which rebuilds: the base image tag and the unpinned "
+                             "pip requirements resolve to whatever is current at build time, so the same "
+                             "checkout can produce a different image from the one that was tested.")
     parser.add_argument("command", nargs="?", choices=VALID_COMMANDS,
                         help="Command to run. If not specified, it will run 'build' and then 'deploy'")
 
     args = parser.parse_args()
+
+    if args.promote and args.dev:
+        parser.error("--promote and --dev are opposites: --promote deploys the digest that a previous "
+                     "--dev run recorded, as production.")
 
     if args.genome_version:
         genome_versions = [args.genome_version]
@@ -472,8 +483,8 @@ def main():
                 # Keep dev image digests separate from prod so a stray non-dev
                 # deploy from the same checkout can't accidentally promote the
                 # dev image.
-                sha256_path = f"docker/{tool}/sha256_grch{genome_version}{'_dev' if args.dev else ''}.txt"
-                if not args.command or args.command == "build":
+                sha256_path = f"docker/{tool}/sha256_grch{genome_version}{'_dev' if args.dev or args.promote else ''}.txt"
+                if (not args.command or args.command == "build") and not args.promote:
                     if args.docker_command == "podman":
                         run(f"gcloud --project {GCLOUD_PROJECT} auth print-access-token | podman login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev")
 
@@ -503,6 +514,13 @@ def main():
                     if not re.match("^sha256:[a-f0-9]{64}$", sha256):
                         raise ValueError(f"Invalid sha256 value found in {sha256_path}: {sha256}")
 
+                    if args.promote:
+                        # Record the promoted digest as the production one, so the two files agree
+                        # on what production is running rather than leaving the prod file naming
+                        # the image from whatever deploy came before this promotion.
+                        with open(f"docker/{tool}/sha256_grch{genome_version}.txt", "w") as f:
+                            f.write(f"{sha256}\n")
+
                     # One image, deployed once per gene set. The image carries both gene sets'
                     # annotation files (the Dockerfile COPYs per genome, not per gene set), so
                     # the two services differ only by the GENE_SET env var that tells server.py
@@ -520,11 +538,9 @@ def main():
                         # the value baked in at build time without needing a separate image.
                         service_workers = workers if gene_set == "basic" else 2
 
-                        # Cloud Run rejects --no-traffic when it has to create the service,
-                        # since a first revision has nothing to hold traffic back from. Deploy
-                        # that one without it; the service is brand new, so nothing is pointing
-                        # at it yet and letting its first revision serve costs nothing. Every
-                        # later --dev deploy takes the normal no-traffic path.
+                        # Whether the service already exists decides whether --no-traffic can be
+                        # passed at all: Cloud Run rejects it when it has to create the service,
+                        # since a first revision has nothing to hold traffic back from.
                         #
                         # Only a confirmed "not found" counts as absent. Treating every non-zero
                         # exit as absence would fail open in the worst possible direction: an
@@ -549,20 +565,30 @@ def main():
                                 f"(gcloud exit {probe.returncode}). Refusing to deploy, since guessing "
                                 f"wrong would route production traffic to this revision. stderr:\n{probe.stderr}")
 
-                        if args.dev:
-                            dev_flags = "--tag dev " + ("--no-traffic " if service_exists else "")
-                        else:
-                            dev_flags = ""
+                        if args.dev and not service_exists:
+                            # Refuse rather than create it here. Without --no-traffic the created
+                            # revision would serve 100% of traffic while stamped DEPLOYMENT=dev,
+                            # so every request to it would read and write the "__dev" cache
+                            # namespace (get_splicing_scores_cache_key in server.py) and nothing
+                            # in the --dev path would ever move traffic off it. That is not
+                            # hypothetical for a service the frontend already points at:
+                            # index.html hardcodes all eight hostnames, so a service becomes
+                            # reachable the moment it exists, and a tag containing "dev" runs
+                            # only the --dev half of the deploy workflow, leaving it that way
+                            # until someone pushes a tag without "dev" in it.
+                            raise RuntimeError(
+                                f"The Cloud Run service {service} does not exist yet, and creating it "
+                                f"from a --dev run would leave its first revision serving all traffic "
+                                f"with DEPLOYMENT=dev. Create it with a production deploy first "
+                                f"(python3 build_and_deploy.py -t {tool} -g {genome_version} "
+                                f"-s {gene_set}), then re-run with --dev.")
 
-                        # Printed after the flags are settled: a first --dev deploy of a service
-                        # that does not exist yet DOES take traffic, so saying otherwise here
-                        # would misdescribe exactly the case worth noticing.
-                        if not args.dev:
-                            traffic_note = ""
-                        elif service_exists:
+                        if args.dev:
+                            dev_flags = "--tag dev --no-traffic "
                             traffic_note = " (dev revision, no traffic)"
                         else:
-                            traffic_note = " (dev revision, NEW service so its first revision serves traffic)"
+                            dev_flags = ""
+                            traffic_note = ""
                         print(f"Deploying {service} (GENE_SET={gene_set}, WORKERS={service_workers}) "
                               f"with image sha256 {sha256}{traffic_note}")
                         # Comma-separated list of IPs to hard-block at the API door
@@ -611,15 +637,16 @@ def main():
                             # running a revision stamped DEPLOYMENT=dev: it would then read and
                             # write the "__dev"-suffixed cache keys forever, never seeing the
                             # entries production already has (see get_splicing_scores_cache_key).
-                            # A non-dev deploy of the same image digest creates an otherwise
-                            # identical revision with DEPLOYMENT=prod and routes traffic to it.
-                            # No `deploy` sub-command: that would skip the build and read
-                            # sha256_grch<hg>.txt, which is the PREVIOUS production digest, not
-                            # the dev digest just tested (sha256_grch<hg>_dev.txt). Building
-                            # again from the same checkout reproduces the tested image and
-                            # records its digest in the production file.
-                            print(f"To promote {service} to production, re-run this script without --dev:")
-                            print(f"  python3 build_and_deploy.py -t {tool} -g {genome_version} -s {gene_set}")
+                            # A DEPLOYMENT=prod revision of the same image digest is otherwise
+                            # identical, and takes traffic. --promote is what deploys that exact
+                            # digest: it reads sha256_grch<hg>_dev.txt, the image this run just
+                            # pushed. Re-running without --dev instead would rebuild, and a
+                            # rebuild from the same checkout is not the same image -- the
+                            # Dockerfile's base tag and the unpinned Flask/gunicorn requirements
+                            # both resolve to whatever is current at that moment -- so production
+                            # could end up running something the dev testing never covered.
+                            print(f"To promote {service} to production, deploy the digest this run recorded:")
+                            print(f"  python3 build_and_deploy.py -t {tool} -g {genome_version} -s {gene_set} --promote")
                         else:
                             # Required when a previous --dev deploy left the service in manual-traffic mode; otherwise `gcloud run deploy` keeps traffic on the old revision.
                             run(f"gcloud --project {GCLOUD_PROJECT} run services update-traffic {service} "

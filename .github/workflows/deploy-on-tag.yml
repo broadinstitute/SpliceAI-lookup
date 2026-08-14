@@ -154,9 +154,15 @@ jobs:
 
           # Update production only when the tag does NOT contain "dev". Run this
           # last so the final --to-latest routes traffic to the prod revision.
+          #
+          # --promote deploys the digest the dev step above just recorded, rather than building
+          # a second time. Two builds from one checkout are not guaranteed to produce the same
+          # image (the Dockerfile base tag and the unpinned Flask/gunicorn requirements both
+          # resolve to whatever is current), so rebuilding here could put an image into
+          # production that the dev revision never was. It also halves the job's build time.
           if [[ "${GITHUB_REF_NAME}" == *dev* ]]; then
             echo "Tag '${GITHUB_REF_NAME}' contains 'dev' -> dev revision only, leaving production unchanged."
           else
-            echo "Tag '${GITHUB_REF_NAME}' -> updating production as well."
-            python3 build_and_deploy.py -t "$TOOL" -g "$GENOME"
+            echo "Tag '${GITHUB_REF_NAME}' -> promoting the image just deployed to dev."
+            python3 build_and_deploy.py -t "$TOOL" -g "$GENOME" --promote
           fi

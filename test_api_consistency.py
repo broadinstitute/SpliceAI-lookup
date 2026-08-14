@@ -18,6 +18,7 @@ and compares each variant's scores against the snapshot.
 import json
 import os
 import sys
+import time
 import unittest
 
 import requests
@@ -51,6 +52,24 @@ TRANSCRIPT_PRIORITY = {"MS": 3, "MP": 2, "C": 1, "N": 0}
 # scoring regression, and this tolerance is what keeps it from being reported as one. Anything
 # larger is a real change in what the model predicts.
 SCORE_TOLERANCE = 0.01
+
+# Substrings of the API error messages that mean "there is genuinely nothing to score at this
+# variant". Those are a property of the variant, so --capture records them and the test skips
+# that variant from then on. Every other failure -- a rate-limit rejection, a 5xx, a dropped
+# connection -- is a property of the moment, and recording one would bake a permanent skip into
+# the baseline for a variant that is fine. An earlier capture that tripped the rate limiter wrote
+# 20 such entries into the baseline, which is what motivated this split; the baseline was
+# re-captured afterwards and now has none.
+CAPTURABLE_ERROR_MARKERS = (
+    "did not return any scores",
+    "unable to compute",
+)
+
+# Seconds between capture queries. The API restricts an IP that logs 150 computed requests
+# within 7 minutes (block_ips in server.py), and a capture fires one request per
+# (variant, hg, tool) with nothing in between, which is how those rate-limit entries got into
+# the baseline in the first place.
+CAPTURE_DELAY_SECONDS = 3
 
 
 def scores_match(actual, expected):
@@ -242,38 +261,42 @@ def extract_scores(transcript, tool):
 
 
 def _capture_variant(expected, variant, hg, tool, label):
-    """Capture scores for one (variant, hg, tool) combination."""
+    """Capture scores for one (variant, hg, tool) combination.
+
+    Raises on any failure that is a property of the moment rather than of the variant, so a
+    capture that hits the rate limiter or a transport error fails loudly instead of writing a
+    baseline that silently skips those variables forever. See CAPTURABLE_ERROR_MARKERS.
+    """
     key = f"{variant}|{hg}|{tool}"
-    try:
-        # Resolve HGVS variants
-        actual_variant = variant
-        if variant.startswith("HGVS:"):
-            hgvs_string = variant[len("HGVS:"):]
-            print(f"  Normalizing {hgvs_string} for hg{hg} ...")
-            actual_variant = normalize_hgvs(hgvs_string, hg)
-            print(f"    -> {actual_variant}")
+    actual_variant = variant
+    if variant.startswith("HGVS:"):
+        hgvs_string = variant[len("HGVS:"):]
+        print(f"  Normalizing {hgvs_string} for hg{hg} ...")
+        actual_variant = normalize_hgvs(hgvs_string, hg)
+        print(f"    -> {actual_variant}")
 
-        print(f"  Querying {tool} hg{hg} for {actual_variant} ({label}) ...")
-        response = query_api(tool, hg, actual_variant)
-        if response.get("error"):
-            print(f"    API error: {response['error']}")
-            expected[key] = {"error": response["error"]}
-            return
+    print(f"  Querying {tool} hg{hg} for {actual_variant} ({label}) ...")
+    response = query_api(tool, hg, actual_variant)
+    if response.get("error"):
+        if not any(marker in response["error"].lower() for marker in CAPTURABLE_ERROR_MARKERS):
+            raise RuntimeError(
+                f"{key}: the API failed for a reason that is not a property of this variant, so "
+                f"the capture is aborting rather than recording it: {response['error']}")
+        print(f"    API error: {response['error']}")
+        expected[key] = {"error": response["error"]}
+        return
 
-        top = get_top_transcript(response.get("scores", []), tool)
-        if not top:
-            print(f"    No transcripts returned")
-            expected[key] = {"error": "no transcripts"}
-            return
+    top = get_top_transcript(response.get("scores", []), tool)
+    if not top:
+        print(f"    No transcripts returned")
+        expected[key] = {"error": "no transcripts"}
+        return
 
-        scores = extract_scores(top, tool)
-        if variant.startswith("HGVS:"):
-            scores["resolved_variant"] = actual_variant
-        expected[key] = scores
-        print(f"    {scores}")
-    except Exception as e:
-        print(f"    ERROR: {e}")
-        expected[key] = {"error": str(e)}
+    scores = extract_scores(top, tool)
+    if variant.startswith("HGVS:"):
+        scores["resolved_variant"] = actual_variant
+    expected[key] = scores
+    print(f"    {scores}")
 
 
 def capture_expected_scores():
@@ -282,6 +305,7 @@ def capture_expected_scores():
     for variant, hg, label in VARIANTS:
         for tool in ("spliceai", "pangolin"):
             _capture_variant(expected, variant, hg, tool, label)
+            time.sleep(CAPTURE_DELAY_SECONDS)
 
     with open(EXPECTED_SCORES_PATH, "w") as f:
         json.dump(expected, f, indent=2, sort_keys=True)
@@ -312,7 +336,12 @@ class TestAPIConsistency(unittest.TestCase):
         """Query the API and compare scores against the expected snapshot."""
         key = f"{variant}|{hg}|{tool}"
         if key not in self.expected:
-            self.skipTest(f"No expected scores for {key}")
+            # Fail rather than skip. A key missing from the baseline means the two have drifted
+            # apart -- VARIANTS gained an entry, or the baseline was captured from a different
+            # list -- and skipping made that invisible: the baseline once covered only 44 of the
+            # 76 generated cases while the run still reported success.
+            self.fail(f"No expected scores for {key}. The baseline no longer covers VARIANTS; "
+                      f"re-capture it with 'python3 test_api_consistency.py --capture'.")
 
         expected = self.expected[key]
         if "error" in expected:

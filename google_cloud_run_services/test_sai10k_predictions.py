@@ -2697,6 +2697,26 @@ class TestApplyVariantToAlteredExonSeqs(unittest.TestCase):
         )
         self.assertEqual(result, [(0, "A" * 29 + "G"), (1, "T" + "C" * 59)])
 
+    def test_translate_spans_applies_every_write_of_a_multi_span_substitution(self):
+        # _apply_variant_to_altered_exon_seqs returns a LIST of writes, and _translate_spans is
+        # what applies them. The tests above check the list; this one checks the loop that
+        # consumes it, which is the only place a write could be dropped on the floor.
+        # Same geometry as test_substitution_across_abutting_spans_is_clipped_into_both: the
+        # variant's two bases land in two different spans.
+        #
+        # alt is "TT", not "GT", so that BOTH writes are observable in the protein. The first
+        # write lands on a third codon position, where A->G would have been synonymous (AAA and
+        # AAG are both K) and dropping it would leave the expected string unchanged; A->T makes
+        # that codon AAT (N) instead.
+        chrom_seq = "X" * 100 + "A" * 30 + "C" * 60  # pos 101-130 = A, 131-190 = C
+        fasta = self._stub(chr1=chrom_seq)
+        protein = _translate_spans(
+            [(101, 130), (131, 190)], 0, fasta, "1", "+",
+            apply_variant_args=(130, "AC", "TT", 101, 190),
+        )
+        # "A"*29 + "T" + "T" + "C"*59 -> AAA x9, AAT, TCC, CCC x19
+        self.assertEqual(protein, "K" * 9 + "N" + "S" + "P" * 19)
+
     def test_indel_spanning_two_kept_spans_still_skips(self):
         # An indel has no 1:1 base mapping, so nothing determines how many inserted bases
         # belong inside either span. It keeps the skip sentinel.

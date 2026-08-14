@@ -28,18 +28,22 @@ BASE_URL = os.environ.get(
 
 # Set SPLICEAI_API_ENV=dev to route the frontend's spliceai/pangolin API calls
 # to the 'dev'-tagged Cloud Run revisions deployed by `build_and_deploy.py --dev`.
-# The frontend (index.html) checks the URL hash for apiEnv=<env> at load time;
-# this helper appends it to every page.goto() URL.
+# The frontend (index.html) checks the URL hash for api=<env> at load time; this
+# helper appends it to every page.goto() URL. The name has to be exactly "api":
+# index.html matches /[?&#]api=([^&#]*)/, so the "apiEnv" this used to append was
+# never recognized and the setting silently did nothing -- every call still went to
+# production. That went unnoticed because BASE_URL defaults to the dev GitHub Pages
+# site, which index.html detects on its own and routes to dev regardless.
 API_ENV = os.environ.get("SPLICEAI_API_ENV", "")
 
 
 def _build_url(hash_str=""):
-    """Return BASE_URL with apiEnv=<env> merged into the hash when API_ENV is set."""
+    """Return BASE_URL with api=<env> merged into the hash when API_ENV is set."""
     if not API_ENV:
         return BASE_URL + hash_str
     if hash_str.startswith("#"):
-        return f"{BASE_URL}{hash_str}&apiEnv={API_ENV}"
-    return f"{BASE_URL}#apiEnv={API_ENV}"
+        return f"{BASE_URL}{hash_str}&api={API_ENV}"
+    return f"{BASE_URL}#api={API_ENV}"
 
 
 # Max time (ms) to wait for API responses. HGVS variants need VEP

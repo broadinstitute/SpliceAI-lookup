@@ -1741,8 +1741,9 @@ def _apply_variant_to_altered_exon_seqs(altered_exon_spans, exon_seqs, var_pos, 
 
     Returns one of:
         [(exon_idx, modified_seq), ...]  — success; caller writes each back into exon_seqs.
-                                           More than one entry when an equal-length
-                                           substitution spans two abutting kept spans.
+                                           One entry per kept span the variant overlaps, so more
+                                           than one when an equal-length substitution is clipped
+                                           into several spans.
         "reference mismatch"             — `ref` doesn't match the genome.
         "impacts native start or stop site" — variant footprint hits the 6 bp of
                                              the start codon or stop codon.

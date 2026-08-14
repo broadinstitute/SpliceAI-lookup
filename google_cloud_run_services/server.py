@@ -1518,10 +1518,24 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
         # Rewrite the service name inside the host actually requested, rather than hardcoding
         # the production host, so a request that arrived at a `dev---`-tagged revision is
         # redirected to the sibling's dev revision and stays on the dev side of the fence.
-        if this_service and this_service in request.host:
-            target_host = request.host.replace(this_service, other_service, 1)
-        else:
-            target_host = f"{other_service}-xwkwwwxdwq-uc.a.run.app"
+        #
+        # When the requested host carries no service name to rewrite, there is no sibling that is
+        # knowably part of this deployment, so refuse instead of guessing. That case is a
+        # self-hosted container -- README.md documents `docker run -p 8080:8080` for batch users,
+        # and lists no GENE_SET among the env vars, so such an instance always runs the default
+        # "basic". Redirecting it to the public Cloud Run hostname would send that user's variants
+        # off their own machine to the shared public API, which is what self-hosting exists to
+        # avoid, and would spend their IP's rate-limit budget there. Gating on
+        # RUNNING_ON_GOOGLE_CLOUD_RUN would not work: the Dockerfiles bake it into the image that
+        # a local `docker run` uses too.
+        if not (this_service and this_service in request.host):
+            return error_response(
+                f'This instance serves only the "{GENE_SET}" Gencode gene set, and this request '
+                f'asked for "{basic_or_comprehensive_param}". Start a container with '
+                f'GENE_SET={basic_or_comprehensive_param} to compute those annotations locally, '
+                f'or query https://{other_service}-xwkwwwxdwq-uc.a.run.app to use the public '
+                f'service.\n', source=tool_name)
+        target_host = request.host.replace(this_service, other_service, 1)
         print(f"{logging_prefix}: redirecting bc={basic_or_comprehensive_param} request to {target_host}", flush=True)
         return redirect(f"https://{target_host}{request.full_path}", code=307)
 
@@ -1808,12 +1822,18 @@ def preload_models():
         elif TOOL == "pangolin":
             init_pangolin()
         init_transcript_annotations(GENOME_VERSION, GENE_SET)
-    except OSError as e:
-        # Deliberately only OSError, and only off Cloud Run: the sole failure meant to be
+    except (OSError, SystemExit) as e:
+        # Deliberately only these two, and only off Cloud Run: the sole failure meant to be
         # tolerated is "the model/annotation files aren't on this machine", which is the normal
         # state of a checkout outside the image. Any other exception is a defect in this code
         # and must still surface at import, or the unit tests that import server.py would
         # silently pass over a real regression.
+        #
+        # SystemExit is in the list because SpliceAI reports that same missing-file condition by
+        # calling exit() rather than by letting the OSError propagate: spliceai/utils.py catches
+        # its own IOError when the annotation table or the FASTA is absent, prints, and exits.
+        # SystemExit derives from BaseException, so `except OSError` alone let it straight through
+        # and killed the interpreter at import instead of printing the warning below.
         if RUNNING_ON_GOOGLE_CLOUD_RUN:
             raise
         print(f"WARNING: preload of the hg{GENOME_VERSION} {GENE_SET} models failed: "

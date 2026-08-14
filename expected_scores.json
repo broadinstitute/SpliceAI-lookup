@@ -1,10 +1,4 @@
 {
-  "1-1042466-GGGC-G|37|pangolin": {
-    "error": "Pangolin was unable to compute scores for this variant"
-  },
-  "1-1042466-GGGC-G|37|spliceai": {
-    "error": "The SpliceAI model did not return any scores for 1-1042466-GGGC-G. This may be because the variant does not overlap any exons or introns defined by the GENCODE 'basic' annotation."
-  },
   "1-1042466-GGGC-G|38|pangolin": {
     "DS_SG": 0.04,
     "DS_SL": -0.05,
@@ -20,12 +14,6 @@
     "g_name": "AGRN",
     "t_id": "ENST00000379370.7",
     "t_priority": "MS"
-  },
-  "1-1042601-A-AGAGAG|37|pangolin": {
-    "error": "Pangolin was unable to compute scores for this variant"
-  },
-  "1-1042601-A-AGAGAG|37|spliceai": {
-    "error": "The SpliceAI model did not return any scores for 1-1042601-A-AGAGAG. This may be because the variant does not overlap any exons or introns defined by the GENCODE 'basic' annotation."
   },
   "1-1042601-A-AGAGAG|38|pangolin": {
     "DS_SG": 0.16,
@@ -43,12 +31,6 @@
     "t_id": "ENST00000379370.7",
     "t_priority": "MS"
   },
-  "1-55039916-G-A|37|pangolin": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
-  },
-  "1-55039916-G-A|37|spliceai": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
-  },
   "1-55039916-G-A|38|pangolin": {
     "DS_SG": 0.0,
     "DS_SL": -0.01,
@@ -65,11 +47,37 @@
     "t_id": "ENST00000302118.5",
     "t_priority": "MS"
   },
-  "1-930130-C-G|37|pangolin": {
-    "error": "Pangolin was unable to compute scores for this variant"
+  "1-55505589-G-A|37|pangolin": {
+    "DS_SG": 0.0,
+    "DS_SL": -0.01,
+    "g_name": "PCSK9",
+    "t_id": "ENST00000302118.5_6",
+    "t_priority": "MS"
   },
-  "1-930130-C-G|37|spliceai": {
-    "error": "The SpliceAI model did not return any scores for 1-930130-C-G. This may be because the variant does not overlap any exons or introns defined by the GENCODE 'basic' annotation."
+  "1-55505589-G-A|37|spliceai": {
+    "DS_AG": 0.0,
+    "DS_AL": 0.0,
+    "DS_DG": 0.0,
+    "DS_DL": 0.0,
+    "g_name": "PCSK9",
+    "t_id": "ENST00000302118.5_6",
+    "t_priority": "MS"
+  },
+  "1-865510-C-G|37|pangolin": {
+    "DS_SG": 0.5,
+    "DS_SL": -0.13,
+    "g_name": "SAMD11",
+    "t_id": "ENST00000616016.5_7",
+    "t_priority": "MS"
+  },
+  "1-865510-C-G|37|spliceai": {
+    "DS_AG": 0.68,
+    "DS_AL": 0.02,
+    "DS_DG": 0.0,
+    "DS_DL": 0.01,
+    "g_name": "SAMD11",
+    "t_id": "ENST00000616016.5_7",
+    "t_priority": "MS"
   },
   "1-930130-C-G|38|pangolin": {
     "DS_SG": 0.5,
@@ -87,11 +95,37 @@
     "t_id": "ENST00000616016.5",
     "t_priority": "MS"
   },
-  "13-32345247-T-G|37|pangolin": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
+  "1-977846-GGGC-G|37|pangolin": {
+    "DS_SG": 0.04,
+    "DS_SL": -0.05,
+    "g_name": "AGRN",
+    "t_id": "ENST00000379370.7_4",
+    "t_priority": "MS"
   },
-  "13-32345247-T-G|37|spliceai": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
+  "1-977846-GGGC-G|37|spliceai": {
+    "DS_AG": 0.03,
+    "DS_AL": 0.03,
+    "DS_DG": 0.02,
+    "DS_DL": 0.07,
+    "g_name": "AGRN",
+    "t_id": "ENST00000379370.7_4",
+    "t_priority": "MS"
+  },
+  "1-977981-A-AGAGAG|37|pangolin": {
+    "DS_SG": 0.16,
+    "DS_SL": -0.12,
+    "g_name": "AGRN",
+    "t_id": "ENST00000379370.7_4",
+    "t_priority": "MS"
+  },
+  "1-977981-A-AGAGAG|37|spliceai": {
+    "DS_AG": 0.03,
+    "DS_AL": 0.01,
+    "DS_DG": 0.55,
+    "DS_DL": 0.52,
+    "g_name": "AGRN",
+    "t_id": "ENST00000379370.7_4",
+    "t_priority": "MS"
   },
   "13-32345247-T-G|38|pangolin": {
     "DS_SG": 0.7,
@@ -109,12 +143,6 @@
     "t_id": "ENST00000380152.8",
     "t_priority": "MS"
   },
-  "13-32363534-G-T|37|pangolin": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
-  },
-  "13-32363534-G-T|37|spliceai": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
-  },
   "13-32363534-G-T|38|pangolin": {
     "DS_SG": 0.03,
     "DS_SL": -0.84,
@@ -131,11 +159,37 @@
     "t_id": "ENST00000380152.8",
     "t_priority": "MS"
   },
-  "16-23641111-T-C|37|pangolin": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
+  "13-32919384-T-G|37|pangolin": {
+    "DS_SG": 0.7,
+    "DS_SL": -0.01,
+    "g_name": "BRCA2",
+    "t_id": "ENST00000380152.8_7",
+    "t_priority": "MS"
   },
-  "16-23641111-T-C|37|spliceai": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
+  "13-32919384-T-G|37|spliceai": {
+    "DS_AG": 0.74,
+    "DS_AL": 0.0,
+    "DS_DG": 0.75,
+    "DS_DL": 0.0,
+    "g_name": "BRCA2",
+    "t_id": "ENST00000380152.8_7",
+    "t_priority": "MS"
+  },
+  "13-32937671-G-T|37|pangolin": {
+    "DS_SG": 0.03,
+    "DS_SL": -0.84,
+    "g_name": "BRCA2",
+    "t_id": "ENST00000380152.8_7",
+    "t_priority": "MS"
+  },
+  "13-32937671-G-T|37|spliceai": {
+    "DS_AG": 0.0,
+    "DS_AL": 0.12,
+    "DS_DG": 0.02,
+    "DS_DL": 0.93,
+    "g_name": "BRCA2",
+    "t_id": "ENST00000380152.8_7",
+    "t_priority": "MS"
   },
   "16-23641111-T-C|38|pangolin": {
     "DS_SG": 0.23,
@@ -151,6 +205,38 @@
     "DS_DL": 0.92,
     "g_name": "PALB2",
     "t_id": "ENST00000261584.9",
+    "t_priority": "MS"
+  },
+  "16-23652432-T-C|37|pangolin": {
+    "DS_SG": 0.23,
+    "DS_SL": -0.68,
+    "g_name": "PALB2",
+    "t_id": "ENST00000261584.9_12",
+    "t_priority": "MS"
+  },
+  "16-23652432-T-C|37|spliceai": {
+    "DS_AG": 0.0,
+    "DS_AL": 0.0,
+    "DS_DG": 0.2,
+    "DS_DL": 0.93,
+    "g_name": "PALB2",
+    "t_id": "ENST00000261584.9_12",
+    "t_priority": "MS"
+  },
+  "17-41197731-G-C|37|pangolin": {
+    "DS_SG": 0.01,
+    "DS_SL": -0.01,
+    "g_name": "BRCA1",
+    "t_id": "ENST00000357654.9_14",
+    "t_priority": "MS"
+  },
+  "17-41197731-G-C|37|spliceai": {
+    "DS_AG": 0.0,
+    "DS_AL": 0.0,
+    "DS_DG": 0.0,
+    "DS_DL": 0.0,
+    "g_name": "BRCA1",
+    "t_id": "ENST00000357654.9_14",
     "t_priority": "MS"
   },
   "17-41199655-C-G|37|pangolin": {
@@ -185,12 +271,6 @@
     "t_id": "ENST00000357654.9_14",
     "t_priority": "MS"
   },
-  "17-43045714-G-C|37|pangolin": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
-  },
-  "17-43045714-G-C|37|spliceai": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
-  },
   "17-43045714-G-C|38|pangolin": {
     "DS_SG": 0.01,
     "DS_SL": -0.01,
@@ -206,12 +286,6 @@
     "g_name": "BRCA1",
     "t_id": "ENST00000357654.9",
     "t_priority": "MS"
-  },
-  "17-43047638-C-G|37|pangolin": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
-  },
-  "17-43047638-C-G|37|spliceai": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
   },
   "17-43047638-C-G|38|pangolin": {
     "DS_SG": 0.0,
@@ -229,18 +303,6 @@
     "t_id": "ENST00000357654.9",
     "t_priority": "MS"
   },
-  "17-43047642-C-T|37|pangolin": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
-  },
-  "17-43047642-C-T|37|spliceai": {
-    "DS_AG": 0.0,
-    "DS_AL": 0.0,
-    "DS_DG": 0.0,
-    "DS_DL": 0.0,
-    "g_name": "NMT1",
-    "t_id": "ENST00000678938.1_1",
-    "t_priority": "N"
-  },
   "17-43047642-C-T|38|pangolin": {
     "DS_SG": 0.18,
     "DS_SL": -0.73,
@@ -257,11 +319,37 @@
     "t_id": "ENST00000357654.9",
     "t_priority": "MS"
   },
-  "17-58696687-T-A|37|pangolin": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
+  "17-56774048-T-A|37|pangolin": {
+    "DS_SG": 0.79,
+    "DS_SL": -0.75,
+    "g_name": "RAD51C",
+    "t_id": "ENST00000337432.9_8",
+    "t_priority": "MS"
   },
-  "17-58696687-T-A|37|spliceai": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
+  "17-56774048-T-A|37|spliceai": {
+    "DS_AG": 0.95,
+    "DS_AL": 0.64,
+    "DS_DG": 0.0,
+    "DS_DL": 0.02,
+    "g_name": "RAD51C",
+    "t_id": "ENST00000337432.9_8",
+    "t_priority": "MS"
+  },
+  "17-56787218-A-C|37|pangolin": {
+    "DS_SG": 0.86,
+    "DS_SL": -0.9,
+    "g_name": "RAD51C",
+    "t_id": "ENST00000337432.9_8",
+    "t_priority": "MS"
+  },
+  "17-56787218-A-C|37|spliceai": {
+    "DS_AG": 0.7,
+    "DS_AL": 1.0,
+    "DS_DG": 0.0,
+    "DS_DL": 0.27,
+    "g_name": "RAD51C",
+    "t_id": "ENST00000337432.9_8",
+    "t_priority": "MS"
   },
   "17-58696687-T-A|38|pangolin": {
     "DS_SG": 0.79,
@@ -277,22 +365,6 @@
     "DS_DL": 0.02,
     "g_name": "RAD51C",
     "t_id": "ENST00000337432.9",
-    "t_priority": "MS"
-  },
-  "17-58709857-A-C|37|pangolin": {
-    "DS_SG": 0.0,
-    "DS_SL": -0.0,
-    "g_name": "PPM1D",
-    "t_id": "ENST00000305921.8_4",
-    "t_priority": "MS"
-  },
-  "17-58709857-A-C|37|spliceai": {
-    "DS_AG": 0.0,
-    "DS_AL": 0.0,
-    "DS_DG": 0.0,
-    "DS_DL": 0.0,
-    "g_name": "PPM1D",
-    "t_id": "ENST00000305921.8_4",
     "t_priority": "MS"
   },
   "17-58709857-A-C|38|pangolin": {
@@ -311,12 +383,6 @@
     "t_id": "ENST00000337432.9",
     "t_priority": "MS"
   },
-  "2-47790924-C-CAGTTG|37|pangolin": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
-  },
-  "2-47790924-C-CAGTTG|37|spliceai": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
-  },
   "2-47790924-C-CAGTTG|38|pangolin": {
     "DS_SG": 0.86,
     "DS_SL": -0.86,
@@ -333,11 +399,21 @@
     "t_id": "ENST00000234420.11",
     "t_priority": "MS"
   },
-  "22-28695127-C-T|37|pangolin": {
-    "error": "Pangolin was unable to compute scores for this variant"
+  "2-48018063-C-CAGTTG|37|pangolin": {
+    "DS_SG": 0.86,
+    "DS_SL": -0.86,
+    "g_name": "MSH6",
+    "t_id": "ENST00000234420.11_10",
+    "t_priority": "MS"
   },
-  "22-28695127-C-T|37|spliceai": {
-    "error": "The SpliceAI model did not return any scores for 22-28695127-C-T. This may be because the variant does not overlap any exons or introns defined by the GENCODE 'basic' annotation."
+  "2-48018063-C-CAGTTG|37|spliceai": {
+    "DS_AG": 0.98,
+    "DS_AL": 0.98,
+    "DS_DG": 0.0,
+    "DS_DL": 0.05,
+    "g_name": "MSH6",
+    "t_id": "ENST00000234420.11_10",
+    "t_priority": "MS"
   },
   "22-28695127-C-T|38|pangolin": {
     "DS_SG": 0.08,
@@ -355,12 +431,6 @@
     "t_id": "ENST00000404276.6",
     "t_priority": "MS"
   },
-  "22-28741768-C-A|37|pangolin": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
-  },
-  "22-28741768-C-A|37|spliceai": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
-  },
   "22-28741768-C-A|38|pangolin": {
     "DS_SG": 0.19,
     "DS_SL": -0.7,
@@ -377,11 +447,53 @@
     "t_id": "ENST00000404276.6",
     "t_priority": "MS"
   },
-  "6-31740453-G-T|37|pangolin": {
-    "error": "Pangolin was unable to compute scores for this variant"
+  "22-29091115-C-T|37|pangolin": {
+    "DS_SG": 0.08,
+    "DS_SL": -0.64,
+    "g_name": "CHEK2",
+    "t_id": "ENST00000404276.6_12",
+    "t_priority": "MS"
   },
-  "6-31740453-G-T|37|spliceai": {
-    "error": "The SpliceAI model did not return any scores for 6-31740453-G-T. This may be because the variant does not overlap any exons or introns defined by the GENCODE 'basic' annotation."
+  "22-29091115-C-T|37|spliceai": {
+    "DS_AG": 0.0,
+    "DS_AL": 0.54,
+    "DS_DG": 0.03,
+    "DS_DL": 0.32,
+    "g_name": "CHEK2",
+    "t_id": "ENST00000404276.6_12",
+    "t_priority": "MS"
+  },
+  "22-29137756-C-A|37|pangolin": {
+    "DS_SG": 0.19,
+    "DS_SL": -0.7,
+    "g_name": "CHEK2",
+    "t_id": "ENST00000404276.6_12",
+    "t_priority": "MS"
+  },
+  "22-29137756-C-A|37|spliceai": {
+    "DS_AG": 0.02,
+    "DS_AL": 0.0,
+    "DS_DG": 0.61,
+    "DS_DL": 0.99,
+    "g_name": "CHEK2",
+    "t_id": "ENST00000404276.6_12",
+    "t_priority": "MS"
+  },
+  "6-31708230-G-T|37|pangolin": {
+    "DS_SG": 0.39,
+    "DS_SL": -0.78,
+    "g_name": "MSH5",
+    "t_id": "ENST00000375750.9_9",
+    "t_priority": "MS"
+  },
+  "6-31708230-G-T|37|spliceai": {
+    "DS_AG": 0.28,
+    "DS_AL": 0.77,
+    "DS_DG": 0.0,
+    "DS_DL": 0.16,
+    "g_name": "MSH5",
+    "t_id": "ENST00000375750.9_9",
+    "t_priority": "MS"
   },
   "6-31740453-G-T|38|pangolin": {
     "DS_SG": 0.39,
@@ -399,12 +511,6 @@
     "t_id": "ENST00000375750.9",
     "t_priority": "MS"
   },
-  "8-140300616-T-G|37|pangolin": {
-    "error": "Pangolin was unable to compute scores for this variant"
-  },
-  "8-140300616-T-G|37|spliceai": {
-    "error": "The SpliceAI model did not return any scores for 8-140300616-T-G. This may be because the variant does not overlap any exons or introns defined by the GENCODE 'basic' annotation."
-  },
   "8-140300616-T-G|38|pangolin": {
     "DS_SG": 0.29,
     "DS_SL": -0.85,
@@ -419,6 +525,22 @@
     "DS_DL": 0.62,
     "g_name": "TRAPPC9",
     "t_id": "ENST00000438773.4",
+    "t_priority": "MS"
+  },
+  "8-141310715-T-G|37|pangolin": {
+    "DS_SG": 0.29,
+    "DS_SL": -0.85,
+    "g_name": "TRAPPC9",
+    "t_id": "ENST00000438773.4_9",
+    "t_priority": "MS"
+  },
+  "8-141310715-T-G|37|spliceai": {
+    "DS_AG": 0.04,
+    "DS_AL": 0.83,
+    "DS_DG": 0.0,
+    "DS_DL": 0.62,
+    "g_name": "TRAPPC9",
+    "t_id": "ENST00000438773.4_9",
     "t_priority": "MS"
   },
   "HGVS:NM_000249.4:c.116G>A|37|pangolin": {
@@ -457,11 +579,21 @@
     "t_id": "ENST00000231790.8",
     "t_priority": "MS"
   },
-  "X-154031414-C-T|37|pangolin": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
+  "X-153296865-C-T|37|pangolin": {
+    "DS_SG": 0.01,
+    "DS_SL": -0.07,
+    "g_name": "MECP2",
+    "t_id": "ENST00000453960.7_11",
+    "t_priority": "MS"
   },
-  "X-154031414-C-T|37|spliceai": {
-    "error": "Rate limit exceeded. This server only supports interactive use. To process large numbers of variants programmatically, please install a local instance of the API server, or just run the prediction models directly. Attempts to query large numbers of variants programmatically will result in loss of access to this API for an extended period of time. Contact us at https://github.com/broadinstitute/SpliceAI-lookup/issues if you have any questions."
+  "X-153296865-C-T|37|spliceai": {
+    "DS_AG": 0.0,
+    "DS_AL": 0.0,
+    "DS_DG": 0.0,
+    "DS_DL": 0.04,
+    "g_name": "MECP2",
+    "t_id": "ENST00000453960.7_11",
+    "t_priority": "MS"
   },
   "X-154031414-C-T|38|pangolin": {
     "DS_SG": 0.01,

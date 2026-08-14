@@ -55,6 +55,7 @@ docker run -p 8080:8080 docker.io/weisburd/pangolin-37:latest
 On startup the container loads the model and prints some TensorFlow / model-loading warnings (e.g. `WARNING:absl:No training configuration found...`); these can be ignored. Once it is listening on port 8080, you can query it. For example, if you started the `spliceai-38` image, you can open http://localhost:8080/spliceai/?hg=38&variant=chr8-140300616-T-G in your browser. Each per-genome/per-tool image only answers requests for its own tool and `hg` value. 
 
 Optional environment variables (pass with `docker run -e NAME=value ...`):
+- `GENE_SET=basic` / `comprehensive` — which Gencode gene set the container annotates against. Defaults to `basic`, and each container loads only the one set, so a request whose `bc=` asks for the other one is refused with an explanatory error rather than answered. To query the comprehensive set locally, start the container with `-e GENE_SET=comprehensive` (the image already contains both sets' annotation files, so this needs no different image).
 - `DISABLE_RATE_LIMIT=1` — explicitly turn off per-IP rate limiting. Only relevant if you connect your own database (see below); without a database, rate limiting is already disabled.
 - `DATABASE_ENABLED=1` / `0` — force the database on or off. Defaults to on when `DB_PASSWORD` is set and off otherwise.
 - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` — connection settings for an optional PostgreSQL database (see below).
