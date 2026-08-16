@@ -216,8 +216,8 @@ def current_git_commit():
     return f"{commit}-dirty" if dirty else commit
 
 
-def run(c, check=True):
-    """Run a shell command, raising by default if it fails.
+def run(c):
+    """Run a shell command, raising if it fails.
 
     os.system's exit status used to be discarded, so a failed `gcloud run deploy` looked
     exactly like a successful one: a deploy that never happened was reported green by CI, and
@@ -230,9 +230,8 @@ def run(c, check=True):
     # right thing for the wrong reason and mangle the code it prints.
     status = os.system(c)
     exit_code = os.waitstatus_to_exitcode(status)
-    if check and exit_code != 0:
+    if exit_code != 0:
         raise RuntimeError(f"Command failed with exit code {exit_code}: {c}")
-    return exit_code
 
 def main():
     parser = argparse.ArgumentParser()
@@ -571,52 +570,55 @@ def main():
                         # the value baked in at build time without needing a separate image.
                         service_workers = workers if gene_set == "basic" else 2
 
-                        # Whether the service already exists decides whether --no-traffic can be
-                        # passed at all: Cloud Run rejects it when it has to create the service,
-                        # since a first revision has nothing to hold traffic back from.
-                        #
-                        # Only a confirmed "not found" counts as absent. Treating every non-zero
-                        # exit as absence would fail open in the worst possible direction: an
-                        # expired credential or a transient API error during a --dev deploy of an
-                        # EXISTING service would drop --no-traffic and hand an untested dev
-                        # revision 100% of production traffic. Anything that is not a clean
-                        # "exists" or a clean "not found" aborts the deploy instead.
-                        probe = subprocess.run(
-                            ["gcloud", f"--project={GCLOUD_PROJECT}", "run", "services", "describe", service,
-                             "--region=us-central1", "--format=value(name)"],
-                            capture_output=True, text=True)
-                        if probe.returncode == 0:
-                            service_exists = True
-                        # "Cannot find service [x]" is what gcloud actually prints for an absent
-                        # service; the other spellings are kept in case the wording changes.
-                        elif re.search(r"cannot find service|NOT_FOUND|could not be found|does not exist",
-                                       probe.stderr, re.IGNORECASE):
-                            service_exists = False
-                        else:
-                            raise RuntimeError(
-                                f"Could not determine whether the Cloud Run service {service} exists "
-                                f"(gcloud exit {probe.returncode}). Refusing to deploy, since guessing "
-                                f"wrong would route production traffic to this revision. stderr:\n{probe.stderr}")
-
-                        if args.dev and not service_exists:
-                            # Refuse rather than create it here. Without --no-traffic the created
-                            # revision would serve 100% of traffic while stamped DEPLOYMENT=dev,
-                            # so every request to it would read and write the "__dev" cache
-                            # namespace (get_splicing_scores_cache_key in server.py) and nothing
-                            # in the --dev path would ever move traffic off it. That is not
-                            # hypothetical for a service the frontend already points at:
-                            # index.html hardcodes all eight hostnames, so a service becomes
-                            # reachable the moment it exists, and a tag containing "dev" runs
-                            # only the --dev half of the deploy workflow, leaving it that way
-                            # until someone pushes a tag without "dev" in it.
-                            raise RuntimeError(
-                                f"The Cloud Run service {service} does not exist yet, and creating it "
-                                f"from a --dev run would leave its first revision serving all traffic "
-                                f"with DEPLOYMENT=dev. Create it with a production deploy first "
-                                f"(python3 build_and_deploy.py -t {tool} -g {genome_version} "
-                                f"-s {gene_set}), then re-run with --dev.")
-
                         if args.dev:
+                            # Whether the service already exists decides whether --no-traffic can
+                            # be passed at all: Cloud Run rejects it when it has to create the
+                            # service, since a first revision has nothing to hold traffic back
+                            # from. Only the --dev path passes --no-traffic, so only it needs to
+                            # ask -- probing on the production path would let a transient gcloud
+                            # failure abort a deploy whose behavior does not depend on the answer.
+                            #
+                            # Only a confirmed "not found" counts as absent. Treating every
+                            # non-zero exit as absence would fail open in the worst possible
+                            # direction: an expired credential or a transient API error during a
+                            # --dev deploy of an EXISTING service would drop --no-traffic and hand
+                            # an untested dev revision 100% of production traffic. Anything that is
+                            # not a clean "exists" or a clean "not found" aborts the deploy instead.
+                            probe = subprocess.run(
+                                ["gcloud", f"--project={GCLOUD_PROJECT}", "run", "services", "describe", service,
+                                 "--region=us-central1", "--format=value(name)"],
+                                capture_output=True, text=True)
+                            if probe.returncode == 0:
+                                service_exists = True
+                            # "Cannot find service [x]" is what gcloud actually prints for an absent
+                            # service; the other spellings are kept in case the wording changes.
+                            elif re.search(r"cannot find service|NOT_FOUND|could not be found|does not exist",
+                                           probe.stderr, re.IGNORECASE):
+                                service_exists = False
+                            else:
+                                raise RuntimeError(
+                                    f"Could not determine whether the Cloud Run service {service} exists "
+                                    f"(gcloud exit {probe.returncode}). Refusing to deploy, since guessing "
+                                    f"wrong would route production traffic to this revision. stderr:\n{probe.stderr}")
+
+                            if not service_exists:
+                                # Refuse rather than create it here. Without --no-traffic the created
+                                # revision would serve 100% of traffic while stamped DEPLOYMENT=dev,
+                                # so every request to it would read and write the "__dev" cache
+                                # namespace (get_splicing_scores_cache_key in server.py) and nothing
+                                # in the --dev path would ever move traffic off it. That is not
+                                # hypothetical for a service the frontend already points at:
+                                # index.html hardcodes all eight hostnames, so a service becomes
+                                # reachable the moment it exists, and a tag containing "dev" runs
+                                # only the --dev half of the deploy workflow, leaving it that way
+                                # until someone pushes a tag without "dev" in it.
+                                raise RuntimeError(
+                                    f"The Cloud Run service {service} does not exist yet, and creating it "
+                                    f"from a --dev run would leave its first revision serving all traffic "
+                                    f"with DEPLOYMENT=dev. Create it with a production deploy first "
+                                    f"(python3 build_and_deploy.py -t {tool} -g {genome_version} "
+                                    f"-s {gene_set}), then re-run with --dev.")
+
                             dev_flags = "--tag dev --no-traffic "
                             traffic_note = " (dev revision, no traffic)"
                         else:
@@ -664,7 +666,7 @@ def main():
 --update-env-vars "^@^{env_vars}" {dev_flags}""")
 
                         if args.dev:
-                            # Promote by re-running this script WITHOUT --dev, not by switching
+                            # Promote by re-running this script with --promote, not by switching
                             # traffic to the dev revision. DEPLOYMENT is baked into a revision's
                             # environment, so a traffic-only promotion would leave production
                             # running a revision stamped DEPLOYMENT=dev: it would then read and
@@ -700,17 +702,22 @@ def main():
                             run(f"gcloud --project {GCLOUD_PROJECT} run services update-traffic {service} "
                                 f"--region us-central1 --to-latest")
 
-                            if args.promote:
-                                # Record the promoted digest as the production one, so the two
-                                # files agree on what production runs. Written here, after the
-                                # deploy and the traffic switch have both succeeded, so a failure
-                                # partway through cannot leave the repository claiming production
-                                # runs an image that never got there.
-                                with open(f"docker/{tool}/sha256_grch{genome_version}.txt", "w") as f:
-                                    f.write(f"{sha256}\n")
-
                                 # --add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
                 # --add-volume-mount=volume=ref,mount-path=/ref \
+
+                    # Record the promoted digest as the production one. Written once after the
+                    # gene-set loop rather than inside it, because the path has no gene-set
+                    # component while the two gene sets are separate services: a run narrowed to
+                    # one of them with -s leaves the other on its previous digest, so writing from
+                    # inside the loop would record a claim about a service this run never touched.
+                    # That claim is not merely informational -- a later plain `deploy` reads this
+                    # same file (sha256_path above) and would push the untouched service to an
+                    # image it was never promoted to. Written after the deploys and traffic
+                    # switches have all succeeded, so a failure partway through cannot leave the
+                    # repository claiming production runs an image that never got there.
+                    if args.promote and not args.gene_set:
+                        with open(f"docker/{tool}/sha256_grch{genome_version}.txt", "w") as f:
+                            f.write(f"{sha256}\n")
 
 if __name__ == "__main__":
     main()

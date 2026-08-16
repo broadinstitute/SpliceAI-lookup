@@ -379,12 +379,23 @@ if not BLOCKED_IPS:
 # Each gunicorn worker is a separate process (the Dockerfiles deliberately omit --preload, so
 # every worker imports this module itself after the fork) with its own pool, and runs
 # single-threaded (--threads 1), so it serves one request at a time and needs only one DB
-# connection. maxconn=2 keeps a one-slot safety margin
-# while bounding the total: workers x instances x services x maxconn must stay
-# under the server's max_connections (75). The previous maxconn=80 assumed Cloud
+# connection. maxconn=2 keeps a one-slot safety margin. The previous maxconn=80 assumed Cloud
 # Run's default concurrency of 80, but the deploy pins --workers/--concurrency to
 # 6, so 80 per worker let a single instance open far more connections than the
 # tier allows -- exhausting max_connections and leaving dozens of idle backends.
+#
+# The bound this was sized against -- workers x instances x services x maxconn under the
+# server's max_connections (75) -- no longer holds, and nothing here enforces it. It was
+# written when there were 4 services (4 x 6 instances x 3 workers = 72, just under the limit);
+# the gene-set split doubled that to 8 (build_and_deploy.py deploys each tool/genome for both
+# "basic" and "comprehensive"), so full scale-out is now 4 x 6 x 3 + 4 x 6 x 2 = 120 workers,
+# each holding minconn=1, i.e. 120 connections before any pool reaches maxconn=2, against a
+# limit of 75. Dropping maxconn to 1 would not fix it: minconn=1 already puts the floor at 120.
+# Closing the gap needs fewer instances/workers or a larger max_connections, which is a
+# deployment decision rather than a code one. Until then, a fleet-wide burst can exhaust
+# max_connections, after which get_db_connection yields None and every DB-backed behavior
+# degrades silently: cache lookups miss so requests re-run the model, exceeds_rate_limit
+# returns False, and transcript-structure enrichment is skipped.
 # If initialisation fails (e.g. transient Cloud SQL hiccup at startup, or
 # DB_PASSWORD not set in a local dev environment), DATABASE_CONNECTION_POOL
 # stays None and get_db_connection falls back to opening a connection per
@@ -610,7 +621,7 @@ def run_sql(conn, sql_query, *params):
     return results
 
 
-def get_transcript_structures(conn, transcript_ids, genome_version):
+def get_transcript_structures(conn, transcript_ids, genome_version, empty_when_table_missing=False):
     """Batch-fetch transcript structure for many transcripts in one round trip.
 
     Args:
@@ -618,6 +629,12 @@ def get_transcript_structures(conn, transcript_ids, genome_version):
         transcript_ids: iterable of transcript IDs WITHOUT version suffix
             (e.g. "ENST00000123456"). Caller is responsible for stripping ".N".
         genome_version: "37" or "38".
+        empty_when_table_missing (bool): when True, a query that fails because the
+            transcripts_hgNN table does not exist returns {} rather than None. That
+            table is not created automatically (it needs build_and_deploy.py's
+            update_transcript_tables), so its absence is a permanent property of the
+            database rather than something a retry fixes, and a caller that skips its
+            cache write on None would otherwise recompute every response forever.
 
     Returns:
         dict mapping transcript_id -> structure dict (same fields the prior
@@ -646,6 +663,16 @@ def get_transcript_structures(conn, transcript_ids, genome_version):
                FROM {table_name} WHERE transcript_id = ANY(%s)""",
             (transcript_ids,)
         )
+    except psycopg2.ProgrammingError as e:
+        # UndefinedTable (the table was never loaded) is a ProgrammingError, as is a malformed
+        # query. Neither changes on a retry, so a caller that asked to be told apart gets {}:
+        # "this database has no structures to give", not "ask again later".
+        if empty_when_table_missing:
+            print(f"WARNING: cannot read transcripts_hg{genome_version}, so no exon annotations "
+                  f"are available from this database: {e}", flush=True)
+            return {}
+        print(f"DB error fetching transcript structures for hg{genome_version}: {e}", flush=True)
+        return None
     except psycopg2.Error as e:
         # A transient OperationalError (e.g. broken connection mid-query)
         # returns None so SAI-10k falls back to annotation-based defaults
@@ -1229,17 +1256,22 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
         candidate_transcripts.append(transcript_scores)
 
     # Brief DB scope: add EXON_STARTS/EXON_ENDS so the per-position table can label annotated
-    # acceptors and donors for Pangolin the same way it does for SpliceAI. As on the SpliceAI
-    # path, a failed lookup means the response is degraded (here: a blank Notes column), so
-    # don't cache it -- otherwise it would be re-served long after the DB recovered.
+    # acceptors and donors for Pangolin the same way it does for SpliceAI. A lookup that failed
+    # for a reason a retry could fix leaves the response degraded (here: a blank Notes column),
+    # so don't cache it -- otherwise it would be re-served long after the DB recovered. A
+    # permanently missing table is the opposite case and is cached; see below.
     skip_cache = False
     if candidate_transcripts:
         candidate_ids = [transcript_scores.get("NAME", "").split(".")[0] for transcript_scores in candidate_transcripts]
         with get_db_connection() as conn:
-            structures = get_transcript_structures(conn, candidate_ids, genome_version) if conn is not None else None
+            # empty_when_table_missing so a database that simply never loaded
+            # transcripts_hgNN yields {} and takes the cache-anyway path below, rather than
+            # looking like an outage and making every Pangolin response uncacheable forever.
+            structures = get_transcript_structures(
+                conn, candidate_ids, genome_version, empty_when_table_missing=True) if conn is not None else None
 
         if structures is None:
-            # The DB was unreachable or the query failed. That is usually transient, so don't
+            # The DB was unreachable or the query failed in a way a retry could fix. Don't
             # cache a response whose Notes column would stay blank long after it recovered.
             print(f"WARNING: transcript-structure lookup unavailable for {variant}; the Pangolin "
                   f"per-position table will have no exon annotations and the result will not be cached.", flush=True)
@@ -1459,7 +1491,10 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
             for the transcript named by the "transcript" param (the /scores endpoints) instead
             of the full results. Everything up to that point -- param validation, rate limiting,
             the cache lookup and the cache write -- is shared with the main endpoint, so a
-            /scores call for an already-computed variant is a cache read.
+            /scores call for an already-computed variant is a cache read whenever caching is
+            available. On an instance with no database attached (DATABASE_ENABLED is False
+            unless DB_PASSWORD is set), the cache lookup always misses and the variant is
+            recomputed from scratch.
     """
 
     global _FIRST_REQUEST_LOGGED
@@ -1524,7 +1559,11 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
     if mask_param not in ("0", "1"):
         return error_response(f'Invalid "mask" value: "{mask_param}". The value must be either "0" or "1". For example: {example_url}\n', source=tool_name)
 
-    basic_or_comprehensive_param = params.get("bc", "basic")
+    # Default to the gene set this instance actually serves, so only an explicit "bc" that
+    # disagrees with GENE_SET triggers the redirect/refusal below. Defaulting to "basic"
+    # would make every bc-less request to a comprehensive instance look like a request for
+    # the other gene set.
+    basic_or_comprehensive_param = params.get("bc", GENE_SET)
     if basic_or_comprehensive_param not in ("basic", "comprehensive"):
         return error_response(f'Invalid "bc" value: "{basic_or_comprehensive_param}". The value must be either "basic" or "comprehensive". For example: {example_url}\n', source=tool_name)
 
@@ -1553,11 +1592,11 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
         #
         # When the requested host carries no service name to rewrite, there is no sibling that is
         # knowably part of this deployment, so refuse instead of guessing. That case is a
-        # self-hosted container -- README.md documents `docker run -p 8080:8080` for batch users,
-        # and lists no GENE_SET among the env vars, so such an instance always runs the default
-        # "basic". Redirecting it to the public Cloud Run hostname would send that user's variants
-        # off their own machine to the shared public API, which is what self-hosting exists to
-        # avoid, and would spend their IP's rate-limit budget there. Gating on
+        # self-hosted container, where the other gene set is a restart away: README.md documents
+        # `-e GENE_SET=comprehensive` for exactly that, which is what the error below tells the
+        # user to do. Redirecting to the public Cloud Run hostname instead would send that user's
+        # variants off their own machine to the shared public API, which is what self-hosting
+        # exists to avoid, and would spend their IP's rate-limit budget there. Gating on
         # RUNNING_ON_GOOGLE_CLOUD_RUN would not work: the Dockerfiles bake it into the image that
         # a local `docker run` uses too.
         if not (this_service and this_service in request.host):

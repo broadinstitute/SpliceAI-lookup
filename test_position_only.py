@@ -382,22 +382,35 @@ class TestPositionOnlyAPI(unittest.TestCase):
         self.assertEqual(response.get("pos"), 140300616)
 
         # An ALT allele is what makes a delta score meaningful, and there isn't
-        # one here -- the response must not claim otherwise.
-        for absent_key in ("ref", "alt", "mask", "variant_consequence"):
+        # one here -- the response must not claim otherwise. Only "ref" and "alt" are
+        # checked here: they come from the results dict, so the server can put them in a
+        # REF-only response on its own. "mask" and "variant_consequence" are echoed back
+        # only when the client sends them, which this query does not, so asserting their
+        # absence here could never fail. test_a_client_supplied_mask_is_not_echoed_back
+        # sends mask and is therefore the test that can actually catch a regression.
+        for absent_key in ("ref", "alt"):
             self.assertNotIn(absent_key, response, f"{tool} REF-only response should not include '{absent_key}'")
 
         self.assertTrue(response.get("scores"), f"{tool} returned no scores for {TEST_POSITION}")
-        for key in score_keys:
-            self.assertIn(key, response["scores"][0],
-                          f"{tool} REF-only score is missing '{key}': {response['scores'][0]}")
+        # This locus overlaps several transcripts and the response carries a dict for each,
+        # so check every one -- a malformed or empty entry after the first would otherwise
+        # never be looked at.
+        for score in response["scores"]:
+            for key in score_keys:
+                self.assertIn(key, score, f"{tool} REF-only score is missing '{key}': {score}")
 
         # This locus was picked because both tools predict a strong reference splice
         # site here (~0.8-0.9), so an all-zero response means the REF-only path is
         # returning structurally valid but empty predictions. The floor is a sanity
-        # bound rather than a snapshot, so model updates don't churn it.
+        # bound rather than a snapshot, so model updates don't churn it. Taken over
+        # every transcript rather than over scores[0]: the server returns the annotator's
+        # order and never sorts scores (the transcript it selected is reported separately,
+        # as allNonZeroScoresTranscriptId), so index 0 can be a minor isoform that
+        # legitimately scores near zero. One strong site anywhere in the response is what
+        # distinguishes real predictions from empty ones.
         self.assertGreater(
-            max(float(response["scores"][0][key]) for key in ref_score_keys), 0.1,
-            f"{tool} returned no meaningful REF score at {TEST_POSITION}: {response['scores'][0]}")
+            max(float(score[key]) for score in response["scores"] for key in ref_score_keys), 0.1,
+            f"{tool} returned no meaningful REF score at {TEST_POSITION}: {response['scores']}")
 
         # The IGV REF track reads these; index.html renders an empty track without
         # them. assertTrue rather than assertIsNotNone, so [] and "" fail too.

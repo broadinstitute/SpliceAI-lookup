@@ -16,6 +16,7 @@ changes -- to gate those, serve this directory and point SPLICEAI_LOOKUP_URL at 
 """
 
 import os
+import re
 import unittest
 
 from playwright.sync_api import sync_playwright, expect
@@ -272,9 +273,12 @@ class TestSpliceAILookupUI(unittest.TestCase):
         # the box is also where any variant-resolution message would land.
         self.assertTrue(self.page.is_visible("#spliceai-table"))
         self.assertTrue(self.page.is_visible("#pangolin-table"))
-        self.assertGreater(len(self.page.query_selector_all("#spliceai-table tbody tr")), 0,
+        # Count the row classes the renderer emits, not "tbody tr": both tables are declared
+        # with a <thead> and no <tbody>, and rows are inserted after that <thead> as direct
+        # <table> children, so a "tbody tr" selector matches nothing however healthy routing is.
+        self.assertGreater(len(self.page.query_selector_all("#spliceai-table .spliceai-result-row")), 0,
                            "comprehensive SpliceAI request returned no score rows")
-        self.assertGreater(len(self.page.query_selector_all("#pangolin-table tbody tr")), 0,
+        self.assertGreater(len(self.page.query_selector_all("#pangolin-table .pangolin-result-row")), 0,
                            "comprehensive Pangolin request returned no score rows")
 
     def test_ref_alt_score_columns(self):
@@ -408,16 +412,126 @@ class TestSpliceAILookupUI(unittest.TestCase):
         # detail view (gain score at position 0).
         self._submit_variant("2-47790924-C-CAGTTG")
 
-        # Look for the modal trigger icon (table icon with a table-icon<id> id)
+        # Look for the modal trigger icon (table icon with a table-icon<id> id). Assert rather
+        # than skip: this variant is a known trigger, so a missing icon is the regression this
+        # test exists to catch, and skipping would report it as "nothing to check".
         modal_icons = self.page.query_selector_all("#spliceai-table i[id^='table-icon']")
-        if not modal_icons:
-            self.skipTest("No modal icons found for this insertion variant")
+        self.assertTrue(modal_icons, "no inserted-bases modal icon for a variant known to produce one")
 
         modal_icons[0].click()
         # A Semantic UI modal should appear with a score table inside
         expect(self.page.locator(".ui.modal.visible")).to_be_visible(timeout=5_000)
         modal_text = self.page.inner_text(".ui.modal.visible")
         self.assertIn("REF acceptor score", modal_text)
+
+    # SCORES_FOR_INSERTED_BASES rows for 16-2317763-T-TACTC (the ABCA3 c.875 insertion),
+    # copied from the spliceai-38 API response and trimmed to the rows that decide the answer.
+    # The API reports the inserted bases with a "+N" offset in pos and the flanking genomic
+    # bases with their real coordinates. Here the gain is at +1 (AA 0.014, which is the
+    # reported DS_AG), while the exon's annotated acceptor at 2317764 scores higher in ALT
+    # (0.980) yet is no gain at all, because REF is just as high (0.987).
+    SCORES_FOR_INSERTED_BASES_ABCA3 = [
+        {"chrom": "chr16", "pos": "2317761", "ref": "A", "alt": "A", "RA": "0.080", "RD": "0.000", "AA": "0.025", "AD": "0.000"},
+        {"chrom": "chr16", "pos": "2317763", "ref": "T", "alt": "T", "RA": "0.000", "RD": "0.000", "AA": "0.000", "AD": "0.000"},
+        {"chrom": "chr16", "pos": "+1", "ref": " ", "alt": "A", "RA": "0.000", "RD": "0.000", "AA": "0.014", "AD": "0.000"},
+        {"chrom": "chr16", "pos": "+2", "ref": " ", "alt": "C", "RA": "0.000", "RD": "0.000", "AA": "0.000", "AD": "0.000"},
+        {"chrom": "chr16", "pos": "+3", "ref": " ", "alt": "T", "RA": "0.000", "RD": "0.000", "AA": "0.000", "AD": "0.000"},
+        {"chrom": "chr16", "pos": "+4", "ref": " ", "alt": "C", "RA": "0.000", "RD": "0.000", "AA": "0.001", "AD": "0.000"},
+        {"chrom": "chr16", "pos": "2317764", "ref": "C", "alt": "C", "RA": "0.987", "RD": "0.000", "AA": "0.980", "AD": "0.000"},
+    ]
+
+    def _position_for_inserted_bases(self, score_key, score, rows):
+        """Return what the results table's position column shows for an insertion's gain.
+
+        Calls index.html's updatePositionAccountingForInsertedBases directly instead of
+        submitting the variant: the rows are the fixture above rather than a live prediction,
+        so the expected string does not move when the model or its annotations are updated.
+        """
+        return self.page.evaluate(
+            f"(rows) => updatePositionAccountingForInsertedBases("
+            f"'{score_key}', '{score}', 0, 'T', 'TACTC', rows)",
+            rows,
+        )
+
+    def test_inserted_base_position_is_an_offset_not_a_coordinate(self):
+        """The gain's offset within the inserted sequence, not a flanking base's coordinate."""
+        # The bug this covers reported "+2317764 bp position within the inserted sequence":
+        # the argmax ran over the flanking genomic rows too and used the raw ALT score, so the
+        # unchanged annotated acceptor next to the insertion won it and its coordinate was
+        # printed as an offset.
+        self.assertEqual(
+            self._position_for_inserted_bases("DS_AG", "0.014", self.SCORES_FOR_INSERTED_BASES_ABCA3),
+            "+1 bp position within the inserted sequence")
+
+    def test_inserted_bases_without_a_gain_keep_the_reported_position(self):
+        """With no gain inside the insertion, the model's own 0 bp offset is left alone."""
+        # Same rows with the one gain inside the inserted sequence zeroed out. The flanking
+        # rows still carry high ALT scores, and none of them may be reported as an offset.
+        rows = [
+            {**row, "AA": "0.000"} if str(row["pos"]).startswith("+") else row
+            for row in self.SCORES_FOR_INSERTED_BASES_ABCA3
+        ]
+        self.assertEqual(self._position_for_inserted_bases("DS_AG", "0.014", rows), "0 bp")
+
+    # ------------------------------------------------------------------
+    # Per-position score table
+    # ------------------------------------------------------------------
+
+    def test_per_position_table_modal(self):
+        """A transcript's table icon opens the per-position score table for that transcript."""
+        self._submit_variant("8-140300616-T-G")
+
+        # A disabled icon marks a transcript with nothing to tabulate: it carries no
+        # data-icon-id and the delegated click handler filters it out.
+        icon = self.page.locator(
+            "#spliceai-table .per-position-table-icon:not(.per-position-table-icon-disabled)").first
+        expect(icon).to_be_visible(timeout=TIMEOUT_MS)
+
+        # Pin the transcript this particular icon belongs to before clicking it. The icon sits
+        # in that transcript's own cell, which also carries the versioned id as link text. This
+        # locus overlaps several transcripts, each with its own icon and its own /scores request,
+        # so asserting only that the heading says "ENST" would stay green if a click opened some
+        # other transcript's table.
+        expected_transcript_id = re.search(
+            r"ENST\d+\.\d+", icon.locator("xpath=ancestor::td[1]").inner_text())
+        self.assertIsNotNone(expected_transcript_id, "no transcript id in the clicked icon's cell")
+
+        icon.click()
+        expect(self.page.locator("#per-position-modal")).to_be_visible(timeout=TIMEOUT_MS)
+        # The rows come from a separate /scores request, and the modal is shown with a spinner
+        # in it while that is in flight, so wait for the table rather than for the modal.
+        self.page.wait_for_selector("#per-position-modal-content table tbody tr", timeout=TIMEOUT_MS)
+
+        self.assertGreater(
+            len(self.page.query_selector_all("#per-position-modal-content table tbody tr")), 0,
+            "per-position table opened with no score rows")
+        self.assertIn(expected_transcript_id.group(0),
+                      self.page.inner_text("#per-position-modal-heading"),
+                      "the modal heading names a different transcript than the icon that was clicked")
+        # The computed delta columns are what the table exists to show. Matching on the plain
+        # words keeps this off the non-ASCII delta character in the rendered header.
+        header_text = self.page.inner_text("#per-position-modal-content thead")
+        self.assertIn("acceptor loss", header_text)
+        self.assertIn("donor loss", header_text)
+        # Both header buttons stay hidden until there is a table to act on, so their appearance
+        # is part of a successful open.
+        self.assertTrue(self.page.is_visible("#per-position-download-button"))
+        self.assertTrue(self.page.is_visible("#per-position-visualize-button"))
+
+    def test_per_position_modal_is_dismissed_by_back_navigation(self):
+        """Browser Back closes the per-position modal instead of leaving stale scores up."""
+        self._submit_variant("8-140300616-T-G")
+
+        icons = self.page.query_selector_all(
+            "#spliceai-table .per-position-table-icon:not(.per-position-table-icon-disabled)")
+        self.assertTrue(icons, "no enabled per-position table icon for a variant with non-zero scores")
+        icons[0].click()
+        self.page.wait_for_selector("#per-position-modal-content table tbody tr", timeout=TIMEOUT_MS)
+
+        # The modal is a top-level overlay rather than part of #response-box, so it is not
+        # covered by the element list the search-reset path hides.
+        self.page.go_back()
+        expect(self.page.locator("#per-position-modal")).to_be_hidden(timeout=TIMEOUT_MS)
 
     # ------------------------------------------------------------------
     # External links in results
@@ -568,6 +682,13 @@ class TestSpliceAILookupUI(unittest.TestCase):
     def test_position_only_hides_alt_dependent_sections(self):
         """SAI-10k-calc and the other-predictors table both need an ALT allele."""
         self._submit_variant("chr8:140300616")
+
+        # Establish that the search actually succeeded first. Both elements asserted below
+        # are also hidden when the REF-only request errors out and nothing renders, so
+        # without this the test stays green against a completely broken endpoint.
+        self.assertTrue(self.page.is_visible("#spliceai-table"))
+        self.assertGreater(len(self.page.query_selector_all(".spliceai-result-row")), 0,
+                           "REF-only search returned no rows, so the assertions below prove nothing")
 
         self.assertFalse(self.page.is_visible("#sai10k-table"),
                          "SAI-10k-calc predictions require an ALT allele and should be hidden")
