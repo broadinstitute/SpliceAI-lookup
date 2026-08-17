@@ -140,16 +140,17 @@
            the table's top margin sit above that line, leaving a band that rows scroll up through
            before they reach the header. Removing both closes it so the header meets the modal
            heading. The side and bottom padding are left alone, so only the gap is affected. */
-        /* min-height and max-height are deliberately the same value, so the modal is the size it
-           will end up at from the moment it opens: without the min-height it opens just tall
-           enough for the spinner and then jumps to full height when the rows arrive.
+        /* Only a ceiling, so a table with few rows ends up only as tall as its rows instead of
+           leaving an empty band below them. The matching min-height lives on the centered class
+           below, which is what the box wears while it is loading, so the modal still opens at the
+           height it will most often keep and does not grow from spinner-sized as the rows arrive.
+           A short table shrinks it once, on arrival.
            The expression is copied from Semantic UI's own rule for .ui.modal .scrolling.content,
            and the unit matters: em resolves against this element's font-size, which is what that
            rule is written against. rem would agree only while the root font-size happens to equal
            this element's, and would silently resize the modal if either ever changed. */
         #per-position-modal-content {
             padding-top: 0;
-            min-height: calc(80vh - 10em);
             max-height: calc(80vh - 10em);
         }
 
@@ -167,6 +168,23 @@
             align-items: center;
             justify-content: center;
             padding-bottom: 0;
+            /* Full height only while this class is on, so the spinner sits in the middle of a
+               box the size the modal is about to be, rather than in the middle of a box just
+               tall enough for the spinner itself. */
+            min-height: calc(80vh - 10em);
+        }
+
+        /* Semantic UI paints loaders white inside a .ui.dimmer, assuming they sit on the dimmed
+           backdrop -- but it also puts every modal inside that same dimmer, so this spinner was
+           being drawn white-on-white and the modal looked empty for the whole request. These
+           restore the colors Semantic uses for a loader outside a dimmer. Only visible on a slow
+           request: on a cached one the response arrives too fast to notice either way. */
+        #per-position-modal-content .ui.loader:before {
+            border-color: rgba(0, 0, 0, 0.1);
+        }
+
+        #per-position-modal-content .ui.loader:after {
+            border-color: #767676 transparent transparent;
         }
 
         #per-position-modal-content > table {
