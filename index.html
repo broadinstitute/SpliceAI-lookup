@@ -1942,7 +1942,10 @@
         // navigation that restores one) supersedes a response still in flight for the old one
         const submissionId = currentSubmissionId
 
-        $("#per-position-modal-heading").text(`${context.geneName}  ${context.transcriptId}  (${context.strand} strand)`)
+        // The tool leads, because the same gene and transcript can be opened from either the
+        // SpliceAI or the Pangolin table and the two modals are otherwise identical at a glance.
+        $("#per-position-modal-heading").text(
+            `${context.toolName}  ${context.geneName}  ${context.transcriptId}  (${context.strand} strand)`)
         // Both header buttons are hidden until the modal has content, so the header does not
         // offer actions over an empty box while loading or after a failure. Download genuinely
         // needs the table -- it serializes the rows. Visualize does not: it scrolls to the IGV
@@ -2227,6 +2230,10 @@
             const perPositionIconId = `${tool.toLowerCase()}-${transcriptIndex}`
             perPositionTableContext[perPositionIconId] = {
                 tool: tool.toLowerCase(),
+                // The display spelling, kept alongside the lowercase key: `tool` is lowercased
+                // because it looks up column definitions and builds the endpoint path, but the
+                // modal heading needs "SpliceAI" / "Pangolin" as written.
+                toolName: tool,
                 scores: scores,
                 chrom: chrom,
                 variantPos: parseInt(pos),
