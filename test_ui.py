@@ -22,9 +22,13 @@ import unittest
 from playwright.sync_api import sync_playwright, expect
 
 
+# The dev site's own domain, which is where its CNAME now points GitHub Pages. The
+# old broadinstitute.github.io/SpliceAI-lookup-dev URL still redirects here, but
+# pointing at it directly keeps the tests off a redirect and, more importantly, off
+# any future change to what that redirect targets.
 BASE_URL = os.environ.get(
     "SPLICEAI_LOOKUP_URL",
-    "https://broadinstitute.github.io/SpliceAI-lookup-dev/index.html",
+    "https://spliceailookup-dev.broadinstitute.org/index.html",
 )
 
 # Set SPLICEAI_API_ENV=dev to route the frontend's spliceai/pangolin API calls
@@ -33,8 +37,8 @@ BASE_URL = os.environ.get(
 # helper appends it to every page.goto() URL. The name has to be exactly "api":
 # index.html matches /[?&#]api=([^&#]*)/, so the "apiEnv" this used to append was
 # never recognized and the setting silently did nothing -- every call still went to
-# production. That went unnoticed because BASE_URL defaults to the dev GitHub Pages
-# site, which index.html detects on its own and routes to dev regardless.
+# production. That went unnoticed because BASE_URL defaults to the dev site, which
+# index.html detects on its own and routes to dev regardless.
 API_ENV = os.environ.get("SPLICEAI_API_ENV", "")
 
 
