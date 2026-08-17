@@ -84,6 +84,17 @@
             max-width: 95vw;
         }
 
+        /* The inserted-bases modal renders the same eleven-column table, so it needs the same
+           width. Matched by id prefix because each one is created per score row with its own id.
+           `.ui.modal` is part of the selector to outrank Semantic UI's own `.ui.modal` width rules:
+           those are (0,2,0), so a bare attribute selector at (0,1,0) would lose to them no matter
+           where this sheet sits in source order, and the table would stay clipped. The sibling rule
+           above needs no such help because an id selector already outranks them. */
+        .ui.modal[id^="modal-with-table"] {
+            width: 1150px;
+            max-width: 95vw;
+        }
+
         /* The header's right padding is what sets the distance from the Visualize button to the
            edge of the modal, since the button row itself carries no margin on that side. */
         #per-position-modal > .header {
@@ -1119,6 +1130,19 @@
         return `${chrom}:${pos} ${truncateAllele(ref, maxLength)} > ${truncateAllele(alt, maxLength)}`
     }
 
+    /* The locus cell shared by the per-position table and the inserted-bases table. One helper so
+       the two cannot drift apart, which they already did once over which allele gets truncated.
+       Both alleles are truncated, the same way the main results table does it (formatVariantDisplay
+       above): the cell is nowrap and sits ahead of ten score columns in a fixed-width modal, so a
+       long allele -- a big insertion's ALT, or the whole deleted sequence in a deletion's REF, up
+       to MAX_VARIANT_LENGTH -- would push those columns out of view. The truncated allele is still
+       recoverable in both callers, by different routes: the per-position modal's download button
+       writes both alleles in full to its CSV, and the inserted-bases modal lists the inserted
+       sequence one base per row anyway. */
+    const buildLocusText = (chrom, pos, ref, alt, isVariant) =>
+        `${withChrPrefix(chrom)}:${withThousandsSeparators(pos)} ${truncateAllele(ref)}`
+            + (isVariant ? ` > ${truncateAllele(alt)}` : "")
+
     const truncateVariantString = (variantStr, maxAlleleLength = 30) => {
         // Try to parse and truncate variant in common formats
         const patterns = [
@@ -1494,54 +1518,91 @@
         return score >= 0.01 && position == 0 && ref.length == 1 && alt.length > 1 && scoresForInsertedBases && scoresForInsertedBases.length > 0
     }
 
-    const generateTableOfScoresForInsertedBases = (modalId, score, position, ref, alt, scoresForInsertedBases) => {
+    const annotateGenomicScoreRow = (row, context, {variantAlt, variantNote = ""}) => {
+        /* Describe one score row that has a real genomic coordinate. Both score tables annotate
+           their genomic rows through here, so the locus, offset and notes cells cannot drift apart
+           -- they already did once over which allele gets truncated.
+           positionDelta is kept as a number alongside the formatted text because perPositionRowsToCsv
+           writes the raw value into the download.
+           variantAlt is the ALT to show on the variant row, and the caller has to say which one it
+           means, because the two tables read different fields for it. The per-position rows carry
+           the allele already paired with that row's REF -- for an equal-length substitution the
+           model writes one base per position (spliceai/utils.py), so pairing a whole ALT with a
+           single-base REF there would render "A > GC" and read as an insertion. The inserted-bases
+           rows instead carry the unchanged reference base at the variant's position, so that table
+           has to supply the variant's own ALT.
+           variantNote is anything the caller wants to add to the variant row's note beyond the
+           "variant" label itself; only the per-position table has something to say there. */
+        const pos = parseInt(row.pos)
+        const isVariant = pos == context.variantPos
+        return {
+            ...row,
+            pos: pos,
+            isVariant: isVariant,
+            locusText: buildLocusText(context.chrom, pos, row.ref, variantAlt, isVariant),
+            /* Signed genomic offset, the same quantity the main results table's position column
+               shows (SpliceAI's DP_AG/DP_AL/DP_DG/DP_DL, Pangolin's DP_SL/DP_SG), so the tables can
+               be read against each other row by row.
+               One case where they deliberately differ: for an insertion whose gain falls inside the
+               inserted sequence, the model reports the offset as 0 and the main table substitutes
+               "+N bp position within the inserted sequence"
+               (updatePositionAccountingForInsertedBases). The inserted bases have no genomic
+               coordinate of their own, so a genomic row here is anchored at the variant position
+               and reads "0 bp". */
+            positionDelta: pos - context.variantPos,
+            positionDeltaText: `${withThousandsSeparators(pos - context.variantPos)} bp`,
+            note: [
+                isVariant ? "variant" : "",
+                isVariant ? variantNote : "",
+                getExonNoteForPosition(pos, context.scores),
+            ].filter(Boolean).join("; "),
+        }
+    }
+
+    const buildInsertedBaseRows = (scoresForInsertedBases, context) => {
+        /* Annotate the inserted-bases rows the way buildPerPositionRows annotates the per-position
+           ones, so both tables can go through renderScoreTableFromRows.
+           These rows are a mix. The flanking genomic bases carry a real coordinate and are
+           described exactly as the per-position table describes them. The inserted bases have no
+           coordinate at all -- the API reports their pos as "+N" -- so they get their +N label as
+           the locus, no position delta, and a note saying which inserted base they are. The delta
+           column is a signed genomic offset from the variant, and an offset within the insertion is
+           not one: putting "1" there would be read as the genomic row one base downstream, which
+           this table also shows. */
+        const insertedBaseCount = scoresForInsertedBases.filter((row) => `${row.pos}`.startsWith("+")).length
+        let insertedBaseNumber = 0
+        return scoresForInsertedBases.map((row) => {
+            if (`${row.pos}`.startsWith("+")) {
+                insertedBaseNumber++
+                return {
+                    ...row,
+                    // No genomic position, which is also what makes masking come out right for
+                    // these rows: an inserted base is by definition not an annotated splice site,
+                    // so a gain here survives masking and a loss here is suppressed.
+                    pos: null,
+                    isVariant: false,
+                    locusText: `${row.pos} (> ${row.alt})`,
+                    positionDeltaText: "—",
+                    note: `inserted base ${insertedBaseNumber} of ${insertedBaseCount}`,
+                }
+            }
+            // context.alt, not row.alt: at the variant's own position these rows carry the
+            // unchanged reference base, since the insertion sits between two genomic coordinates.
+            return annotateGenomicScoreRow(row, context, {variantAlt: context.alt})
+        })
+    }
+
+    const generateTableOfScoresForInsertedBases = (modalId, score, position, ref, alt, scoresForInsertedBases, context) => {
         //warn about insertion variants that are predicted to cause a donor or acceptor gain somewhere within the inserted sequence.
         if (!considerInsertedBases(score, position, ref, alt, scoresForInsertedBases)) {
             return ""
         }
 
-        let tableRows = []
-        for (const scoreObj of scoresForInsertedBases) {
-            const RA = parseFloat(scoreObj.RA)
-            const RD = parseFloat(scoreObj.RD)
-            const AA = parseFloat(scoreObj.AA)
-            const AD = parseFloat(scoreObj.AD)
-
-            // This table HTML ends up inside the modal below, which is injected into
-            // the page via jQuery .after(), so any HTML in backend-supplied fields
-            // (chrom/pos/ref/alt) would execute.
-            // RA/RD/AA/AD are parseFloat-ed above so they're safe as numbers.
-            tableRows.push(
-                `<tr><td>${escapeHtml(scoreObj.chrom)}</td>
-                     <td style='text-align:right'>${escapeHtml(scoreObj.pos)}</td>
-                     <td>${escapeHtml(scoreObj.ref)}</td>
-                     <td>${escapeHtml(scoreObj.alt)}</td>
-                     <td ${getScoreStyle(RA)}>${RA}</td>
-                     <td ${getScoreStyle(RD)}>${RD}</td>
-                     <td ${getScoreStyle(AA)}>${AA}</td>
-                     <td ${getScoreStyle(AD)}>${AD}</td></tr>`)
-        }
-
         const table = (
             `<div>
                Detailed SpliceAI predictions for bases within the inserted sequence as well as +/-5bp around the insertion position: <br>
-               <table class='ui celled table'>
-                <thead>
-                    <tr style='text-align:center'>
-                        <th style='width:1%'>chrom</th>
-                        <th>position</th>
-                        <th style='width:1%'>REF</th>
-                        <th style='width:1%'>ALT</th>
-                        <th style='width:1%'>REF acceptor score</th>
-                        <th style='width:1%'>REF donor score</th>
-                        <th style='width:1%'>ALT acceptor score</th>
-                        <th style='width:1%'>ALT donor score</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${tableRows.join("\n")}
-                </tbody>
-            </table></div>`
+               ${renderScoreTableFromRows(buildInsertedBaseRows(scoresForInsertedBases, context), context)}
+            </div>`
         ).replace(/\n/g, "")
 
         //check if browser is chrome, safari or firefox
@@ -1751,44 +1812,30 @@
            are genomic. Note the variant row instead, so its "0 bp" is not read as "the effect is
            at this base" when the main table is showing a different number for the same effect. */
         const isInsertionWithInsertedBaseScores = (context.scores["SCORES_FOR_INSERTED_BASES"] || []).length > 0
-        return rows.map((row) => {
-            const pos = parseInt(row.pos)
-            return {
-                ...row,
-                pos: pos,
-                isVariant: pos == context.variantPos,
-                /* Signed genomic offset, the same quantity the main results table's position
-                   column shows (SpliceAI's DP_AG/DP_AL/DP_DG/DP_DL, Pangolin's DP_SL/DP_SG), so
-                   the two tables can be read against each other row by row.
-                   One case where they deliberately differ: for an insertion whose gain falls
-                   inside the inserted sequence, the model reports the offset as 0 and the main
-                   table substitutes "+N bp position within the inserted sequence"
-                   (updatePositionAccountingForInsertedBases). The inserted bases have no genomic
-                   coordinate of their own, so every row here is anchored at the variant position
-                   and that row reads "0 bp". */
-                positionDelta: pos - context.variantPos,
-                note: [
-                    pos == context.variantPos ? "variant" : "",
-                    pos == context.variantPos && isInsertionWithInsertedBaseScores
-                        ? "scores inside the inserted bases are summarized here" : "",
-                    getExonNoteForPosition(pos, context.scores),
-                ].filter(Boolean).join("; "),
-            }
-        })
+        // row.alt, not context.alt: the model pairs each row's ALT with that row's own REF.
+        return rows.map((row) => annotateGenomicScoreRow(row, context, {
+            variantAlt: row.alt,
+            variantNote: isInsertionWithInsertedBaseScores
+                ? "scores inside the inserted bases are summarized here" : "",
+        }))
     }
 
-    const renderPerPositionTable = (rows, context) => {
+    const renderScoreTableFromRows = (annotatedRows, context) => {
+        /* Render the score table shared by the per-position modal and the inserted-bases modal, so
+           the two show the same columns in the same formats rather than drifting apart.
+           Each annotated row arrives with its locus and position-delta cells already written out,
+           because the two callers fill those differently: the inserted bases have no genomic
+           coordinate to build a locus from and no genomic offset to report. Everything from the
+           notes column rightwards is identical for both. */
         const columns = PER_POSITION_COLUMNS[context.tool]
         const deltaColumns = PER_POSITION_DELTA_COLUMNS[context.tool]
-        const bodyRows = buildPerPositionRows(rows, context).map((row) => {
+        const bodyRows = annotatedRows.map((row) => {
             // escapeHtml every backend-supplied field: this markup goes through jQuery.html().
             // Built as one string and escaped once, which also turns the '>' into &gt;.
             const boldIfVariant = row.isVariant ? "font-weight:bold;" : ""
-            const locus = `${withChrPrefix(context.chrom)}:${withThousandsSeparators(row.pos)} ${row.ref}`
-                + (row.isVariant ? ` > ${row.alt}` : "")
             return `<tr class="${row.isVariant ? "per-position-variant-row" : ""}">
-                        <td style="white-space:nowrap; ${boldIfVariant}">${escapeHtml(locus)}</td>
-                        <td style="white-space:nowrap">${withThousandsSeparators(row.positionDelta)} bp</td>
+                        <td style="white-space:nowrap; ${boldIfVariant}">${escapeHtml(row.locusText)}</td>
+                        <td style="white-space:nowrap">${escapeHtml(row.positionDeltaText)}</td>
                         <td>${escapeHtml(row.note)}</td>
                         ${deltaColumns.map((column) => { const d = maskPerPositionDelta(column, row, context); return `<td ${getScoreStyle(d)}>${d}</td>` }).join("")}
                         ${columns.map(([, key]) => `<td ${getRawScoreStyle(row[key])}>${parseFloat(row[key])}</td>`).join("")}
@@ -1811,6 +1858,9 @@
                     <tbody>${bodyRows.join("")}</tbody>
                 </table>`
     }
+
+    const renderPerPositionTable = (rows, context) =>
+        renderScoreTableFromRows(buildPerPositionRows(rows, context), context)
 
     const perPositionRowsToCsv = (rows, context) => {
         const columns = PER_POSITION_COLUMNS[context.tool]
@@ -2192,8 +2242,12 @@
                 }
 
                 const modalDialogId = transcriptIndex*10 + i
+                // Same context shape the per-position modal builds, so the two tables render
+                // through renderScoreTableFromRows identically. Always spliceai: only SpliceAI
+                // reports SCORES_FOR_INSERTED_BASES.
                 const detailedScoresTable = generateTableOfScoresForInsertedBases(
-                    modalDialogId, scores[scoreKey], scores[positionKey], ref, alt, scores["SCORES_FOR_INSERTED_BASES"])
+                    modalDialogId, scores[scoreKey], scores[positionKey], ref, alt, scores["SCORES_FOR_INSERTED_BASES"],
+                    {tool: "spliceai", chrom: chrom, variantPos: parseInt(pos), alt: alt, scores: scores, mask: mask == "1"})
 
                 if (detailedScoresTable) {
                     modalDialogIds.push(modalDialogId)
