@@ -1043,7 +1043,9 @@
     //gnomAD browser thresholds: https://github.com/broadinstitute/gnomad-browser/blob/main/browser/src/VariantPage/VariantInSilicoPredictors.tsx#L22-L60
     const colorMapForPredictorScores = {
         "primateai3d": (record) => {
-            if (record.percentile >= record.genePercentileThreshold) { // + 0.1) {
+            // Both values are displayed rounded to 2 decimals, so the comparison uses the same
+            // rounding -- otherwise a percentile shown as equal to the threshold could go unshaded.
+            if (roundScore(record.percentile) >= roundScore(record.genePercentileThreshold)) { // + 0.1) {
                 return "#fccfb8"  // light red
             //} else if (record.percentile >= record.genePercentileThreshold - 0.1) {
             //    return "#fff19d" // light yellow
@@ -1052,7 +1054,9 @@
             }
         },
         "promoterai": (record) => {
-            const absScore = Math.abs(parseFloat(record.score))
+            // Rounded to the 2 decimals the score is displayed at, so a score shown as "0.10"
+            // gets the yellow background even if the raw value was 0.0995.
+            const absScore = Math.abs(roundScore(record.score))
             if (absScore >= 0.5) {
                 return "#fccfb8"    // light red
             } else if (absScore >= 0.1) {
@@ -1129,6 +1133,22 @@
             .replace(/'/g, "&#39;")
     }
 
+    /* Every SpliceAI and Pangolin score in the UI is shown rounded to 2 decimals, so the
+       thresholds those tables key off are applied to the rounded value rather than to the raw
+       score the API returned. Comparing the raw value left a 0.195 rendered as "0.20" sitting in
+       an unhighlighted cell, since 0.195 is below the 0.2 cutoff (issue #136). Rounding here is
+       the same toFixed(2) formatScore displays, so the number on screen and the number a
+       threshold sees can never fall on opposite sides of a cutoff.
+       PromoterAI and PrimateAI-3D go through here too, because they are also displayed at 2
+       decimals. The rest of the 'other scores' table (CADD, REVEL, SIFT, PolyPhen, PhyloP,
+       AlphaMissense) deliberately does not: those point thresholds are published to 3 decimals
+       (REVEL 0.932, AlphaMissense 0.972, PolyPhen 0.999, SIFT 0.001, ...), and rounding to 2
+       decimals first would shift the tiers and leave some of them unreachable. Those scores are
+       displayed at whatever precision they arrive in -- 3 decimals from gnomAD and myvariant.info,
+       unrounded from the AlphaMissense lookup table -- and their colors are read from that same
+       unrounded value, so the number and its color still agree. */
+    const roundScore = (score) => parseFloat(parseFloat(score).toFixed(2))
+
     const formatScore = (score) => {
         if (score == null) {
             return ""
@@ -1179,18 +1199,20 @@
     }
 
     const getScoreStyle = (score) => {
-        score = parseFloat(score)
+        // Rounded before the cutoffs are applied (see roundScore) so a cell reading "0.20" is
+        // always shaded green, whatever the third decimal of the underlying score was.
+        score = Math.abs(roundScore(score))
 
-        if (Math.abs(score) < 0.01) {
+        if (score < 0.01) {
             return `style='color:#BBBBBB;'`
         }
 
         let color
-        if (Math.abs(score) >= 0.8) {
+        if (score >= 0.8) {
             color = "#fccfb8"
-        } else if (Math.abs(score) >= 0.5) {
+        } else if (score >= 0.5) {
             color = "#fff19d"
-        } else if (Math.abs(score) >= 0.2) {
+        } else if (score >= 0.2) {
             color = "#cdffd7"
         } else {
             return ""
@@ -1533,7 +1555,7 @@
 
     const considerInsertedBases = (score, position, ref, alt, scoresForInsertedBases) => {
         //check if the variant is an insertion and if so, return the number of inserted bases
-        return score >= 0.01 && position == 0 && ref.length == 1 && alt.length > 1 && scoresForInsertedBases && scoresForInsertedBases.length > 0
+        return roundScore(score) >= 0.01 && position == 0 && ref.length == 1 && alt.length > 1 && scoresForInsertedBases && scoresForInsertedBases.length > 0
     }
 
     const annotateGenomicScoreRow = (row, context, {variantAlt, variantNote = ""}) => {
@@ -1708,21 +1730,35 @@
        that expression here would produce a negative number for exactly the positions that
        matter, which the suppression would then render as 0. The loss delta is therefore
        ref - alt like every other loss column, not the model's internal form.
-       Rounded to 3 decimals to match the precision the scores arrive in, and because binary
-       floating point would otherwise turn 0.013 - 0.012 into 0.0009999999999999992. */
+       Each operand is rounded to the 2 decimals its own column displays (see roundScore) before
+       the subtraction, rather than the difference being rounded afterwards. The REF and ALT
+       columns sit in the same row showing those rounded numbers, so a delta derived from the
+       full-precision values would not equal the subtraction a reader can do on the two cells
+       beside it: 0.080 and 0.025 print as 0.08 and 0.03, whose difference is 0.05, while the raw
+       values differ by 0.055 and would print 0.06.
+       The outer roundScore is not redundant. Subtracting two hundredths in binary floating point
+       gives 0.09 - 0.08 = 0.009999999999999995, which would fall under the threshold below and be
+       suppressed to 0 while its own two cells still read 0.09 and 0.08. */
     /* A delta is reported only when it is at least 0.01; anything smaller, including every
        negative value, is reported as 0. Two reasons, and one comparison covers both:
          A negative delta means the change went the other way, and that direction already has
          its own column -- a negative Acceptor Loss is an Acceptor Gain. Clamping keeps at most
          one of each loss/gain pair non-zero instead of showing the same number twice with
          opposite signs, which is how both models report their own deltas.
-         Below 0.01 the value is the difference between two scores rounded to 3 decimals, so
-         -0.001 and 0.001 carry no meaning about splicing. The threshold is the one
-         getScoreStyle already treats as near-zero, so a suppressed delta is greyed like every
-         other zero in the table. */
+         Both operands are hundredths, so their difference is one too and nothing strictly between
+         0 and 0.01 can reach the comparison. What it actually rules out is 0 itself along with
+         the negatives, leaving 0.01 as the smallest delta the column ever shows. The threshold is
+         the one getScoreStyle already treats as near-zero, so a suppressed delta is greyed like
+         every other zero in the table.
+         Rounding the operands costs up to 0.01 against the model's own delta, in both directions.
+         0.136 and 0.129 differ by 0.007 but print as 0.14 and 0.13, so the column shows 0.01; and
+         0.015 and 0.005 differ by 0.010 yet both print as 0.01 (toFixed rounds the binary value,
+         and neither is exactly a half), so the column shows 0.00. Agreeing with the two cells
+         beside it is the property worth keeping: this table is read across a row, and the main
+         results table above it is where the model's own delta is reported. */
     const PER_POSITION_DELTA_MIN = 0.01
     const perPositionDelta = (a, b) => {
-        const delta = Math.round((parseFloat(a) - parseFloat(b)) * 1000) / 1000
+        const delta = roundScore(roundScore(a) - roundScore(b))
         return delta < PER_POSITION_DELTA_MIN ? 0 : delta
     }
 
@@ -1762,7 +1798,7 @@
        shading them competes for attention with the delta columns, which are what actually
        indicate a change. Only the near-zero grey is kept, so those values recede the same way
        they do everywhere else in the table. */
-    const getRawScoreStyle = (score) => Math.abs(parseFloat(score)) < 0.01 ? `style='color:#BBBBBB;'` : ""
+    const getRawScoreStyle = (score) => Math.abs(roundScore(score)) < 0.01 ? `style='color:#BBBBBB;'` : ""
 
     // Keyed by the id embedded in each transcript's table icon, and populated while the results
     // table is built so the click handler has the transcript's exon structure and query params.
@@ -1855,8 +1891,8 @@
                         <td style="white-space:nowrap; ${boldIfVariant}">${escapeHtml(row.locusText)}</td>
                         <td style="white-space:nowrap">${escapeHtml(row.positionDeltaText)}</td>
                         <td>${escapeHtml(row.note)}</td>
-                        ${deltaColumns.map((column) => { const d = maskPerPositionDelta(column, row, context); return `<td ${getScoreStyle(d)}>${d}</td>` }).join("")}
-                        ${columns.map(([, key]) => `<td ${getRawScoreStyle(row[key])}>${parseFloat(row[key])}</td>`).join("")}
+                        ${deltaColumns.map((column) => { const d = maskPerPositionDelta(column, row, context); return `<td ${getScoreStyle(d)}>${formatScore(d)}</td>` }).join("")}
+                        ${columns.map(([, key]) => `<td ${getRawScoreStyle(row[key])}>${formatScore(row[key])}</td>`).join("")}
                     </tr>`
         })
 
@@ -1886,6 +1922,8 @@
         // Delta columns first, then the raw REF and ALT scores, matching the order
         // renderPerPositionTable draws. The two build their cells separately (the table styles the
         // two kinds differently), so a reorder in one has to be repeated in the other.
+        // Both write their scores through formatScore, so the download reads the same 2 decimals
+        // the table shows instead of the precision the API happened to send.
         // "Δ" is replaced rather than carried into the header so the column names stay ASCII,
         // which spreadsheet imports handle more predictably than a non-ASCII byte.
         const header = [...deltaColumns, ...columns].map(([label]) =>
@@ -1893,8 +1931,8 @@
         const lines = [["chrom", "position", "position_delta", "ref", "alt", ...header, "notes"].join(",")]
         for (const row of buildPerPositionRows(rows, context)) {
             lines.push([withChrPrefix(context.chrom), row.pos, row.positionDelta, row.ref, row.alt,
-                        ...deltaColumns.map((column) => maskPerPositionDelta(column, row, context)),
-                        ...columns.map(([, key]) => row[key]),
+                        ...deltaColumns.map((column) => formatScore(maskPerPositionDelta(column, row, context))),
+                        ...columns.map(([, key]) => formatScore(row[key])),
                         `"${row.note}"`].join(","))
         }
 

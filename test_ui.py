@@ -406,6 +406,49 @@ class TestSpliceAILookupUI(unittest.TestCase):
             f"palette: {unexpected} (expected a subset of {known_rgb})",
         )
 
+    def test_score_color_matches_the_displayed_value(self):
+        """Every score is shaded by the 2-decimal number it displays (issue #136).
+
+        Calls index.html's formatScore and getScoreStyle over a sweep of raw scores rather than
+        submitting a variant whose score happens to land just under a cutoff: model output moves
+        between releases, so a fixture variant would stop covering the boundary it was picked for.
+        The reported bug was a raw 0.195 rendering as "0.20" in a cell with no green background.
+        """
+        mismatches = self.page.evaluate("""() => {
+            // The whole style string each function owes the displayed value, not just its
+            // background: below 0.01 getScoreStyle greys the text and paints no background at
+            // all, and comparing only the background would let that branch pass whatever it
+            // returned. getRawScoreStyle is swept too -- it has only the grey branch, but it
+            // reads the same rounded value and would drift the same way.
+            const expectedStyle = (displayed) =>
+                  displayed < 0.01 ? "style='color:#BBBBBB;'"
+                : displayed >= 0.8 ? "style='white-space:nowrap;background-color:#fccfb8;'"
+                : displayed >= 0.5 ? "style='white-space:nowrap;background-color:#fff19d;'"
+                : displayed >= 0.2 ? "style='white-space:nowrap;background-color:#cdffd7;'"
+                : ""
+            const expectedRawStyle = (displayed) => displayed < 0.01 ? "style='color:#BBBBBB;'" : ""
+            const mismatches = []
+            // Negative scores as well as positive: Pangolin reports a real splice loss as a
+            // negative DS_SL, and both functions take the magnitude, so only negative inputs
+            // exercise that.
+            for (let i = -1000; i <= 1000; i++) {
+                const score = i / 1000
+                const displayed = parseFloat(formatScore(score))
+                const style = getScoreStyle(score)
+                const rawStyle = getRawScoreStyle(score)
+                if (style !== expectedStyle(displayed)) {
+                    mismatches.push(["getScoreStyle", score, formatScore(score), style])
+                }
+                if (rawStyle !== expectedRawStyle(displayed)) {
+                    mismatches.push(["getRawScoreStyle", score, formatScore(score), rawStyle])
+                }
+            }
+            return mismatches
+        }""")
+        self.assertEqual(
+            mismatches, [],
+            f"scores shaded inconsistently with the value they display: {mismatches[:5]}")
+
     # ------------------------------------------------------------------
     # Insertion modal dialog
     # ------------------------------------------------------------------
