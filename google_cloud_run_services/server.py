@@ -83,31 +83,120 @@ FASTA_PATH = {
     "38": "/hg38.fa.gz",
 }
 
-# Lazy pyfastx Fasta singletons keyed by genome_version, used by SAI-10k-calc's
-# premature-stop detection. Mirrors the SPLICEAI_ANNOTATOR cache pattern below.
-# pyfastx (already in the container's spliceai/requirements.txt) handles
-# bgzipped .fa.gz natively. Init failures are tolerated: detection silently
-# falls back to None on every aberration, leaving the rest of the SAI-10k
-# response intact.
-SAI10K_FASTA = {}
-_SAI10K_FASTA_LOCK = threading.Lock()
+# Lazy pyfastx Fasta singletons keyed by genome_version, shared by SAI-10k-calc's
+# premature-stop detection and by check_ref_allele below. Mirrors the
+# SPLICEAI_ANNOTATOR cache pattern below. pyfastx (in both the spliceai and the
+# pangolin requirements.txt) handles bgzipped .fa.gz natively. Init failures are
+# tolerated: both callers fall back to skipping their check rather than failing
+# the request, leaving the rest of the response intact.
+FASTA = {}
+_FASTA_LOCK = threading.Lock()
 
 
-def _get_sai10k_fasta(genome_version):
-    if genome_version in SAI10K_FASTA:
-        return SAI10K_FASTA[genome_version]
-    with _SAI10K_FASTA_LOCK:
-        if genome_version in SAI10K_FASTA:
-            return SAI10K_FASTA[genome_version]
+def _get_fasta(genome_version):
+    if genome_version in FASTA:
+        return FASTA[genome_version]
+    with _FASTA_LOCK:
+        if genome_version in FASTA:
+            return FASTA[genome_version]
         try:
             import pyfastx
-            SAI10K_FASTA[genome_version] = pyfastx.Fasta(FASTA_PATH[genome_version])
+            FASTA[genome_version] = pyfastx.Fasta(FASTA_PATH[genome_version])
         except Exception as e:
             print(f"WARNING: Failed to open FASTA for hg{genome_version} "
-                  f"(SAI-10k premature-stop detection disabled): "
+                  f"(REF-allele check and SAI-10k premature-stop detection disabled): "
                   f"{type(e).__name__}: {e}")
-            SAI10K_FASTA[genome_version] = None
-    return SAI10K_FASTA[genome_version]
+            FASTA[genome_version] = None
+    return FASTA[genome_version]
+
+
+def genome_display_name(genome_version):
+    """The name users know a genome build by, for error messages.
+
+    Args:
+        genome_version (str): "37" or "38"
+    """
+    return "hg19" if genome_version == "37" else "hg38"
+
+
+def check_ref_allele(chrom, pos, ref, genome_version):
+    """Check the variant's REF allele against the reference genome.
+
+    Returns an error message naming the base the reference actually has, or None when the REF
+    matches and scoring should go ahead.
+
+    This runs before the model does, because the models answer a wrong REF with silence: SpliceAI
+    and Pangolin return no scores, and the message built for that case blames GENCODE coverage,
+    which sends users looking in the wrong place. The front end used to catch this by routing
+    every variant through Ensembl's VEP first, at the cost of an extra API call on the path where
+    it already had coordinates.
+
+    Deliberately fails open: a missing FASTA, an unknown contig, a position outside one, and a
+    reference that isn't plain ACGT (the chrY pseudoautosomal regions are hard-masked to N in both
+    builds) all return None. An infrastructure problem or a position the reference can't speak to
+    degrades to the previous behaviour, where the model decides, rather than rejecting a variant
+    that may well be fine.
+
+    Args:
+        chrom (str): chromosome name, with or without a "chr" prefix
+        pos (int): 1-based position of the variant
+        ref (str): the REF allele to check
+        genome_version (str): "37" or "38"
+    """
+    fasta = _get_fasta(genome_version)
+    if fasta is None:
+        return None
+
+    # hg19's FASTA names its sequences "1".."22","X","Y","MT"; hg38's uses "chr1".."chrM". Accept
+    # either spelling from the caller and look up whichever one this FASTA actually carries.
+    bare_chrom = chrom[3:] if chrom.lower().startswith("chr") else chrom
+    candidate_names = [chrom, bare_chrom, f"chr{bare_chrom}"]
+    # The mitochondrion is the one sequence whose bare name also differs between the builds: "MT"
+    # in hg19, "M" (as "chrM") in hg38. get_spliceai_scores remaps it before calling here, but
+    # get_pangolin_scores cannot -- MITO_CHROM_NAME is built by init_spliceai and does not exist in
+    # the Pangolin container. Resolve the alias here instead, where it is a fact about the reference
+    # rather than about the tool, so both services validate the same variants.
+    if bare_chrom.upper() in ("M", "MT"):
+        alias = "MT" if bare_chrom.upper() == "M" else "M"
+        candidate_names += [alias, f"chr{alias}"]
+    sequence_name = next((name for name in candidate_names if name in fasta), None)
+    if sequence_name is None:
+        return None
+
+    # Bound the interval before fetching. pyfastx does not merely return short or raise for an
+    # out-of-range fetch: for many positions past a contig's end it segfaults, taking the whole
+    # gunicorn worker with it (verified on hg38 chr1 at 400,000,000 and above). VARIANT_RE accepts
+    # positions up to 999,999,999 and the endpoint is public and unauthenticated, so this has to be
+    # checked here rather than relied on to fail safely inside pyfastx.
+    if pos < 1 or pos + len(ref) - 1 > len(fasta[sequence_name]):
+        return None
+
+    try:
+        reference_allele = fasta.fetch(sequence_name, (pos, pos + len(ref) - 1))
+    except Exception as e:
+        print(f"WARNING: Failed to read {sequence_name}:{pos} from the "
+              f"hg{genome_version} FASTA: {type(e).__name__}: {e}")
+        return None
+
+    # Belt and braces against an index that disagrees with the sequence: a partial read can't be
+    # compared, so treat it the same as not having the reference.
+    if len(reference_allele) != len(ref):
+        return None
+
+    reference_allele = reference_allele.upper()
+
+    # Both FASTAs hard-mask the chrY pseudoautosomal regions to N (hg38 chrY:10,001-2,781,479, hg19
+    # Y:10,001-2,649,520), and 200-odd GENCODE transcripts start inside them, SHOX among them. An N
+    # says nothing about the user's allele, so reporting "the reference allele is N" would be both
+    # wrong and blocking. Fail open like the other uncomparable cases and let the model decide.
+    if any(base not in "ACGT" for base in reference_allele):
+        return None
+    if reference_allele == ref.upper():
+        return None
+
+    return (f"{chrom}-{pos}-{ref} has an unexpected reference allele. The "
+            f"{genome_display_name(genome_version)} reference allele at {chrom}:{pos} is "
+            f"{reference_allele}, not {ref}.")
 
 GENCODE_VERSION = "v49"
 
@@ -890,6 +979,23 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
             "error": str(e),
         }
 
+    # Checked before the mito remap below, on the chromosome name the user actually submitted.
+    # get_pangolin_scores has no such remap, and the message embeds the name it was given, so
+    # remapping first would make the two services word the same error differently ("MT-100-A" vs
+    # "M-100-A") and defeat the front end's duplicate suppression. check_ref_allele resolves the
+    # M/MT alias itself, so it does not need the remapped name.
+    ref_allele_error = check_ref_allele(chrom, pos, ref, genome_version)
+    if ref_allele_error:
+        return {
+            "variant": variant,
+            "source": "spliceai",
+            "error": ref_allele_error,
+            # This one is about the variant, not about this tool. Both tools return it for the same
+            # input, so the front end shows it plainly and only once, rather than twice wrapped in
+            # each tool's "<tool> API call error" prefix.
+            "inputError": True,
+        }
+
     # spliceai's normalise_chrom() handles "chr" prefix mismatches but not the
     # M↔MT alias, so a user submitting M/chrM against hg19 (which uses "MT")
     # would otherwise hit KeyError. Remap to whichever name the fasta uses.
@@ -1014,7 +1120,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
     fasta_open_ms = 0.0
     if selected_transcript:
         fasta_t0 = time.perf_counter()
-        sai10k_fasta = _get_sai10k_fasta(genome_version)
+        sai10k_fasta = _get_fasta(genome_version)
         fasta_open_ms = (time.perf_counter() - fasta_t0) * 1000
         # Premature-stop detection requires the FASTA. When it failed to open,
         # the resulting predictions have null stop_codon_introduced / aa_change
@@ -1213,6 +1319,17 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
             "variant": variant,
             "source": "pangolin",
             "error": f"Pangolin does not currently support complex InDels like {chrom}-{pos}-{ref}-{alt}",
+        }
+
+    # See the matching comment in get_spliceai_scores: a wrong REF scores as silence otherwise.
+    ref_allele_error = check_ref_allele(chrom, pos, ref, genome_version)
+    if ref_allele_error:
+        return {
+            "variant": variant,
+            "source": "pangolin",
+            "error": ref_allele_error,
+            # see the matching comment in get_spliceai_scores
+            "inputError": True,
         }
 
     class PangolinArgs:
