@@ -59,11 +59,12 @@ ENSEMBL_TIMEOUT_SEC = 90
 def genebe_response_is_usable(body):
     """True if a GeneBe variant-relaxed response carries an annotation the page can use.
 
-    Mirrors the `annotationResponse.ok && annotationResponse.variants` check in
-    annotateVariantWithGeneBe (index.html), so a 200 that answers nothing counts as a failure
-    here just as it does in the browser.
+    Mirrors the `annotationResponse.variants` check in annotateVariantWithGeneBe (index.html),
+    so a 200 that answers nothing counts as a failure here just as it does in the browser. The
+    `ok` that the page tests alongside it is not a GeneBe field: makeRequest sets it from the
+    HTTP status, which here is already covered by urlopen raising HTTPError on a non-2xx.
     """
-    return bool(isinstance(body, dict) and body.get("ok") and body.get("variants"))
+    return bool(isinstance(body, dict) and body.get("variants"))
 
 
 def ensembl_response_is_usable(body):
