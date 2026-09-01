@@ -6,6 +6,7 @@ Loops forever, printing every --interval minutes (default 30):
   - response-code totals (2xx/3xx/4xx/5xx)
   - CPU and memory utilization (p95/p99)
   - request latency (p50/p95/p99) with sample counts
+  - GeneBe and Ensembl VEP API latency, measured by probing them directly (see probe_external_apis)
   - container cold-start count and startup latency (p50/p95/p99)
 
 If a baseline window is provided, latency p50/p95/p99 are also compared
@@ -23,9 +24,13 @@ import collections
 import json
 import os
 import select
+import statistics
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone, timedelta
 
 from google.cloud import monitoring_v3
@@ -44,6 +49,61 @@ SERVICES = ["liftover",
 # Cache populated by `~/.claude/skills/analyze-gcloud-costs/scripts/cost_analysis.py`.
 # If absent, the cost section is skipped with a warning instead of failing.
 BILLING_CACHE_DIR = os.path.expanduser("~/.cache/analyze-gcloud-costs")
+
+# Per-request timeouts for the external-API probes below, matching GENEBE_TIMEOUT_MS and
+# ENSEMBL_TIMEOUT_MS in index.html so a probe gives up exactly when the page would.
+GENEBE_TIMEOUT_SEC = 15
+ENSEMBL_TIMEOUT_SEC = 90
+
+
+def genebe_response_is_usable(body):
+    """True if a GeneBe variant-relaxed response carries an annotation the page can use.
+
+    Mirrors the `annotationResponse.ok && annotationResponse.variants` check in
+    annotateVariantWithGeneBe (index.html), so a 200 that answers nothing counts as a failure
+    here just as it does in the browser.
+    """
+    return bool(isinstance(body, dict) and body.get("ok") and body.get("variants"))
+
+
+def ensembl_response_is_usable(body):
+    """True if an Ensembl VEP response carries the coordinates the page needs.
+
+    Mirrors the `ensemblApiResponseJson[0].vcf_string` check in normalizeVariant (index.html).
+    """
+    return bool(isinstance(body, list) and body and isinstance(body[0], dict) and body[0].get("vcf_string"))
+
+
+# The external APIs index.html calls straight from the user's browser. Cloud Monitoring never
+# sees these requests, so probing the APIs from here is the only way to know what they cost a
+# search. One entry per (API, query shape) the page actually sends; see probe_external_apis.
+#
+# The probe variants come from the page's own Examples table (index.html), except the hg19
+# coordinate, which is the GRCh37 position of the same variant as chr8-140300616-T-G (test_ui.py
+# uses it for the same reason: on hg19 that hg38 position has a different reference allele).
+GENEBE_URL_PREFIX = "https://api.genebe.net/cloud/api-public/v1/variant-relaxed"
+ENSEMBL_HGVS_EXAMPLE = "NM_000249.4(MLH1):c.116G>A"
+EXTERNAL_API_PROBES = [
+    # (api, query shape, url, timeout_sec, response-usable predicate)
+    ("GeneBe", "hg38 coords",
+     f"{GENEBE_URL_PREFIX}?variant={urllib.parse.quote('chr8-140300616-T-G')}&genome=hg38",
+     GENEBE_TIMEOUT_SEC, genebe_response_is_usable),
+    ("GeneBe", "hg19 coords",
+     f"{GENEBE_URL_PREFIX}?variant={urllib.parse.quote('8-141312982-T-G')}&genome=hg19",
+     GENEBE_TIMEOUT_SEC, genebe_response_is_usable),
+    ("GeneBe", "hg38 HGVS",
+     f"{GENEBE_URL_PREFIX}?variant={urllib.parse.quote(ENSEMBL_HGVS_EXAMPLE)}&genome=hg38",
+     GENEBE_TIMEOUT_SEC, genebe_response_is_usable),
+    # Only HGVS notation reaches Ensembl now; coordinates the page parses itself never do.
+    ("Ensembl VEP", "hg38 HGVS",
+     f"https://rest.ensembl.org/vep/human/hgvs/{urllib.parse.quote(ENSEMBL_HGVS_EXAMPLE)}"
+     "?content-type=application/json&vcf_string=1",
+     ENSEMBL_TIMEOUT_SEC, ensembl_response_is_usable),
+    ("Ensembl VEP", "hg19 HGVS",
+     f"https://grch37.rest.ensembl.org/vep/human/hgvs/{urllib.parse.quote(ENSEMBL_HGVS_EXAMPLE)}"
+     "?content-type=application/json&vcf_string=1",
+     ENSEMBL_TIMEOUT_SEC, ensembl_response_is_usable),
+]
 
 
 def parse_iso(s):
@@ -74,6 +134,127 @@ def get_production_revisions():
                 continue
             out[svc] = entry["revisionName"]
             break
+    return out
+
+
+def revisions_with_traffic(client, start, end):
+    """Return {service_name: {revision_name: request_count}} for the window.
+
+    Every revision that answered a request, production or tagged, so callers can widen the
+    revision filter past the one revision that happens to be at 100% right now.
+    """
+    span = max(60, int((end - start).total_seconds()))
+    out = {}
+    for ts in client.list_time_series(request={
+        "name": f"projects/{PROJECT}",
+        "filter": 'metric.type="run.googleapis.com/request_count"',
+        "interval": monitoring_v3.TimeInterval(end_time=end, start_time=start),
+        "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
+        "aggregation": monitoring_v3.Aggregation(
+            alignment_period={"seconds": span},
+            per_series_aligner=monitoring_v3.Aggregation.Aligner.ALIGN_SUM,
+            cross_series_reducer=monitoring_v3.Aggregation.Reducer.REDUCE_SUM,
+            group_by_fields=["resource.label.service_name", "resource.label.revision_name"],
+        ),
+    }):
+        svc = ts.resource.labels.get("service_name", "?")
+        rev = ts.resource.labels.get("revision_name", "?")
+        for p in ts.points:
+            out.setdefault(svc, {})[rev] = out.get(svc, {}).get(rev, 0) + p.value.int64_value
+    return out
+
+
+def tagged_revisions(start):
+    """Return the set of revision names that served a tagged (non-production) URL since `start`.
+
+    Cloud Run gives each tagged revision its own hostname of the form
+    `<tag>---<service>-<hash>-<region>.a.run.app`, so a request whose URL carries the `---`
+    separator went to a tag (dev, profile, ...) rather than to production.
+
+    Deciding this from the traffic rather than from the service's current tag list is what makes
+    it correct across a window: a revision that was the `dev` target earlier in the window can
+    have been retagged since, and its dev traffic would then be counted as production.
+
+    The query is narrow by construction (only tag hostnames match), so the 1000-entry cap is not
+    a practical concern the way it is for gcloud_errors().
+    """
+    out = subprocess.run([
+        "gcloud", "logging", "read",
+        f'resource.type="cloud_run_revision" AND httpRequest.requestUrl:"---" AND '
+        f'timestamp>="{start.strftime("%Y-%m-%dT%H:%M:%SZ")}"',
+        f"--project={PROJECT}",
+        "--format=json", "--limit=1000",
+    ], capture_output=True, text=True, check=True)
+    return {
+        e.get("resource", {}).get("labels", {}).get("revision_name")
+        for e in json.loads(out.stdout or "[]")
+    } - {None}
+
+
+def production_revisions(client, start, end):
+    """Return ({service: [revision, ...]}, {service: current_100_percent_revision}).
+
+    The first mapping is every revision that served production traffic during the window, which
+    is what the metric and log queries must filter on. Filtering on the single revision at 100%
+    instead drops the whole pre-deploy part of the window: on 2026-09-01 a mid-window redeploy
+    left spliceai-37 reporting 325 of the 1205 requests it actually served, and with them the
+    dozens of 5xx it returned during that morning's container-start failures, so the service
+    read as 0.00% 5xx while it was failing.
+
+    A revision that only ever answered on a tag hostname is excluded, which is the dev/test
+    traffic the revision filter existed to keep out in the first place.
+    """
+    current = get_production_revisions()
+    served = revisions_with_traffic(client, start, end)
+    tagged = tagged_revisions(start)
+    out = {}
+    for svc in SERVICES:
+        revs = {r for r in served.get(svc, {}) if r not in tagged}
+        # Keep the current revision even with no requests yet: the CPU, memory and startup
+        # metrics still have something to say about an instance that is up but idle.
+        if svc in current:
+            revs.add(current[svc])
+        if revs:
+            out[svc] = sorted(revs)
+    return out, current
+
+
+def uptime_check_accepted_codes():
+    """Return {service_name: set(status_code)} that each service's own uptime check calls success.
+
+    The /spliceai/ and /pangolin/ checks probe the bare endpoint with no query parameters, which
+    the server answers 400 ("missing variant"), so their configs declare 400 as the accepted
+    status. Those 400s are passing probes, not client errors, and counting them made every
+    scoring service look like it was rejecting real requests.
+
+    Read from the live config rather than hard-coded, so the report follows the check if the
+    accepted status is ever changed. Note the cost: a genuine client 400 on those two paths is
+    now pooled in with the probes and lands in the ignored count, not the 4xx total. Every 400
+    sampled while writing this came from the uptime checker, and the page validates input before
+    it ever reaches the backend, so the trade buys a readable 4xx column cheaply.
+    """
+    proc = subprocess.run([
+        "gcloud", "monitoring", "uptime", "list-configs",
+        f"--project={PROJECT}", "--format=json",
+    ], capture_output=True, text=True)
+    if proc.returncode != 0:
+        print("  WARNING: could not read uptime check configs; uptime-check status codes will "
+              "be counted as errors below.")
+        return {}
+    out = {}
+    for cfg in json.loads(proc.stdout or "[]"):
+        host = cfg.get("monitoredResource", {}).get("labels", {}).get("host", "")
+        # "spliceai-37" also prefixes "spliceai-37-comprehensive", so the longest match wins.
+        svc = max((s for s in SERVICES if host.startswith(f"{s}-")), key=len, default=None)
+        if not svc:
+            continue
+        codes = {
+            c["statusValue"]
+            for c in cfg.get("httpCheck", {}).get("acceptedResponseStatusCodes", [])
+            if "statusValue" in c
+        }
+        # A check that accepts 2xx tells us nothing we would have flagged anyway.
+        out.setdefault(svc, set()).update(c for c in codes if c // 100 != 2)
     return out
 
 
@@ -328,6 +509,83 @@ def print_cost_chart(daily, skus, bar_width=40):
         print_table(rows, aligns=['r', 'l', 'l'], indent="    ")
 
 
+def probe_external_apis(samples, probes=EXTERNAL_API_PROBES):
+    """Time each external-API query shape in `probes` by calling it `samples` times.
+
+    Requests are issued serially, one shape fully finished before the next starts, because
+    GeneBe throttles concurrent requests (measured while comparing it to Ensembl on 2026-08-16:
+    calls that failed inside a 5-worker run succeeded when replayed alone).
+
+    A call is only counted as successful if the response is one the page could actually use, so
+    an HTTP 200 carrying no annotation is a failure here exactly as it is in the browser.
+
+    Args:
+        samples (int): number of requests to make per query shape.
+        probes (list): (api, shape, url, timeout_sec, is_usable) tuples.
+
+    Returns:
+        list: one (api, shape, results) triple per query shape, where results is a list of
+            (elapsed_seconds, outcome) and outcome is "ok" or a short failure description.
+    """
+    out = []
+    for api, shape, url, timeout, is_usable in probes:
+        results = []
+        for _ in range(samples):
+            # Identify the probe rather than sending urllib's default "Python-urllib/3.x",
+            # which some APIs rate-limit or reject outright.
+            request = urllib.request.Request(url, headers={
+                "User-Agent": "SpliceAI-lookup-monitor/1.0 (+https://spliceailookup.broadinstitute.org)",
+                "Accept": "application/json",
+            })
+            started = time.monotonic()
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    outcome = "ok" if is_usable(json.loads(response.read())) else "unusable response"
+            except urllib.error.HTTPError as e:
+                outcome = f"HTTP {e.code}"
+            except urllib.error.URLError as e:
+                # A timeout during connect or read surfaces wrapped in URLError, while one
+                # during the TLS handshake can be raised bare, hence the separate clause below.
+                outcome = (f"timeout >{timeout:g}s" if isinstance(e.reason, TimeoutError)
+                           else f"URLError ({e.reason})")
+            except TimeoutError:
+                outcome = f"timeout >{timeout:g}s"
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                outcome = "unparseable response"
+            results.append((time.monotonic() - started, outcome))
+        out.append((api, shape, results))
+    return out
+
+
+def print_external_api_latencies(probe_results):
+    """Print the per-query-shape latency table for the external APIs.
+
+    min/median/max cover the successful calls only, so a shape that is entirely failing shows
+    "-" rather than the time its failures took to come back. The failures are summarized in the
+    last column with their own timing, since a 503 after 10s and a 503 after 0.2s say very
+    different things about where the API is broken.
+    """
+    rows = [["api", "query shape", "n", "ok", "min", "med", "max", "failures"]]
+    for api, shape, results in probe_results:
+        ok = sorted(sec for sec, outcome in results if outcome == "ok")
+        failures = collections.Counter(outcome for _, outcome in results if outcome != "ok")
+        notes = []
+        for outcome, count in failures.most_common():
+            elapsed = [sec for sec, o in results if o == outcome]
+            notes.append(f"{count}x {outcome} (~{statistics.median(elapsed):.2f}s)")
+        rows.append([
+            api,
+            shape,
+            str(len(results)),
+            str(len(ok)),
+            fmt_s(ok[0] * 1000) if ok else "-",
+            fmt_s(statistics.median(ok) * 1000) if ok else "-",
+            fmt_s(ok[-1] * 1000) if ok else "-",
+            ", ".join(notes),
+        ])
+    print_table(rows, aligns=['l', 'l', 'r', 'r', 'r', 'r', 'r', 'l'])
+
+
 def print_table(rows, aligns=None, indent="  ", gap="  "):
     """Print rows aligned by max column widths.
 
@@ -355,19 +613,29 @@ def snapshot(client, args, bq_client=None, billing_table=None):
         prod_revs = None
         rev_label = "(all revisions, including dev/test traffic)"
     else:
-        prod_map = get_production_revisions()
+        prod_map, current_map = production_revisions(client, start, now)
         if not prod_map:
-            # Either no service has a revision at 100% traffic (e.g. all simultaneously rolling
-            # out) or every describe call failed. Fall back explicitly: an empty list would
-            # otherwise be falsy in the per-query `if revisions:` guards and silently query all
-            # revisions under a misleading label. Say plainly that dev/test traffic is now mixed
-            # in, since these numbers are no longer production's.
+            # Either nothing served production traffic and no service has a revision at 100%
+            # (e.g. all simultaneously rolling out), or every describe call failed. Fall back
+            # explicitly: an empty list would otherwise be falsy in the per-query `if revisions:`
+            # guards and silently query all revisions under a misleading label. Say plainly that
+            # dev/test traffic is now mixed in, since these numbers are no longer production's.
             prod_revs = None
             rev_label = ("WARNING: could not identify a production revision for ANY service, so the "
                          "figures below cover ALL revisions and include dev/test traffic.")
         else:
-            prod_revs = list(prod_map.values())
-            rev_label = "production revisions only:  " + ", ".join(f"{s}={r}" for s, r in sorted(prod_map.items()))
+            prod_revs = sorted({r for revs in prod_map.values() for r in revs})
+            lines = ["production revisions only (dev/test tags excluded):"]
+            for svc in sorted(prod_map):
+                revs = prod_map[svc]
+                # Name the current revision first, then say how many older ones the window also
+                # covers. More than one means a deploy landed mid-window; before this was fixed
+                # everything before that deploy was silently dropped from every figure below.
+                head = current_map.get(svc, revs[-1])
+                extra = [r for r in revs if r != head]
+                note = f"  (+{len(extra)} earlier this window: {', '.join(extra)})" if extra else ""
+                lines.append(f"  {svc:<26} {head}{note}")
+            rev_label = "\n".join(lines)
 
     print("=" * 100)
     print(f"Snapshot at {now.strftime('%Y-%m-%d %H:%M:%SZ')}    "
@@ -387,19 +655,28 @@ def snapshot(client, args, bq_client=None, billing_table=None):
         print("  WARNING: error log query hit 1000-entry cap — older errors in window are truncated.")
     print()
 
-    print("=== Response codes (3xx and 404s ignored as probe/redirect noise) ===")
+    print("=== Response codes (3xx, 404s and uptime-check statuses ignored as probe/redirect noise) ===")
     codes = request_counts(client, start, now, revisions=prod_revs)
+    accepted = uptime_check_accepted_codes()
     for svc in SERVICES:
         all_codes = codes.get(svc, {})
-        by_code = {code: c for code, c in all_codes.items() if code != 404 and code // 100 != 3}
+        # 404s are probe noise everywhere; the rest is whatever this service's own uptime check
+        # calls a pass, which is 400 for /spliceai/ and /pangolin/ (probed with no parameters).
+        noise = {404} | accepted.get(svc, set())
+        by_code = {code: c for code, c in all_codes.items() if code not in noise and code // 100 != 3}
         classes = collections.Counter()
         for code, c in by_code.items():
             classes[f"{code // 100}xx"] += c
         total = sum(classes.values())
         rate = classes["5xx"] / total * 100 if total else 0
-        ignored = all_codes.get(404, 0)
-        ignored_note = f"; +{ignored} 404s ignored" if ignored else ""
-        print(f"  {svc:<14}  2xx={classes['2xx']:<5} "
+        rate_2xx = classes["2xx"] / total * 100 if total else 0
+        ignored_items = sorted(
+            ((code, c) for code, c in all_codes.items() if code in noise and c),
+            key=lambda x: -x[1],
+        )
+        ignored_note = ("; +" + ", ".join(f"{c} {code}s" for code, c in ignored_items) + " ignored"
+                        if ignored_items else "")
+        print(f"  {svc:<14}  2xx={classes['2xx']:<5} ({rate_2xx:5.1f}%) "
               f"4xx={classes['4xx']:<5} 5xx={classes['5xx']:<3}  "
               f"({rate:.2f}% 5xx of {total}{ignored_note})")
         for cls in ("4xx", "5xx"):
@@ -463,6 +740,18 @@ def snapshot(client, args, bq_client=None, billing_table=None):
     print_table(rows, aligns=['l', 'r', 'r', 'r', 'r'])
     print()
 
+    # These calls are made by the user's browser, not by our Cloud Run services, so they appear
+    # in none of the metrics above even though a slow GeneBe or Ensembl delays every search that
+    # needs one. The numbers below are live probes from this machine rather than real user
+    # traffic, so they measure the API rather than what any particular user experienced.
+    if args.probe_samples < 1:
+        print("=== External API latency (skipped, --probe-samples 0) ===")
+    else:
+        print(f"=== External API latency ({args.probe_samples} probe"
+              f"{'' if args.probe_samples == 1 else 's'} per query shape, from this machine) ===")
+        print_external_api_latencies(probe_external_apis(args.probe_samples))
+    print()
+
     # Container startup latency distribution — count = number of cold starts in window,
     # percentiles = how long each new instance took to become ready to serve requests.
     print("=== Container startup (cold starts; p50/p95/p99 in s) ===")
@@ -505,10 +794,15 @@ def main():
                         help="Length of the baseline window in days (default: 7)")
     parser.add_argument("--all-revisions", action="store_true",
                         help="Aggregate metrics across all revisions of each service "
-                             "(default: filter to the revision currently serving 100%% production traffic, "
-                             "so dev/test traffic against `dev---*` URLs doesn't contaminate metrics).")
+                             "(default: filter to the revisions that served production traffic during "
+                             "the window, so dev/test traffic against `dev---*` URLs doesn't "
+                             "contaminate metrics).")
     parser.add_argument("--cost-days", type=float, default=14.0,
                         help="Number of days of daily-cost history to chart (default: 14).")
+    parser.add_argument("--probe-samples", type=int, default=3,
+                        help="Requests to send to each external-API query shape (GeneBe and Ensembl VEP) "
+                             "per snapshot (default: 3). Use 0 to skip the probes: they are serial, so "
+                             "with both APIs down a snapshot spends several minutes waiting on timeouts.")
     args = parser.parse_args()
 
     client = monitoring_v3.MetricServiceClient()
