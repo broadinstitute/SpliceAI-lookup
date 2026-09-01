@@ -166,3 +166,15 @@ jobs:
             echo "Tag '${GITHUB_REF_NAME}' -> promoting the image just deployed to dev."
             python3 build_and_deploy.py -t "$TOOL" -g "$GENOME" --promote
           fi
+
+      # Every deploy pushes another image and none were ever removed, so the repo had reached
+      # 217 images / 278 GB before this step existed. Each matrix cell prunes only the package
+      # it just pushed to, so the four parallel jobs never touch each other's images.
+      #
+      # Runs after the deploy, not before, so the image this job just deployed is already among
+      # the newest ones kept, and so a cleanup that fails can't stop a deploy that would have
+      # worked. cleanup_old_images.py keeps every image Cloud Run is serving whatever its age,
+      # so this cannot delete what production or the dev revision is running.
+      - name: Delete old images from Artifact Registry
+        continue-on-error: true
+        run: python3 cleanup_old_images.py --package "${{ matrix.tool }}-${{ matrix.genome }}" --keep 3
