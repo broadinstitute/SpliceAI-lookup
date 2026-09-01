@@ -8,6 +8,7 @@ import logging
 import os
 import psycopg2
 import re
+import sys
 import threading
 import traceback
 
@@ -23,6 +24,62 @@ from flask_talisman import Talisman
 
 # SAI-10k-calc predictions for splice consequences
 from sai10k_predictions import sai10k_get_transcript_predictions, sai10k_select_transcript, TRANSCRIPT_PRIORITY_ORDER
+
+# Gunicorn worker classes that run more than one request at a time inside a single process.
+# gthread is what --threads N (N > 1) selects; the others are the async workers.
+_CONCURRENT_GUNICORN_WORKERS = ("gthread", "gevent", "eventlet", "tornado")
+
+
+def _assert_one_request_per_process():
+    """Refuse to start under a gunicorn worker that runs requests concurrently in one process.
+
+    Several objects here are built once per process and then read on every request without a
+    lock: the pyfastx handles in FASTA (check_ref_allele, SAI-10k premature-stop detection) and
+    the one inside each SPLICEAI_ANNOTATOR. pyfastx wraps a sqlite connection and is not safe to
+    use from two threads at once. Measured on a shared handle with 8 threads doing 400 reads
+    each: 58% of reads came back wrong and a third raised, and the wrong ones included plausible
+    but incorrect sequence rather than an error -- so a threaded worker would silently return
+    wrong reference alleles and wrong scores rather than failing visibly.
+
+    _FASTA_CHROM_PREFIX_CACHE in sai10k_predictions.py makes it worse: a racing fasta.keys() can
+    cache the wrong chromosome-prefix decision permanently for that handle.
+
+    So this is a hard failure at import rather than a warning. The Dockerfiles pass --threads 1
+    deliberately ("parallelism comes from running WORKERS workers, not threads within a worker");
+    this stops that from being undone silently by an edit, a config file, or GUNICORN_CMD_ARGS.
+
+    Detection reads sys.modules rather than sys.argv: gunicorn imports only the worker class it
+    is going to use, and that catches configurations argv does not carry, such as
+    GUNICORN_CMD_ARGS="--threads 5" or a gunicorn.conf.py. Nothing is raised when no gunicorn
+    worker module is loaded at all, which is the local Flask dev server and the unit tests.
+    """
+    loaded = [name for name in _CONCURRENT_GUNICORN_WORKERS
+              if f"gunicorn.workers.{name}" in sys.modules]
+    if not loaded:
+        return
+
+    # Only for the error message; the decision above does not depend on parsing this.
+    requested = ""
+    for source in (sys.argv, (os.environ.get("GUNICORN_CMD_ARGS") or "").split()):
+        for i, token in enumerate(source):
+            if token == "--threads" and i + 1 < len(source):
+                requested = f" (--threads {source[i + 1]})"
+            elif token.startswith("--threads="):
+                requested = f" (--threads {token.split('=', 1)[1]})"
+
+    raise RuntimeError(
+        f"Refusing to start: gunicorn is using the '{loaded[0]}' worker{requested}, which runs "
+        f"more than one request at a time in a single process. The pyfastx reference-genome "
+        f"handles this server shares across requests are not safe to use concurrently and "
+        f"return silently wrong sequence, so a threaded worker would corrupt REF-allele checks "
+        f"and scores rather than fail visibly. Run with the default sync worker and --threads 1, "
+        f"and scale with --workers instead. If threads are genuinely needed, give each thread "
+        f"its own FASTA handle (threading.local) and fix the id()-keyed "
+        f"_FASTA_CHROM_PREFIX_CACHE in sai10k_predictions.py first."
+    )
+
+
+_assert_one_request_per_process()
 
 app = Flask(__name__)
 
