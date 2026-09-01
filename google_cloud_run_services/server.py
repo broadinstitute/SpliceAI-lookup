@@ -163,16 +163,23 @@ def check_ref_allele(chrom, pos, ref, genome_version):
     if sequence_name is None:
         return None
 
-    # Bound the interval before fetching. pyfastx does not merely return short or raise for an
-    # out-of-range fetch: for many positions past a contig's end it segfaults, taking the whole
+    # Bound the interval before reading. pyfastx does not merely return short or raise for an
+    # out-of-range read: for many positions past a contig's end it segfaults, taking the whole
     # gunicorn worker with it (verified on hg38 chr1 at 400,000,000 and above). VARIANT_RE accepts
     # positions up to 999,999,999 and the endpoint is public and unauthenticated, so this has to be
-    # checked here rather than relied on to fail safely inside pyfastx.
+    # checked here rather than relied on to fail safely inside pyfastx. len() on the Sequence reads
+    # the length out of the index without loading any of it.
     if pos < 1 or pos + len(ref) - 1 > len(fasta[sequence_name]):
         return None
 
     try:
-        reference_allele = fasta.fetch(sequence_name, (pos, pos + len(ref) - 1))
+        # Sliced, not fetched. fasta.fetch() buffers the entire contig to answer even a one-base
+        # read -- 243 MB for chr1 -- which is per worker and permanent, and it pushed the spliceai
+        # containers into OOM kills. Slicing reads only the bases asked for. It is also the access
+        # pattern sai10k_predictions.py already uses on this same shared handle (_get_fasta), and
+        # the two APIs must not be mixed: after a fetch() call, slices on the same handle come back
+        # shifted (verified against pysam on hg38 chrM).
+        reference_allele = str(fasta[sequence_name][pos - 1 : pos + len(ref) - 1])
     except Exception as e:
         print(f"WARNING: Failed to read {sequence_name}:{pos} from the "
               f"hg{genome_version} FASTA: {type(e).__name__}: {e}")
