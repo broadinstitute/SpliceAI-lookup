@@ -6,6 +6,12 @@ Every deploy pushes a new image, and nothing used to remove the old ones, so the
 to 217 images / 278 GB by 2026-09-01. This is run as the last step of each deploy job (see
 .github/workflows/deploy-on-tag.yml) so the repo stays small on its own.
 
+This registry repo is shared with the liftover service, which deploys from the separate
+broadinstitute/liftover repo and prunes its own images with a copy of this file at
+service/cleanup_old_images.py there. The two copies are the same script; change one and change
+the other. Each deploy only ever prunes its own --package, so the two never touch each other's
+images.
+
 What it keeps:
 
   - the newest --keep images in the package, so a recent deploy can still be rolled back, and
