@@ -655,14 +655,16 @@ def snapshot(client, args, bq_client=None, billing_table=None):
         print("  WARNING: error log query hit 1000-entry cap — older errors in window are truncated.")
     print()
 
-    print("=== Response codes (3xx, 404s and uptime-check statuses ignored as probe/redirect noise) ===")
+    print("=== Response codes (3xx, 404s/405s and uptime-check statuses ignored as probe/redirect noise) ===")
     codes = request_counts(client, start, now, revisions=prod_revs)
     accepted = uptime_check_accepted_codes()
     for svc in SERVICES:
         all_codes = codes.get(svc, {})
-        # 404s are probe noise everywhere; the rest is whatever this service's own uptime check
-        # calls a pass, which is 400 for /spliceai/ and /pangolin/ (probed with no parameters).
-        noise = {404} | accepted.get(svc, set())
+        # 404s and 405s are probe noise everywhere: every one sampled came from Google's
+        # TsunamiSecurityScanner, which walks /etc/passwd, /login and .jsp upload paths (404) and
+        # POSTs and PUTs to / (405). The rest is whatever this service's own uptime check calls a
+        # pass, which is 400 for /spliceai/ and /pangolin/ (probed with no parameters).
+        noise = {404, 405} | accepted.get(svc, set())
         by_code = {code: c for code, c in all_codes.items() if code not in noise and code // 100 != 3}
         classes = collections.Counter()
         for code, c in by_code.items():
