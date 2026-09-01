@@ -1807,8 +1807,6 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
                 f'(e.g. chr8-140300615-C-G) or a chrom-pos position (e.g. chr8-140300615) for REF-only scores.\n',
                 source=tool_name)
 
-    variant_consequence = params.get("variant_consequence")
-
     force = params.get("force")  # ie. don't use cache
 
     print(f"{logging_prefix}: ======================", flush=True)
@@ -1830,9 +1828,9 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
     if results:
         # Cache hit: brief log scope, then fall through to response building.
         with get_db_connection() as conn:
-            log(conn, f"{tool_name}:from-cache", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
+            log(conn, f"{tool_name}:from-cache", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param)
             if "error" in results:
-                log(conn, f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
+                log(conn, f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], bc=basic_or_comprehensive_param)
     else:
         # Rate-limit check (short DB scope).
         with get_db_connection() as conn:
@@ -1885,11 +1883,11 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
         # Post-inference: log + cache write + (if error) error log, all in one short DB scope.
         duration = (datetime.now() - start_time).total_seconds()
         with get_db_connection() as conn:
-            log(conn, f"{tool_name}:computed", ip=user_ip, duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
+            log(conn, f"{tool_name}:computed", ip=user_ip, duration=duration, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, bc=basic_or_comprehensive_param)
             if "error" not in results and not skip_cache:
                 add_splicing_scores_to_cache(conn, tool_name, variant, genome_version, distance_param, mask_param, basic_or_comprehensive_param, results, is_position_only)
             elif "error" in results:
-                log(conn, f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], bc=basic_or_comprehensive_param, variant_consequence=variant_consequence)
+                log(conn, f"{tool_name}:error", ip=user_ip, variant=variant, genome=genome_version, distance=distance_param, mask=mask_param, details=results["error"], bc=basic_or_comprehensive_param)
 
     if scores_for_one_transcript:
         return per_transcript_scores_response(results, params.get("transcript"), tool_name)
@@ -1906,7 +1904,7 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
     # the URL-hash auto-submit on page load, that let a crafted link execute
     # arbitrary HTML in visitors' browsers.
     ECHO_PARAM_KEYS = (
-        "variant", "hg", "bc", "distance", "mask", "raw", "variant_consequence",
+        "variant", "hg", "bc", "distance", "mask", "raw",
     )
     response_json = {k: params[k] for k in ECHO_PARAM_KEYS if k in params}
     # REF-only (position-only) results never set a "mask" key (mask has no meaning
@@ -1924,7 +1922,7 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
     ])
 
 
-def log(conn, event_name, ip=None, duration=None, variant=None, genome=None, distance=None, mask=None, bc=None, details=None, variant_consequence=None):
+def log(conn, event_name, ip=None, duration=None, variant=None, genome=None, distance=None, mask=None, bc=None, details=None):
     """Utility method for logging an event"""
 
     try:
@@ -1937,8 +1935,8 @@ def log(conn, event_name, ip=None, duration=None, variant=None, genome=None, dis
 
     try:
         run_sql(conn,
-                r"INSERT INTO log (event_name, ip, duration, variant, genome, distance, mask, bc, details, variant_consequence) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (event_name, ip, duration, variant, genome, distance, mask, bc, details, variant_consequence))
+                r"INSERT INTO log (event_name, ip, duration, variant, genome, distance, mask, bc, details) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (event_name, ip, duration, variant, genome, distance, mask, bc, details))
     except Exception as e:
         print(f"Log error: {e}", flush=True)
 
@@ -1973,11 +1971,7 @@ def block_ips():
 @app.route('/log/<string:name>/', strict_slashes=False)
 def log_event(name):
 
-    # "variant_consequence" carries the consequence the front end used to send with the scoring
-    # request itself. It now looks that up alongside those requests rather than before them, so by
-    # the time it knows the consequence the scoring call has already gone out, and this is how the
-    # value still reaches the log column the /analyze queries in connect_to_db.sh read.
-    if name not in ("show_igv", "variant_consequence"):
+    if name != "show_igv":
         message = f"Log error: invalid event name: {name}"
         print(message, flush=True)
         return error_response(f"ERROR: {message}")
@@ -1995,7 +1989,6 @@ def log_event(name):
     mask_param = params.get("mask")
     basic_or_comprehensive_param = params.get("bc")
     details = params.get("details")
-    variant_consequence = params.get("variant_consequence")
     if details:
         details = str(details)
         details = details[:2000]
@@ -2014,8 +2007,7 @@ def log_event(name):
             distance=distance_param,
             mask=mask_param,
             bc=basic_or_comprehensive_param,
-            details=details,
-            variant_consequence=variant_consequence)
+            details=details)
 
     return Response(json.dumps({"status": "Done"}), status=200, mimetype='application/json', headers=[
         ('Access-Control-Allow-Origin', '*'),

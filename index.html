@@ -11,7 +11,6 @@
         // The basic services kept their original names when the comprehensive ones were split
         // out, which is why only half of these carry a suffix.
         const baseApiUrl = {
-            "normalize": "https://liftover-xwkwwwxdwq-uc.a.run.app",
             "pangolin-37": "https://pangolin-37-xwkwwwxdwq-uc.a.run.app",
             "pangolin-38": "https://pangolin-38-xwkwwwxdwq-uc.a.run.app",
             "spliceai-37": "https://spliceai-37-xwkwwwxdwq-uc.a.run.app",
@@ -29,8 +28,6 @@
         //     always talks to the dev API without needing a URL flag, OR
         //   - the URL hash contains api=dev (manual override, e.g. for local
         //     testing or forcing dev from another host).
-        // 'normalize' (liftover) is unaffected because build_and_deploy.py
-        // doesn't manage that service.
         const _servedFromDevSite = (
             window.location.hostname === "broadinstitute.github.io"
             && window.location.pathname.startsWith("/SpliceAI-lookup-dev")
@@ -38,9 +35,6 @@
         const _apiMatch = window.location.hash.match(/[?&#]api=([^&#]*)/)
         if (_servedFromDevSite || (_apiMatch && _apiMatch[1] === "dev")) {
             for (const k of Object.keys(baseApiUrl)) {
-                // 'normalize' (liftover) is skipped because build_and_deploy.py doesn't manage
-                // that service, so it has no dev-tagged revision to point at.
-                if (k === "normalize") continue
                 baseApiUrl[k] = baseApiUrl[k].replace(/^https:\/\//, "https://dev---")
             }
             console.log("Routing spliceai/pangolin requests to dev revisions:", baseApiUrl)
@@ -378,7 +372,7 @@
                                 <a id="more-details1-button" href="#" style="float:right; padding-right:7px" onclick="$('#more-details1').show();$('#more-details1-button').hide();">[more details]</a>
                                 <div id="more-details1" style="display:none">
                                     <br />
-                                    We use the <a href="https://genebe.net" target="_blank">GeneBe API</a> to convert HGVS notation to genomic coordinates for hg38, and to provide variant consequences for both hg19 and hg38. The Ensembl API is still used to convert HGVS notation for hg19, and as a fallback when GeneBe cannot convert an HGVS variant.<br />
+                                    For hg38, we ask the <a href="https://genebe.net" target="_blank">GeneBe API</a> and the <a href="https://useast.ensembl.org/info/docs/tools/vep/index.html" target="_blank">Ensembl VEP API</a> at the same time, so a search still works while either one is down. Genomic coordinates come from whichever of the two converts the HGVS notation first, while variant consequences come from GeneBe whenever it has them, since it covers more of the transcripts being scored, and from Ensembl only when it doesn't. For hg19, Ensembl converts HGVS notation and GeneBe provides the variant consequences. <a href="https://variantvalidator.org/" target="_blank">VariantValidator</a> converts HGVS notation that neither of them could.<br />
                                     <br />
                                     <a href="https://github.com/illumina/SpliceAI" target="_blank">SpliceAI</a> is a copyrighted work by Illumina and is provided under GPLv3 and CC BY NC 4.0 licenses for academic and non-commercial use.
                                     This web service is maintained by the <a href="https://the-tgg.org/" target="_blank">TGG</a> at the <a href="https://www.broadinstitute.org/" target="_blank">Broad Institute</a>.
@@ -502,6 +496,11 @@
                 <div>
                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website<br />
                     <br/>
+                    <b>September, 2026</b>
+                    <br />
+                    - Searches now start computing SpliceAI and Pangolin scores as soon as the variant's genomic coordinates are known, instead of waiting for the variant consequences first.<br/>
+                    - On hg38, the <a href="https://genebe.net" target="_blank">GeneBe API</a> and the <a href="https://useast.ensembl.org/info/docs/tools/vep/index.html" target="_blank">Ensembl VEP API</a> are now queried at the same time, so searches keep working while either one is down. Genomic coordinates come from whichever answers first, and variant consequences from GeneBe unless it has none.<br/>
+                    <br />
                     <b>August, 2026</b>
                     <br />
                     - Switched to the <a href="https://genebe.net" target="_blank">GeneBe API</a> for faster variant consequence lookup on both hg19 and hg38 as well as HGVS conversion on hg38, while still using <a href="https://useast.ensembl.org/info/docs/tools/vep/index.html" target="_blank">Ensembl VEP API</a> for HGVS on hg19.<br/>
@@ -700,7 +699,7 @@
                                                                                      data-html="Delta scores range from 0 to 1 and can be interpreted as the probability that the variant affects splicing at any position within a window around it (+/- 500bp by default). Pangolin does not recommend specific score thresholds; however, here scores of 0.2 or higher appear in <b style='color:#1fb839'>green</b>, 0.5 or higher appear in <b style='color:#FFCB1F'>yellow</b>, and 0.8 or higher appear in <b style='color:#FF0000'>red</b>."></i>
                                 </th>
                                 <th class="table-header" style="white-space: nowrap"><span id="pangolin-position-header-label">position &nbsp; </span><i id="pangolin-position-header-icon" class='question circle outline icon'
-                                                                                    data-content="For each variant, Pangolin looks within a window (+/- 500bp by default) to see how the variant affects the probability of splicing occurring at different positions. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are upstream (5&#039;) of the variant, and positive are downstream (3&#039;) of the variant."></i>
+                                                                                    data-content="For each variant, Pangolin looks within a window (+/- 500bp by default) to see how the variant affects the probability of splicing occurring at different positions. The offsets in this column represent positions with the biggest change in probability within the window. Negative values are to the left of the variant in genomic coords, regardless of transcript strand."></i>
                                 </th>
                                 <th class="table-header ref-score-column" style="white-space: nowrap">
                                     REF score &nbsp; <i class='question circle outline icon'
@@ -1189,18 +1188,14 @@
             + (isVariant ? ` > ${truncateAllele(alt)}` : "")
 
     const truncateVariantString = (variantStr, maxAlleleLength = 30) => {
-        // Try to parse and truncate variant in common formats
-        const patterns = [
-            /^(chr)?(\d+|[XYxy]|MT?)-(\d+)-([ACGTacgt]+)-([ACGTacgt]+)$/,  // chr1-12345-A-T
-            /^(chr)?(\d+|[XYxy]|MT?):(\d+)[: ]([ACGTacgt]+)[>\/]([ACGTacgt]+)$/,  // chr1:12345 A>T or chr1:12345:A:T
-        ]
-        for (const pattern of patterns) {
-            const match = variantStr.match(pattern)
-            if (match) {
-                const [, chrPrefix, chromNum, pos, ref, alt] = match
-                const chrom = (chrPrefix || '') + chromNum
-                return formatVariantDisplay(chrom, pos, ref, alt, maxAlleleLength)
-            }
+        // Parsed with VARIANT_RE, the same pattern the search box accepts, so every format the page
+        // takes gets truncated. Two narrower patterns used to be spelled out here, which missed the
+        // space-separated form the examples table itself links to ("6  31740453  G  T") and left a
+        // long indel typed that way rendered at full length.
+        const match = variantStr.match(VARIANT_RE)
+        if (match) {
+            return formatVariantDisplay(
+                (match[1] || '') + match[2], match[3].replace(/,/g, ""), match[4], match[5], maxAlleleLength)
         }
         return variantStr
     }
@@ -1588,7 +1583,7 @@
         }
     }
 
-    const resolveVariantWithGeneBe = async (variant, genomicVariant) => {
+    const resolveVariantWithGeneBe = async (variant) => {
         /* Resolve the given variant to "{chrom}-{pos}-{ref}-{alt}" and look up its consequences using the
          * GeneBe API. hg38 only: variant-relaxed answers with hg38 coordinates whatever genome version is
          * requested. Returns null if GeneBe is unreachable or can't resolve the variant, so the caller can
@@ -1598,9 +1593,8 @@
          * annotates them, and its 'warning' field reports a REF allele that had to be substituted.
          *
          * Args:
-         *  variant (string): user input text
-         *  genomicVariant (string): the same variant as "{chrom}-{pos}-{ref}-{alt}" when the input could
-         *      be parsed locally, or null when GeneBe has to resolve it
+         *  variant (string): user input text, which is always HGVS notation or a dbSNP id here.
+         *      Coordinates the page parsed itself go to annotateParsedVariant instead.
          *
          * Return:
          *  object: {variant, consequence, consequencesByTranscriptId} when GeneBe resolved and annotated
@@ -1608,11 +1602,9 @@
          *      {refAlleleError} when its REF allele doesn't match the reference genome, or
          *      null when GeneBe couldn't resolve it at all
          */
-        // Prefer the locally parsed coordinates when there are any: they say exactly which variant is
-        // meant, where the raw text can be in a format only this page's regexp knows how to read.
         // No expectedVariant: hg38 answers are checked by GeneBe's own 'warning' field instead of by
         // comparing alleles, for the reason set out above annotateVariantWithGeneBe's comparison.
-        const result = await annotateVariantWithGeneBe(genomicVariant || variant.trim(), "38", variant)
+        const result = await annotateVariantWithGeneBe(variant.trim(), "38", variant)
 
         // A dbSNP id names a position, not an allele, and GeneBe answers a multi-allelic one with a
         // single ALT of its choosing (rs1799966 comes back as 17-43071077-T-A, though GeneBe tags
@@ -1668,26 +1660,307 @@
         }
     }
 
+    const ensemblApiPrefix = (genomeVersion) => (
+        `https://${genomeVersion == '37' ? 'grch37.' : ''}rest.ensembl.org/vep/human/hgvs/`
+    )
+
+    const genomicHgvs = (chrom, pos, ref, alt) => {
+        /* Build the genomic (g.) HGVS string the Ensembl VEP endpoint needs for parsed coordinates.
+
+         * Args:
+         *  chrom (string), pos (int), ref (string), alt (string): the parsed coordinates
+         *
+         * Return:
+         *  string: g. HGVS notation for this variant
+         */
+        if (ref.length == 1 && alt.length == 1) {
+            return `${chrom}:g.${pos}${ref}>${alt}`  // SNV
+        }
+        if (ref.length == 1 && alt.startsWith(ref)) {
+            // Insertion: the ALT repeats the REF base and then adds to it, which HGVS writes as an
+            // ins between that base and the next. Written as "A>AGAGAG" instead -- the shorthand
+            // VCF-style coordinates use -- Ensembl parses it as a different edit entirely
+            // (measured 2026-08-16 on ABCA3 c.875A>AGAGT), so every answer was discarded by
+            // annotateVariantWithEnsembl's vcf_string guard after the request had been paid for.
+            return `${chrom}:g.${pos}_${pos + 1}ins${alt.slice(1)}`
+        }
+        if (alt.length == 1 && ref.startsWith(alt)) {
+            return `${chrom}:g.${pos + 1}_${pos + ref.length - 1}del${ref.slice(1)}`  // deletion
+        }
+        // Anything else -- an MNP, or an indel whose first base changes as well -- is a delins over
+        // the whole REF span.
+        return ref.length == 1
+            ? `${chrom}:g.${pos}delins${alt}`
+            : `${chrom}:g.${pos}_${pos + ref.length - 1}delins${alt}`
+    }
+
+    const annotateVariantWithEnsembl = async (chrom, pos, ref, alt, genomeVersion) => {
+        /* Look up the consequences of coordinates this page already parsed, using the Ensembl VEP API.
+
+         * The counterpart to annotateVariantWithGeneBe, so that the two can be raced against each
+         * other on hg38. Ensembl takes HGVS rather than chrom-pos-ref-alt, so the coordinates are
+         * written back out as genomic HGVS first.
+         *
+         * The answer is discarded unless the variant Ensembl reports back is the one it was asked
+         * about. Ensembl mis-parses the REF>REF+ALT insertion shorthand this builds (measured
+         * 2026-08-16: it read ABCA3 c.875A>AGAGT as a different edit than VariantValidator, GeneBe
+         * and its own answer for the equivalent delins), which would otherwise annotate a variant
+         * the user never asked for.
+         *
+         * Args:
+         *  chrom (string), pos (int), ref (string), alt (string): the parsed coordinates
+         *  genomeVersion (string): "37" or "38"
+         *
+         * Return:
+         *  object: {variant, consequence, consequencesByTranscriptId}, or null when Ensembl has no
+         *      usable answer, including when the call itself fails, so callers can treat one return
+         *      value as "no answer" rather than wrapping this in a try/catch
+         */
+        const hgvs = genomicHgvs(chrom, pos, ref, alt)
+        if (!hgvs) {
+            return null
+        }
+        const expectedVariant = `${chrom}-${pos}-${ref}-${alt}`
+        let responseJson
+        try {
+            responseJson = await makeRequest(
+                `${ensemblApiPrefix(genomeVersion)}${hgvs}?content-type=application/json&vcf_string=1`,
+                ENSEMBL_TIMEOUT_MS)
+        } catch (e) {
+            console.warn("Ensembl API call failed:", e)
+            return null
+        }
+        if (!responseJson.ok || responseJson.error || !responseJson[0]) {
+            console.warn("Ensembl API returned no annotation for", hgvs, responseJson)
+            return null
+        }
+        const annotation = responseJson[0]
+        if (String(annotation.vcf_string).toUpperCase() != expectedVariant.toUpperCase()) {
+            console.warn("Ensembl annotated a different variant than the one asked about:",
+                expectedVariant, annotation.vcf_string)
+            return null
+        }
+        return {
+            'variant': expectedVariant,
+            'consequence': annotation.most_severe_consequence || null,
+            // VEP keys its consequence records by transcript_id
+            'consequencesByTranscriptId': mostSevereConsequenceByTranscriptId(
+                (annotation.transcript_consequences || []).map(
+                    (c) => ({'transcriptId': c.transcript_id, 'terms': c.consequence_terms}))),
+        }
+    }
+
+    const firstUsableAnswer = async (attempts) => {
+        /* Return the first of several in-flight lookups to come back with something usable.
+
+         * Promise.any counts only a rejection as a loss, but these resolvers answer null when they
+         * have nothing to say, so each one is wrapped to reject on null. Every attempt is started
+         * before this is called, so the losers keep running and are simply ignored.
+         *
+         * Args:
+         *  attempts (array): promises, each resolving to a result object or to null
+         *
+         * Return:
+         *  object: the first usable result, or null when every attempt failed or had nothing
+         */
+        try {
+            return await Promise.any(attempts.map(async (attempt) => {
+                const result = await attempt
+                if (!result) {
+                    throw Error("no usable answer")
+                }
+                return result
+            }))
+        } catch (e) {
+            return null  // AggregateError: every attempt failed or had nothing
+        }
+    }
+
+    const consequencesFrom = async (annotationPromise, fallbackPromise = null, genomeVersion = null) => {
+        /* Reduce a consequence lookup to the fields the results tables and lookups use.
+
+         * GeneBe is always the first argument. Its answer is preferred wherever both are available,
+         * because it covers the Gencode-lifted transcript ids the score tables carry far better than
+         * VEP does: chr8-140300616-T-G comes back with 40 transcripts from GeneBe against Ensembl's
+         * 24, and 1-1042466-GGGC-G with 12 against 8. The fallback is read only when GeneBe found no
+         * per-transcript consequences at all, so an Ensembl answer is a stand-in for a missing one
+         * rather than a competing one. Preferring GeneBe costs nothing on the clock: the caller has
+         * already sent its scoring requests, which take longer than either lookup.
+         *
+         * Args:
+         *  annotationPromise (Promise): the preferred lookup, resolving to an annotation or to null
+         *  fallbackPromise (Promise|object): what to use when the preferred lookup found nothing.
+         *      May be an annotation that has already been obtained, or null when there is no fallback
+         *  genomeVersion (string): "37", "38", or null to withhold normalizedVariant. GeneBe answers
+         *      an hg19 query with hg38 coordinates, so its spelling describes the right variant on
+         *      the wrong build there and must not be used for lookups; only "38" surfaces it.
+         *
+         * Return:
+         *  object: {consequence, consequencesByTranscriptId, normalizedVariant}, all null when
+         *      neither source had an answer
+         */
+        const annotation = await annotationPromise
+        if (annotation && annotation.refAlleleError) {
+            // Not thrown: by the time this answers, the caller has already sent the scoring requests
+            // the error would have saved, and the backends report a wrong REF just as specifically
+            // (check_ref_allele in server.py).
+            console.warn("Consequence lookup reported a wrong reference allele:", annotation.refAlleleError)
+        }
+        // Counted as "found nothing" when the map is empty as well as when it is absent:
+        // mostSevereConsequenceByTranscriptId returns {} if no record carried both an id and terms,
+        // and {} is truthy, so testing the object itself would never reach the fallback.
+        const usable = annotation && Object.keys(annotation.consequencesByTranscriptId || {}).length
+            ? annotation
+            : await fallbackPromise
+        return {
+            'consequence': usable ? usable.consequence || null : null,
+            'consequencesByTranscriptId': usable ? usable.consequencesByTranscriptId || null : null,
+            // The resolver's own spelling of the variant. GeneBe left-aligns indels, and that is the
+            // spelling gnomAD, myvariant.info and the precomputed score tables index, where the page
+            // scores whichever equivalent spelling was typed. Callers use this for those lookups and
+            // for the external links, and the typed spelling for everything else.
+            'normalizedVariant': genomeVersion == '38' && usable ? usable.variant || null : null,
+        }
+    }
+
+    const annotateParsedVariant = (chrom, pos, ref, alt, genomeVersion, userInputVariant) => {
+        /* Look up the consequences of coordinates already in "{chrom}-{pos}-{ref}-{alt}" form.
+
+         * On hg38 Ensembl is asked at the same time as GeneBe rather than after it, so its answer is
+         * already in hand if GeneBe has none, and a GeneBe outage costs no extra round trip. GeneBe's
+         * answer is used whenever it has one; see consequencesFrom. hg19 asks GeneBe alone, since the
+         * GRCh37 VEP transcript set barely overlaps the ids the score tables carry and an Ensembl
+         * answer there would leave most rows -- often including MANE Select -- with nothing to show.
+         *
+         * Args:
+         *  chrom (string), pos (int), ref (string), alt (string): the coordinates to annotate
+         *  genomeVersion (string): "37" or "38"
+         *  userInputVariant (string): what the user typed, for the wrong-REF message
+         *
+         * Return:
+         *  Promise: resolves to {consequence, consequencesByTranscriptId}, both null when no source
+         *      could annotate the variant. Never rejects.
+         */
+        const parsedVariant = `${chrom}-${pos}-${ref}-${alt}`
+        return consequencesFrom(
+            annotateVariantWithGeneBe(parsedVariant, genomeVersion, userInputVariant, parsedVariant),
+            genomeVersion == '38' ? annotateVariantWithEnsembl(chrom, pos, ref, alt, genomeVersion) : null,
+            genomeVersion)
+    }
+
+    const ensemblRejection = (message) => {
+        /* An error meaning Ensembl answered and would not resolve this variant, as opposed to being
+         * unreachable. The distinction decides whether falling back to another resolver makes sense:
+         * a variant Ensembl rejected on its merits (a REF allele the reference genome doesn't have,
+         * notation it cannot parse) gets the same answer from anywhere, and the message it came with
+         * is the one worth showing.
+         */
+        const error = Error(message)
+        error.ensemblRejected = true
+        return error
+    }
+
+    const resolveHgvsWithEnsembl = async (variant, genomeVersion) => {
+        /* Convert HGVS notation to "{chrom}-{pos}-{ref}-{alt}" with the Ensembl VEP API.
+
+         * Throws rather than answering null, so the hg19 path can tell the user exactly why the
+         * conversion failed -- a wrong REF allele, a timeout, notation Ensembl can't parse. The hg38
+         * race catches that and treats it as one contestant losing, since GeneBe may still answer.
+         *
+         * Args:
+         *  variant (string): HGVS notation, as the user typed it
+         *  genomeVersion (string): "37" or "38"
+         *
+         * Return:
+         *  object: {variant, consequence, consequencesByTranscriptId}
+         */
+        const responseJson = await makeRequest(
+            `${ensemblApiPrefix(genomeVersion)}${variant.trim()}?content-type=application/json&vcf_string=1`,
+            ENSEMBL_TIMEOUT_MS)
+        console.log("Ensembl API response:", responseJson)
+
+        if (!responseJson.ok || responseJson.error) {
+            let errorText = `${responseJson.error}`
+            const refAlleleErrorMatch = errorText.match(
+                new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
+            if (refAlleleErrorMatch) {
+                errorText = `${variant} has an unexpected reference allele. `
+                    + `The ${genomeDisplayName(genomeVersion)} reference allele should be ${refAlleleErrorMatch[1]}`
+            }
+            throw ensemblRejection(errorText)
+        }
+        if (!responseJson[0] || !responseJson[0].vcf_string) {
+            throw ensemblRejection(`Unexpected response: ${JSON.stringify(responseJson)}`)
+        }
+        const matchedRegExp = String(responseJson[0].vcf_string).match(VARIANT_RE)
+        if (!matchedRegExp) {
+            throw ensemblRejection(`Unexpected response: ${JSON.stringify(responseJson)}`)
+        }
+        return {
+            'variant': `${matchedRegExp[2].toUpperCase()}-${parseInt(matchedRegExp[3])}`
+                + `-${matchedRegExp[4].toUpperCase()}-${matchedRegExp[5].toUpperCase()}`,
+            'consequence': responseJson[0].most_severe_consequence,
+            // VEP keys its consequence records by transcript_id
+            'consequencesByTranscriptId': mostSevereConsequenceByTranscriptId(
+                (responseJson[0].transcript_consequences || []).map(
+                    (c) => ({'transcriptId': c.transcript_id, 'terms': c.consequence_terms}))),
+        }
+    }
+
+    const resolveHgvsWithVariantValidator = async (variant, genomeVersion, userInputVariant, onProgress, fallbackReason) => {
+        /* Last-resort HGVS conversion, for when the APIs that normally convert it could not.
+
+         * Args:
+         *  variant (string): HGVS notation, as the user typed it
+         *  genomeVersion (string): "37" or "38"
+         *  userInputVariant (string): what the user typed, passed on to the consequence lookup
+         *  onProgress (function): called with the message naming this resolver
+         *  fallbackReason (string): what to tell the user about why the usual resolver was skipped
+         *
+         * Return:
+         *  object: a normalizeVariant result with usedFallback set, or null when VariantValidator
+         *      couldn't resolve the variant either
+         */
+        onProgress("Converting HGVS notation to chrom-pos-ref-alt using VariantValidator...")
+        const vvVariant = await resolveVariantWithVariantValidator(variant, genomeVersion)
+        if (!vvVariant) {
+            return null
+        }
+        console.warn(`Using VariantValidator as the fallback resolver: ${vvVariant}`)
+        // Worth asking GeneBe now, on either build: it was handed the raw HGVS text earlier and
+        // couldn't resolve it, so unlike the parsed-coordinate paths it has never seen these
+        // coordinates.
+        const [vvChrom, vvPos, vvRef, vvAlt] = vvVariant.split("-")
+        return {
+            'variant': vvVariant,
+            'consequencesPromise': annotateParsedVariant(
+                vvChrom, parseInt(vvPos), vvRef, vvAlt, genomeVersion, userInputVariant),
+            'usedFallback': true,
+            'fallbackReason': fallbackReason,
+        }
+    }
+
     const normalizeVariant = async (variant, genomeVersion, onProgress = () => {}) => {
-        /* Convert the given variant to a standardized "{chrom}-{pos}-{ref}-{alt}" string and look up its
-         * consequences.
+        /* Convert the given variant to a standardized "{chrom}-{pos}-{ref}-{alt}" string and start
+         * looking up its consequences.
+
+         * The coordinates come back resolved, but the consequences come back still in flight, so the
+         * caller can send the SpliceAI and Pangolin requests the moment it has coordinates rather than
+         * waiting on an annotation none of them need. Nothing about the scores depends on it: the
+         * consequence is only used by this page, when the results tables render.
          *
-         * Input this page's own regexp can parse is already in that form, so it never reaches Ensembl:
-         * hg38 goes to GeneBe, which resolves and annotates in one call, and hg19 goes to GeneBe for
-         * the consequences alone. Only HGVS notation needs converting, and that is what the Ensembl
-         * hgvs API is called for, with VariantValidator as its fallback. hg19's consequences are then
-         * replaced by GeneBe's either way, since the GRCh37 VEP transcript set barely overlaps the
-         * transcripts being scored.
+         * Input this page's own regexp can parse is already in the target form and returns without
+         * waiting on anything. Only HGVS notation has to be resolved. hg38 asks GeneBe and Ensembl at
+         * once and takes whichever answers first, so a search survives either one being down. hg19 asks
+         * Ensembl alone, because GeneBe parses genomic HGVS as hg38 whatever genome is requested and
+         * then lifts over, which makes its GRCh37 coordinates untrustworthy. VariantValidator is the
+         * fallback on both builds for notation nothing else could convert.
          *
-         * The REF allele is checked in two places, neither of them the Ensembl call this used to rely
-         * on. GeneBe reports a mismatch for hg38, which is thrown from here: that costs no extra call
-         * and stops before three scoring requests are spent. For hg19 it can only report one in the
-         * narrow case where its lifted GRCh38 position happens to equal the GRCh37 one it was given,
-         * which holds near some chromosome starts; anywhere else its answer describes a different
-         * variant and is discarded. So in general it is the SpliceAI and Pangolin backends that catch
-         * a wrong REF, against the reference genome itself (check_ref_allele in server.py). They
-         * check both builds, so they also cover hg38 whenever GeneBe is unreachable or declines to
-         * answer.
+         * The REF allele is checked by the SpliceAI and Pangolin backends themselves (check_ref_allele
+         * in server.py), against the reference genome and on both builds. GeneBe can also report one
+         * while resolving hg38 HGVS, which is thrown from here because that still happens before any
+         * scoring request is sent. It can no longer stop a search on coordinates the page parsed
+         * itself, since those requests are in flight by the time it answers.
          *
          * Args:
          *  variant (string): user input text
@@ -1696,199 +1969,129 @@
          *      the caller can tell the user which external API is holding up the search
          *
          * Return:
-         *  object: {variant, consequence, consequencesByTranscriptId, warnings, usedFallback, fallbackReason}
+         *  object: {variant, consequencesPromise, warnings, usedFallback, fallbackReason}, where
+         *      consequencesPromise resolves to {consequence, consequencesByTranscriptId}
          */
 
-        const ensemblApiPrefix = `https://${genomeVersion == '37' ? 'grch37.' : ''}rest.ensembl.org/vep/human/hgvs/`
-
-        // `variant` is reassigned to the VCF string once Ensembl answers, so keep what the user typed
+        // `variant` is the user's text throughout; the resolvers are handed it as-is
         const userInputVariant = variant
-        let chrom, pos, ref, alt, variantConsequence
-        let matchedRegExp = variant.match(VARIANT_RE)
-        const hasLocalParse = Boolean(matchedRegExp)  // the page could parse the coordinates itself
-        let ensemblApiUrl, ensemblApiResponse, ensemblApiResponseJson
-        if (matchedRegExp) {
-            // was able to parse the user input using a simple reg-exp
-            chrom = matchedRegExp[2].toUpperCase()
-            pos = parseInt(matchedRegExp[3].replace(/,/g, ""))
-            ref = matchedRegExp[4].toUpperCase()
-            alt = matchedRegExp[5].toUpperCase()
-        }
+        const matchedRegExp = variant.match(VARIANT_RE)
 
-        // GeneBe resolves hg38 variants, and is the only source of per-transcript consequences for them.
-        // hg19 goes to Ensembl instead: GeneBe answers with hg38 coordinates whatever genome is requested,
-        // while the GRCh37 Ensembl API maps hg19 input against GRCh37 directly.
-        if (genomeVersion == '38') {
-            // When the page already parsed the coordinates, GeneBe is only being asked for consequences
-            onProgress(hasLocalParse
-                ? "Looking up variant consequences using GeneBe..."
-                : "Converting HGVS notation to chrom-pos-ref-alt using GeneBe...")
-            const geneBeResult = await resolveVariantWithGeneBe(variant, hasLocalParse ? `${chrom}-${pos}-${ref}-${alt}` : null)
-            if (geneBeResult && geneBeResult.refAlleleError) {
-                // Stop here rather than spending three scoring requests on a variant that cannot score.
-                // The backends check the REF allele as well (check_ref_allele in server.py) and report
-                // it just as specifically, but only after those requests have been made.
-                throw Error(geneBeResult.refAlleleError)
-            }
-            if (geneBeResult) {
-                console.log("GeneBe API result:", geneBeResult)
-                return geneBeResult
-            }
-            // Only input the page could not parse itself goes on to Ensembl. With coordinates in
-            // hand the block below returns them directly, so say which of the two actually happens.
-            console.warn(hasLocalParse
-                ? "GeneBe API couldn't resolve the variant; using the parsed coordinates, without consequences"
-                : "GeneBe API couldn't resolve the variant, falling back to Ensembl")
-        }
-
-        // Coordinates the page parsed itself need no converting, so Ensembl has nothing to do here.
-        // Its other job on this path was validating the REF allele, which the SpliceAI and Pangolin
-        // backends now do themselves (check_ref_allele in server.py) and report accurately, where
-        // Ensembl's answer cost a second API call on every such search. GeneBe still supplies the
-        // consequences. This covers MNPs too, which never had an Ensembl call to begin with: there is
-        // no straightforward HGVS form for one.
         if (matchedRegExp) {
-            const parsedVariant = `${chrom}-${pos}-${ref}-${alt}`
-            let annotation = null
-            // An hg38 variant only reaches here when GeneBe already failed on these coordinates above,
-            // so asking it the same question twice would just fail twice.
-            if (genomeVersion != '38') {
-                onProgress("Looking up variant consequences using GeneBe...")
-                annotation = await annotateVariantWithGeneBe(
-                    parsedVariant, genomeVersion, userInputVariant, parsedVariant)
-            }
-            if (annotation && annotation.refAlleleError) {
-                throw Error(annotation.refAlleleError)
-            }
+            // The page parsed the coordinates itself, so there is nothing to resolve and nothing to
+            // wait for. The consequences are left running for the caller to await alongside the
+            // scoring requests instead of ahead of them.
+            //
+            // hg38 used to hand back GeneBe's own left-aligned spelling of these coordinates instead
+            // (1-1000095-CGC-C came back as 1-1000094-CCG-C). It now scores exactly what was typed,
+            // the way hg19 always has. Waiting on GeneBe purely to re-spell the variant is the delay
+            // this avoids, and the backends neither normalize nor care which equivalent spelling of
+            // an indel they are given.
+            const chrom = matchedRegExp[2].toUpperCase()
+            const pos = parseInt(matchedRegExp[3].replace(/,/g, ""))
+            const ref = matchedRegExp[4].toUpperCase()
+            const alt = matchedRegExp[5].toUpperCase()
             return {
-                'variant': parsedVariant,
-                'consequence': annotation ? annotation.consequence : null,
-                'consequencesByTranscriptId': annotation ? annotation.consequencesByTranscriptId : null,
+                'variant': `${chrom}-${pos}-${ref}-${alt}`,
+                'consequencesPromise': annotateParsedVariant(
+                    chrom, pos, ref, alt, genomeVersion, userInputVariant),
             }
         }
 
-        //assume the variant is already in HGVS notation
-        ensemblApiUrl = `${ensemblApiPrefix}${variant.trim()}`
+        // Everything below is HGVS notation, the only input that still has to be resolved.
+        if (genomeVersion == '38') {
+            onProgress("Converting HGVS notation to chrom-pos-ref-alt using the GeneBe and Ensembl APIs...")
+            // resolveHgvsWithEnsembl throws to report why it failed, which is one contestant losing
+            // rather than the search failing, so its rejection is turned into "no answer" here.
+            const resolved = await firstUsableAnswer([
+                // Tagged so the consequences below can tell whether GeneBe's own answer is already
+                // in hand, or whether it still has to be asked about the coordinates Ensembl chose.
+                resolveVariantWithGeneBe(variant).then((r) => r && {...r, 'fromGeneBe': true}),
+                resolveHgvsWithEnsembl(variant, genomeVersion).catch((e) => {
+                    console.warn("Ensembl API couldn't convert the HGVS notation:", e)
+                    return null
+                }),
+            ])
+            if (resolved && resolved.refAlleleError) {
+                // Stop here rather than spending three scoring requests on a variant that cannot
+                // score. The backends check the REF allele as well and report it just as
+                // specifically, but only after those requests have been made.
+                throw Error(resolved.refAlleleError)
+            }
+            if (resolved) {
+                console.log("hg38 HGVS resolved to:", resolved)
+                return {
+                    'variant': resolved.variant,
+                    // Set when the input left the allele open, eg. a dbSNP id that covers several
+                    'warnings': resolved.warnings,
+                    // GeneBe's consequences are preferred everywhere, so when Ensembl won the race
+                    // GeneBe is asked again, about the coordinates Ensembl settled on rather than the
+                    // ones GeneBe would have resolved to itself. Ensembl's own answer is the fallback,
+                    // already in hand, so that costs one call and no second Ensembl round trip.
+                    'consequencesPromise': resolved.fromGeneBe
+                        ? Promise.resolve({
+                            'consequence': resolved.consequence,
+                            'consequencesByTranscriptId': resolved.consequencesByTranscriptId,
+                        })
+                        : consequencesFrom(
+                            annotateVariantWithGeneBe(
+                                resolved.variant, genomeVersion, userInputVariant, resolved.variant),
+                            resolved,
+                            genomeVersion),
+                }
+            }
+            const fallback = await resolveHgvsWithVariantValidator(
+                variant, genomeVersion, userInputVariant, onProgress,
+                "Neither the GeneBe nor the Ensembl API could convert this HGVS notation, so it was "
+                    + "converted to genomic coordinates via VariantValidator")
+            if (fallback) {
+                return fallback
+            }
+            throw Error(`Neither the GeneBe nor the Ensembl API could convert ${variant} to genomic `
+                + `coordinates. ${GENOMIC_COORDINATE_HINT}`)
+        }
 
-
-        // try calling the Ensembl API on the user input
+        // hg19: Ensembl resolves the coordinates on its own, and its error text is what the user sees
+        // when it can't, so this one is awaited rather than raced.
+        onProgress("Converting HGVS notation to chrom-pos-ref-alt using the Ensembl API")
+        let resolved
         try {
-            try {
-                onProgress("Converting HGVS notation to chrom-pos-ref-alt using Ensembl...")
-                ensemblApiResponse = await makeRequest(ensemblApiUrl + "?content-type=application/json&vcf_string=1", ENSEMBL_TIMEOUT_MS)
-            } catch (e) {
-                console.error(e)
-                const errorMessage = e.message || e.toString()
-                // Only HGVS notation reaches Ensembl now, so there are never locally parsed
-                // coordinates to fall back on here. Try VariantValidator as a coordinate-resolution
-                // fallback before giving up.
-                onProgress("Converting HGVS notation to chrom-pos-ref-alt using VariantValidator...")
-                const vvVariant = await resolveVariantWithVariantValidator(variant, genomeVersion)
-                if (vvVariant) {
-                    console.warn(`Ensembl API unavailable, using VariantValidator as fallback: ${vvVariant}`)
-                    // Worth asking GeneBe now, on either build: it was handed the raw HGVS text
-                    // earlier and couldn't resolve it, so unlike the parsed-coordinate paths it has
-                    // never seen these coordinates. A bare refAlleleError is ignored rather than
-                    // thrown -- the backends check the REF allele themselves and this fallback has
-                    // already done the hard part, so it shouldn't be abandoned over it.
-                    onProgress("Looking up variant consequences using GeneBe...")
-                    const vvAnnotation = await annotateVariantWithGeneBe(
-                        vvVariant, genomeVersion, userInputVariant, vvVariant)
-                    const vvConsequences = vvAnnotation && vvAnnotation.consequencesByTranscriptId
-                        ? vvAnnotation : null
-                    return {
-                        'variant': vvVariant,
-                        'consequence': vvConsequences ? vvConsequences.consequence : null,
-                        'consequencesByTranscriptId': vvConsequences ? vvConsequences.consequencesByTranscriptId : null,
-                        'usedFallback': true,
-                        'fallbackReason': errorMessage.includes('timed out')
-                            ? 'Ensembl API timed out; converted HGVS to genomic coordinates via VariantValidator'
-                            : 'Ensembl API unavailable; converted HGVS to genomic coordinates via VariantValidator'
-                    }
-                }
-                // Ensembl is unreachable, VariantValidator couldn't resolve it, and the
-                // input isn't in a directly-parseable genomic format.
-                if (errorMessage.includes('timed out')) {
-                    throw Error(`Ensembl API timed out. ${GENOMIC_COORDINATE_HINT}`)
-                }
-                throw Error(`Ensembl API call failed: ${errorMessage}. ${GENOMIC_COORDINATE_HINT}`)
-            }
-
-            ensemblApiResponseJson = await ensemblApiResponse
-            console.log(`Ensembl API response:`, ensemblApiResponseJson)
-
-            if (!ensemblApiResponse.ok || ensemblApiResponseJson.error) {
-                let errorText = `${ensemblApiResponseJson.error}`
-                //const unableToParseHGVSErrorMatch = errorText.match("Unable to parse HGVS notation")
-                //if (unableToParseHGVSErrorMatch) {
-                //    errorText = `Ensembl API is unable to parse the variant ${variant}: ${errorText}`
-                //}
-                const refAlleleErrorMatch = errorText.match(
-                    new RegExp("[(]([ACGTRYSWKMBDHVN]+)[)] does not match reference allele given by HGVS notation"))
-                if (refAlleleErrorMatch) {
-                    errorText = `${variant} has an unexpected reference allele. `
-                        + `The ${genomeDisplayName(genomeVersion)} reference allele should be ${refAlleleErrorMatch[1]}`
-                }
-
-                throw new Error(errorText);
-            }
-
-            if (!ensemblApiResponseJson[0] || !ensemblApiResponseJson[0].vcf_string) {
-                throw new Error(`Unexpected response: ${JSON.stringify(ensemblApiResponseJson)}`);
-            }
-
-            variant = ensemblApiResponseJson[0].vcf_string
-            variantConsequence = ensemblApiResponseJson[0].most_severe_consequence
-            matchedRegExp = variant.match(VARIANT_RE)
-            if (!matchedRegExp) {
-                throw new Error(`Unexpected response: ${JSON.stringify(ensemblApiResponseJson)}`)
-            }
-
-            chrom = matchedRegExp[2].toUpperCase()
-            pos = parseInt(matchedRegExp[3])
-            ref = matchedRegExp[4].toUpperCase()
-            alt = matchedRegExp[5].toUpperCase()
-
-            // VEP keys its consequence records by transcript_id
-            const consequencesByTranscriptId = mostSevereConsequenceByTranscriptId(
-                (ensemblApiResponseJson[0].transcript_consequences || []).map(
-                    (c) => ({'transcriptId': c.transcript_id, 'terms': c.consequence_terms})))
-
-            const result = {
-                'variant': `${chrom}-${pos}-${ref}-${alt}`,
-                'consequence': variantConsequence,
-                'consequencesByTranscriptId': consequencesByTranscriptId,
-            }
-
-            // The GRCh37 VEP endpoint annotates against an older Ensembl transcript set that largely
-            // doesn't line up with the Gencode-lifted transcript ids the SpliceAI and Pangolin results
-            // carry for hg19, so most rows -- often including the MANE Select row -- would have no
-            // consequence to show. GeneBe covers those ids, so prefer it and keep VEP's as the fallback.
-            // Only for hg19: an hg38 variant that reaches this code has already been through GeneBe.
-            if (genomeVersion == '37') {
-                onProgress("Looking up variant consequences using GeneBe...")
-                // annotateVariantWithGeneBe answers with null, an annotation, or a bare refAlleleError.
-                // A null (which now also covers the call failing) or an error means it described some
-                // other variant than the one asked about, so the VEP consequences stay in place rather
-                // than being replaced by that other variant's. The error itself isn't surfaced here: the
-                // GRCh37 Ensembl call above already validated this variant's REF allele, so it can only
-                // mean the lift landed on a different base.
-                const geneBeAnnotation = await annotateVariantWithGeneBe(
-                    result.variant, genomeVersion, userInputVariant, result.variant)
-                if (geneBeAnnotation && geneBeAnnotation.consequencesByTranscriptId) {
-                    result.consequence = geneBeAnnotation.consequence
-                    result.consequencesByTranscriptId = geneBeAnnotation.consequencesByTranscriptId
-                }
-            }
-            console.log("EnsemblAPI result:", result)
-
-            return result
-
+            resolved = await resolveHgvsWithEnsembl(variant, genomeVersion)
         } catch (e) {
             console.error(e)
-            // Rethrow the original error; `new Error(e)` would wrap it again and
-            // produce user-visible "Error: Error: <msg>" strings.
-            throw e
+            if (e.ensemblRejected) {
+                // Ensembl answered and rejected the variant, so VariantValidator would only spend a
+                // round trip to reach the same conclusion. Report what Ensembl said, which for a bad
+                // REF allele names the base the reference genome actually has.
+                throw e
+            }
+            const errorMessage = e.message || e.toString()
+            const fallback = await resolveHgvsWithVariantValidator(
+                variant, genomeVersion, userInputVariant, onProgress,
+                errorMessage.includes('timed out')
+                    ? 'Ensembl API timed out; converted HGVS to genomic coordinates via VariantValidator'
+                    : 'Ensembl API unavailable; converted HGVS to genomic coordinates via VariantValidator')
+            if (fallback) {
+                return fallback
+            }
+            // Ensembl is unreachable, VariantValidator couldn't resolve it, and the input isn't in a
+            // directly-parseable genomic format.
+            if (errorMessage.includes('timed out')) {
+                throw Error(`Ensembl API timed out. ${GENOMIC_COORDINATE_HINT}`)
+            }
+            throw Error(`Ensembl API call failed: ${errorMessage}. ${GENOMIC_COORDINATE_HINT}`)
+        }
+
+        // The GRCh37 VEP endpoint annotates against an older Ensembl transcript set that largely
+        // doesn't line up with the Gencode-lifted transcript ids the SpliceAI and Pangolin results
+        // carry for hg19, so most rows -- often including the MANE Select row -- would have no
+        // consequence to show. GeneBe covers those ids, so prefer it and keep VEP's as the fallback.
+        return {
+            'variant': resolved.variant,
+            'consequencesPromise': consequencesFrom(
+                annotateVariantWithGeneBe(resolved.variant, genomeVersion, userInputVariant, resolved.variant),
+                resolved,
+                genomeVersion),
         }
     }
 
@@ -2337,6 +2540,21 @@
     // over a newer one. Same guard as generateSplicingResultsTable's currentSubmissionId check.
     let currentPerPositionRequestId = 0
 
+    const removeInsertedBasesModals = () => {
+        /* Remove the inserted-bases modals left over from a previous search.
+
+         * They are not inside the result rows that get torn down: Semantic UI's detachable default
+         * moves each one to body > .ui.dimmer.modals when `.modal()` initializes it, whether or not
+         * anyone opened it. Left alone they accumulate on every search, and since modalDialogId is
+         * only transcriptIndex*10+i it repeats across searches, so getElementById hands the click
+         * handler the older element and opens an earlier search's table. Semantic UI is asked to
+         * hide any that are open first, so the dimmer doesn't stay up over the cleared page.
+         */
+        const $modals = $("[id^='modal-with-table']")
+        $modals.filter(":visible").modal("hide")
+        $modals.remove()
+    }
+
     // Close an open per-position modal and supersede any response still in flight for it. The
     // modal is a top-level overlay rather than part of #response-box, so the hide lists that
     // clear a search's results can't reach it: without this, a new search or a back/forward
@@ -2470,8 +2688,8 @@
                     ${normalizedVariantDiv}
                     <br class="only-large-screen"/>
                     <a href="${getUCSCBrowserUrl(genomeVersion, chrom, pos)}" class="small-link" target="_blank">UCSC</a>,
-                    <a href="https://gnomad.broadinstitute.org/variant/${chrom}-${pos}-${ref}-${alt}?dataset=${gnomadVersion}" class="small-link" target="_blank">gnomAD</a>,
-                    <a href="${getGeneBeVariantUrl(genomeVersion, chrom, pos, ref, alt)}" class="small-link" target="_blank">GeneBe</a>
+                    <a href="https://gnomad.broadinstitute.org/variant/${chrom}-${pos}-${ref}-${alt}?dataset=${gnomadVersion}" class="small-link gnomad-variant-link" target="_blank">gnomAD</a>,
+                    <a href="${getGeneBeVariantUrl(genomeVersion, chrom, pos, ref, alt)}" class="small-link genebe-variant-link" target="_blank">GeneBe</a>
                     <br class="only-large-screen"/>
 
                 </td>`
@@ -2487,23 +2705,85 @@
                 </td>`
     }
 
-    const buildTranscriptCellHtml = (scores, genomeVersion, rowspan, perPositionIconHtml = "", consequencesByTranscriptId = null) => {
+    const fillInTranscriptConsequences = (consequence, consequencesByTranscriptId) => {
+        /* Fill in everything on the page that depends on the variant's consequences.
+
+         * The score tables are rendered from the scores alone, so that a search shows results as soon
+         * as SpliceAI and Pangolin answer rather than waiting on a second, unrelated API. This puts
+         * the consequences into the cells those tables left empty, whenever the lookup gets back.
+         * Called with nulls when nothing could annotate the variant, which leaves the cells empty.
+         *
+         * Args:
+         *  consequence (string): the variant's most severe consequence across all transcripts, or null
+         *  consequencesByTranscriptId (object): most severe consequence per transcript id, or null
+         */
+        $(".transcript-consequence").each(function () {
+            const transcriptConsequence = consequencesByTranscriptId
+                ? consequencesByTranscriptId[$(this).data("transcript-id")] : null
+            if (!transcriptConsequence) {
+                return
+            }
+            // Only VEP's own terms link to VEP's consequence documentation. GeneBe also reports terms
+            // that page doesn't define (eg. "exon_region"), which are shown as plain text instead.
+            const text = transcriptConsequence.replace(/_/g, ' ')
+            if (CONSEQUENCE_SEVERITY_ORDER.includes(transcriptConsequence)) {
+                $(this).empty().append($("<a>", {
+                    href: "https://www.ensembl.org/info/genome/variation/prediction/predicted_data.html",
+                    target: "_blank",
+                    text: text,
+                }))
+            } else {
+                $(this).text(text)
+            }
+        })
+
+        showMissensePointsIfMissense(consequence)
+    }
+
+    const showMissensePointsIfMissense = (consequence) => {
+        /* Reveal the ACMG-style points numbers in the 'Other scores' table, which only apply to a
+         * missense variant. The cells' shading does not depend on the consequence and is painted
+         * when the table is built, so only the number is handled here.
+
+         * Split out because the two things this depends on land in either order: the consequence
+         * lookup answers on its own schedule, and so does the table whose cells this reveals.
+         * Whichever finishes second has to apply it, so both call this. It is a plain toggle over
+         * whatever is in the DOM, so calling it twice costs nothing.
+         */
+        $(".missense-points span").toggle(
+            Boolean(consequence && consequence.toLowerCase().includes("missense")))
+    }
+
+    const pointVariantLinksAtNormalizedSpelling = (normalizedVariant, genomeVersion) => {
+        /* Repoint the gnomAD and GeneBe links at the left-aligned spelling of the variant.
+
+         * Both sites are keyed by the left-aligned spelling, so for an indel typed some other
+         * equivalent way the links built from the typed spelling lead nowhere. The variant cell
+         * still shows what was typed, since that is what was searched for and scored; only where
+         * the links point changes.
+         *
+         * Args:
+         *  normalizedVariant (string): the left-aligned "{chrom}-{pos}-{ref}-{alt}"
+         *  genomeVersion (string): "37" or "38"
+         */
+        const [chrom, pos, ref, alt] = normalizedVariant.split("-")
+        $("a.gnomad-variant-link").attr("href",
+            `https://gnomad.broadinstitute.org/variant/${chrom}-${pos}-${ref}-${alt}`
+                + `?dataset=${getGnomadDataVersion(genomeVersion)}`)
+        $("a.genebe-variant-link").attr("href", getGeneBeVariantUrl(genomeVersion, chrom, pos, ref, alt))
+    }
+
+    const buildTranscriptCellHtml = (scores, genomeVersion, rowspan, perPositionIconHtml = "") => {
         const gnomadVersion = getGnomadDataVersion(genomeVersion)
         const strand = scores['t_strand'] == "-" ? "minus" : "plus"
         const refSeqLink = scores['t_refseq_ids']? `/ <a href="https://www.ncbi.nlm.nih.gov/search/all/?term=${encodeURIComponent(scores['t_refseq_ids'][0])}" target="_blank">${escapeHtml(scores['t_refseq_ids'][0])}</a>` : ""
 
-        // the consequence for this transcript specifically, rather than the variant's most severe
-        // consequence across all transcripts. Missing for any transcript the consequence API didn't report.
-        const transcriptConsequence = consequencesByTranscriptId ? consequencesByTranscriptId[transcriptIdKey(scores['t_id'])] : null
-        // Only VEP's own terms link to VEP's consequence documentation. GeneBe also reports terms that
-        // page doesn't define (eg. "exon_region"), which are shown as plain text instead.
-        const transcriptConsequenceText = transcriptConsequence
-            ? escapeHtml(transcriptConsequence.replace(/_/g, ' ')) : ""
-        const transcriptConsequenceDiv = transcriptConsequence ? `<div class="small-link" style="display:block">
-                            ${CONSEQUENCE_SEVERITY_ORDER.includes(transcriptConsequence)
-                                ? `<a href="https://www.ensembl.org/info/genome/variation/prediction/predicted_data.html" target="_blank">${transcriptConsequenceText}</a>`
-                                : transcriptConsequenceText}
-                        </div>` : ""
+        // Left empty here and filled in by fillInTranscriptConsequences once the consequence lookup
+        // answers, which is usually after these tables have already been built from the scores. The
+        // cell shows the consequence for this transcript specifically, rather than the variant's most
+        // severe across all transcripts, and stays empty for any transcript nothing reported one for.
+        const transcriptConsequenceDiv = `<div class="small-link transcript-consequence" style="display:block"
+                            data-transcript-id="${escapeHtml(transcriptIdKey(scores['t_id']))}"></div>`
 
         // position:relative anchors the per-position table icon to the cell's top-right corner
         return `<td rowspan="${rowspan}" style="vertical-align: top; position: relative; padding-right: 30px">
@@ -2531,10 +2811,12 @@
                 </td>`
     }
 
-    const generateSplicingResultsTable = async (normalizedVariant, variantConsequence, consequencesByTranscriptId, tool, variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltScoreColumns, isPositionOnly, submissionId) => {
+    const generateSplicingResultsTable = async (normalizedVariant, tool, variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltScoreColumns, isPositionOnly, submissionId) => {
         /* Generate the results table to show either the SpliceAI or Pangolin scores.
            submissionId identifies the handleSubmit call this table belongs to, so a slow
-           response can be discarded once a newer search has superseded it. */
+           response can be discarded once a newer search has superseded it.
+           The consequence lookup is not waited on anywhere in here: the table renders from the
+           scores alone, leaving empty cells that fillInTranscriptConsequences completes later. */
 
         const variantTokens = (normalizedVariant || "---").split("-")
         const chrom = variantTokens[0]
@@ -2554,7 +2836,7 @@
         const enc = encodeURIComponent
         const urlArgs = isPositionOnly
             ? `hg=${enc(genomeVersion)}&bc=${enc(basicOrComprehensive)}&distance=${enc(maxDistance)}&variant=${enc(`${chrom}-${pos}`)}&raw=${enc(variant)}`
-            : `hg=${enc(genomeVersion)}&bc=${enc(basicOrComprehensive)}&distance=${enc(maxDistance)}&mask=${enc(mask)}&variant=${enc(`${chrom}-${pos}-${ref}-${alt}`)}&raw=${enc(variant)}&variant_consequence=${enc(variantConsequence)}`
+            : `hg=${enc(genomeVersion)}&bc=${enc(basicOrComprehensive)}&distance=${enc(maxDistance)}&mask=${enc(mask)}&variant=${enc(`${chrom}-${pos}-${ref}-${alt}`)}&raw=${enc(variant)}`
 
         // The MAX_VARIANT_LENGTH check in handleSubmit covers a variant typed or pasted as
         // genomic coordinates, but an HGVS input is short until Ensembl resolves it, so a
@@ -2641,6 +2923,9 @@
         let transcriptIndex = 0
         const isPangolin = tool.toLowerCase() == "pangolin"
         const subRowCount = isPangolin ? 2 : 4
+        // Cleared once, before the loop rather than inside it, so an empty scores array still drops
+        // the previous search's rows instead of leaving them under this search's header.
+        $(`#${tool.toLowerCase()}-header`).nextAll().remove()
         for (const scores of apiResponseJson.scores) {
             const isMainTranscript = scores['t_priority'] != "N" && (scores['t_priority'] != "C" || transcriptCategories["MS"] == undefined)
 
@@ -2658,7 +2943,6 @@
                 resultRowClasses.push("non-coding-transcript")
             }
 
-            $(`#${tool.toLowerCase()}-header`).nextAll().remove()
             const variantCellHtml = transcriptIndex === 0
                 ? buildVariantCellHtml(variant, normalizedVariant, genomeVersion, subRowCount)
                 : `<td rowspan="${subRowCount}"></td>`
@@ -2688,7 +2972,7 @@
 
             let row = `<tr class="${resultRowClasses.join(' ')}">
                 ${variantCellHtml}
-                ${buildTranscriptCellHtml(scores, genomeVersion, subRowCount, buildPerPositionIconHtml(perPositionIconId, scores['nNonZeroScores']), consequencesByTranscriptId)}`
+                ${buildTranscriptCellHtml(scores, genomeVersion, subRowCount, buildPerPositionIconHtml(perPositionIconId, scores['nNonZeroScores']))}`
 
             for (const [i, label, scoreKey, positionKey, REF_scoreKey, ALT_scoreKey] of (
                 isPangolin ? [
@@ -2797,6 +3081,8 @@
             : [[0, "Acceptor", "RA_MAX", "RA_MAX_POS"], [1, "Donor", "RD_MAX", "RD_MAX_POS"]]
         const subRowCount = rowDefs.length
 
+        // Cleared before the loop for the same reason as in generateSplicingResultsTable above.
+        $(`#${tool.toLowerCase()}-header`).nextAll().remove()
         for (const scores of apiResponseJson.scores) {
             const isMainTranscript = scores['t_priority'] != "N" && (scores['t_priority'] != "C" || transcriptCategories["MS"] == undefined)
 
@@ -2806,7 +3092,6 @@
             resultRowClasses.push(isMainTranscript ? "main-transcript" : "non-main-transcript")
             resultRowClasses.push(scores['t_type'] == "protein_coding" ? "coding-transcript" : "non-coding-transcript")
 
-            $(`#${tool.toLowerCase()}-header`).nextAll().remove()
             const positionCellHtml = transcriptIndex === 0
                 ? buildPositionCellHtml(variant, chrom, pos, genomeVersion, subRowCount)
                 : `<td rowspan="${subRowCount}"></td>`
@@ -2840,7 +3125,7 @@
     }
 
 
-    const generateSai10kTable = (spliceaiResponseJson, genomeVersion, consequencesByTranscriptId) => {
+    const generateSai10kTable = (spliceaiResponseJson, genomeVersion) => {
         /* Render the SAI-10k-calc prediction row(s) into the "Predicted Splicing Consequences" table.
          * Hidden when SpliceAI itself failed; shows a "no prediction available" placeholder when SpliceAI
          * succeeded but no aberrations were predicted. */
@@ -2861,7 +3146,7 @@
         const allScores = spliceaiResponseJson.scores || []
         const scoresForSai10k = (sai10kPredictions && allScores.find(s => s.t_id === sai10kPredictions.transcript_id)) || allScores[0]
         const transcriptCell = scoresForSai10k
-            ? buildTranscriptCellHtml(scoresForSai10k, genomeVersion, 1, "", consequencesByTranscriptId)
+            ? buildTranscriptCellHtml(scoresForSai10k, genomeVersion, 1)
             : `<td></td>`
 
         // Mirror generateSplicingResultsTable's main-transcript / coding-transcript
@@ -3061,14 +3346,35 @@
     }
 
 
-    const generateOtherPredictorsTable = async (normalizedVariant, variantConsequence, variant, genomeVersion, submissionId) => {
+    const generateOtherPredictorsTable = async (normalizedVariant, variant, genomeVersion, submissionId, consequencesPromise = null) => {
         /* Generate the 'Other scores' table from the PrimateAI-3D / PromoterAI lookup
            tables and the gnomAD and myvariant.info queries.
            submissionId identifies the handleSubmit call this table belongs to, so a slow
-           response can be discarded once a newer search has superseded it. */
+           response can be discarded once a newer search has superseded it.
+           consequencesPromise carries the resolver's left-aligned spelling of the variant, which is
+           the one every source queried here indexes; see the wait below. */
         console.log(`Generating other scores table for ${normalizedVariant} from ${primateAndPromoterAiTableUrls[genomeVersion]}`)
 
-        const variantTokens = (normalizedVariant || "---").split("-")
+        let variantTokens = (normalizedVariant || "---").split("-")
+
+        // gnomAD, myvariant.info and the precomputed score tables all index the left-aligned
+        // spelling of a variant, while the page deliberately scores whichever equivalent spelling
+        // was typed. Only an indel can be written more than one way, so only an indel waits here for
+        // the consequence lookup to supply the left-aligned spelling; an SNV is already canonical
+        // and its queries start immediately. The SpliceAI and Pangolin calls never wait either way:
+        // they are already in flight by the time this runs.
+        let leftAlignedVariant = null
+        if (consequencesPromise && ((variantTokens[2] || "").length > 1 || (variantTokens[3] || "").length > 1)) {
+            const resolvedConsequences = await consequencesPromise
+            if (resolvedConsequences && resolvedConsequences.normalizedVariant
+                    && resolvedConsequences.normalizedVariant != normalizedVariant) {
+                console.log(`Querying the score lookups with the left-aligned `
+                    + `${resolvedConsequences.normalizedVariant} rather than ${normalizedVariant}`)
+                leftAlignedVariant = resolvedConsequences.normalizedVariant
+                variantTokens = leftAlignedVariant.split("-")
+            }
+        }
+
         const chrom = `chr${variantTokens[0].replace("chr", "")}`
         const pos = parseInt(variantTokens[1])
         const ref = variantTokens[2]
@@ -3078,60 +3384,67 @@
 
         const otherPredictorScores = {}
         const queryLookupTable = async () => {
-            await Promise.all([
-                primateAndPromoterAiTables[genomeVersion].getLines(chrom, pos-1, pos, line => {
-                    //console.log("Got line:", line)
-                    const fields = line.split('\t')
-                    const linePos = parseInt(fields[1])
-                    const lineRef = fields[2]
-                    const lineAlt = fields[3]
+            // Caught the way queryGnomAD and queryMyVariantInfo catch theirs: a failed range request
+            // against the reference-data files should cost only these scores, not abort the caller
+            // before it rebuilds the table and leave the previous search's rows on screen.
+            try {
+                await Promise.all([
+                    primateAndPromoterAiTables[genomeVersion].getLines(chrom, pos-1, pos, line => {
+                        //console.log("Got line:", line)
+                        const fields = line.split('\t')
+                        const linePos = parseInt(fields[1])
+                        const lineRef = fields[2]
+                        const lineAlt = fields[3]
 
-                    if (linePos != pos || lineRef != ref || lineAlt != alt) {
-                        return
-                    }
-                    const percentile = parseFloat(fields[4])
-                    const genePercentilethreshold = parseFloat(fields[5])
-                    //console.log("PrimateAI-3D", percentile, genePercentilethreshold)
-                    if (!isNaN(percentile)) {
-                        otherPredictorScores['primateai3d']  = {
-                            'percentile': percentile,
-                            'genePercentileThreshold': genePercentilethreshold,
+                        if (linePos != pos || lineRef != ref || lineAlt != alt) {
+                            return
                         }
-                    }
-                    const promoterAiScore = parseFloat(fields[6])
-                    //console.log("PromoterAI", promoterAiScore)
-                    if (!isNaN(promoterAiScore)) {
-                        otherPredictorScores['promoterai'] = {
-                            'score': promoterAiScore,
+                        const percentile = parseFloat(fields[4])
+                        const genePercentilethreshold = parseFloat(fields[5])
+                        //console.log("PrimateAI-3D", percentile, genePercentilethreshold)
+                        if (!isNaN(percentile)) {
+                            otherPredictorScores['primateai3d']  = {
+                                'percentile': percentile,
+                                'genePercentileThreshold': genePercentilethreshold,
+                            }
                         }
-                    }
-                },),
-
-                alphaMissenseTables[genomeVersion].getLines(chrom, pos-1, pos, line => {
-                    const fields = line.split('\t')
-                    const linePos = parseInt(fields[1])
-                    const lineRef = fields[2]
-                    const lineAlt = fields[3]
-
-                    if (linePos != pos || lineRef != ref || lineAlt != alt) {
-                        return
-                    }
-                    //const transcriptId = fields[6]
-                    //const proteinVariant = fields[7]
-                    //const consequence = fields[9]  //benign, ambiguous, pathogenic
-                    const alphaMissenseScore = parseFloat(fields[8])
-
-                    //console.log("AlphaMissense", alphaMissenseScore)
-                    if (!isNaN(alphaMissenseScore)) {
-                        otherPredictorScores['alphamissense'] = {
-                            'score': alphaMissenseScore,
-                            //'transcriptId': transcriptId,
-                            //'proteinVariant': proteinVariant,
-                            //'consequence': consequence,
+                        const promoterAiScore = parseFloat(fields[6])
+                        //console.log("PromoterAI", promoterAiScore)
+                        if (!isNaN(promoterAiScore)) {
+                            otherPredictorScores['promoterai'] = {
+                                'score': promoterAiScore,
+                            }
                         }
-                    }
-                },)
-            ])
+                    },),
+
+                    alphaMissenseTables[genomeVersion].getLines(chrom, pos-1, pos, line => {
+                        const fields = line.split('\t')
+                        const linePos = parseInt(fields[1])
+                        const lineRef = fields[2]
+                        const lineAlt = fields[3]
+
+                        if (linePos != pos || lineRef != ref || lineAlt != alt) {
+                            return
+                        }
+                        //const transcriptId = fields[6]
+                        //const proteinVariant = fields[7]
+                        //const consequence = fields[9]  //benign, ambiguous, pathogenic
+                        const alphaMissenseScore = parseFloat(fields[8])
+
+                        //console.log("AlphaMissense", alphaMissenseScore)
+                        if (!isNaN(alphaMissenseScore)) {
+                            otherPredictorScores['alphamissense'] = {
+                                'score': alphaMissenseScore,
+                                //'transcriptId': transcriptId,
+                                //'proteinVariant': proteinVariant,
+                                //'consequence': consequence,
+                            }
+                        }
+                    },)
+                ])
+            } catch (e) {
+                console.error("Lookup table query failed:", e)
+            }
         }
 
         const queryGnomAD = async () => {
@@ -3179,8 +3492,17 @@
                           if (predictor.id.startsWith("spliceai") || predictor.id.startsWith("pangolin")) {
                               return
                           }
-                          const predictorName = predictor.id
+                          // hg19 uses gnomAD's non-V4 dataset, which names REVEL "revel" where
+                          // every table on this page keys it as "revel_max". Without this the hg19
+                          // REVEL score lands under a key nothing reads and the row shows as missing.
+                          const predictorName = predictor.id === "revel" ? "revel_max" : predictor.id
                           const score = parseFloat(parseFloat(predictor.value).toFixed(3))
+                          if (isNaN(score)) {
+                              // Leave it out rather than storing NaN, which would count as a present
+                              // score and render the text "NaN" in a shaded cell.
+                              console.warn(`Ignoring unparseable gnomAD ${predictorName} value:`, predictor.value)
+                              return
+                          }
                           if (otherPredictorScores[predictorName] && Math.abs(otherPredictorScores[predictorName].score - score) > 0.001) {
                               console.warn(`Mismatch between gnomAD and myvariant.info scores for ${predictorName}: ${score} vs ${otherPredictorScores[predictorName].score}`)
                           }
@@ -3289,14 +3611,14 @@
                 }
             } else if (otherPredictorName in predictorScoreToPoints) {
                 if (otherPredictor) {
+                    // Both cells are shaded by the score's own ACMG points tier, which is known here,
+                    // so the shading is painted now. Only the points NUMBER is withheld: it applies
+                    // to a missense variant, and the consequence lookup runs alongside these queries
+                    // rather than ahead of them, so fillInTranscriptConsequences reveals it later.
                     row += `<td class="three wide column" style="vertical-align: top; white-space: nowrap; background-color: ${bgColor}">${escapeHtml(otherPredictor.score)}</td>`
-                    if (variantConsequence && variantConsequence.toLowerCase().includes("missense")) {
-                        row += `<td class="one wide column" style="vertical-align: top; text-align: right; white-space: nowrap; background-color: ${bgColor}">
-                                ${predictorScoreToPoints[otherPredictorName](otherPredictor)}&nbsp;${helpIcon}
-                            </td></tr>`
-                    } else {
-                        row += `<td class="one wide column" style="background-color: ${bgColor}"></td>`
-                    }
+                    row += `<td class="one wide column missense-points" style="vertical-align: top; text-align: right; white-space: nowrap; background-color: ${bgColor}">
+                            <span style="display:none">${predictorScoreToPoints[otherPredictorName](otherPredictor)}&nbsp;${helpIcon}</span>
+                        </td></tr>`
                     tableRows.push(row)
                     firstColumn = ""
                 } else {
@@ -3313,6 +3635,23 @@
             tableRows.push(missingScoresRow)
         }
         $("#other-predictors-header").after(tableRows.join(""))
+
+        // This table builds its own variant cell, and it renders on its own schedule now, so it may
+        // appear after the consequence handler already repointed the other tables' links. Repoint
+        // from here as well; the helper just rewrites hrefs, so running it twice is harmless.
+        if (leftAlignedVariant) {
+            pointVariantLinksAtNormalizedSpelling(leftAlignedVariant, genomeVersion)
+        }
+
+        // The consequence handler may already have run and found none of these cells in the DOM, so
+        // reveal the points from here too. See showMissensePointsIfMissense.
+        if (consequencesPromise) {
+            consequencesPromise.then(({consequence}) => {
+                if (submissionId === currentSubmissionId) {
+                    showMissensePointsIfMissense(consequence)
+                }
+            })
+        }
     }
 
     const updateTranscriptButtons = (category) => {
@@ -3897,9 +4236,14 @@
         //start processing submit
         $("#submit-button").addClass("loading disabled")
         $("#response-box, #spliceai-table, #pangolin-table, #sai10k-table, #transcript-button-table, #error-box, #notes-box").hide()
+        // The 'Other scores' table is built off the critical path and clears its own rows only once
+        // its queries return, which is after #response-box is shown again. Without this, the
+        // previous search's scores and links sit under the new search's results until then.
+        $("#other-predictors-header").nextAll().remove()
         $("#error-box, #notes-box").html("")
         clearProgress()
         dismissPerPositionModal()
+        removeInsertedBasesModals()
 
         // Tear down any existing IGV browser so the next "Show" click rebuilds
         // it from scratch with only the new variant's tracks. Without this,
@@ -3927,46 +4271,21 @@
 
         // make API calls
         try {
-            let normalizedVariant, variantConsequence, consequencesByTranscriptId
+            let normalizedVariant, resolvedVariant
+            let consequencesPromise = Promise.resolve({'consequence': null, 'consequencesByTranscriptId': null})
             if (isPositionOnly) {
                 // No ref/alt to resolve via GeneBe or Ensembl -- a bare position needs no HGVS/VCF
                 // normalization, just canonical "chrom-pos" tokens for the API calls below.
                 const chrom = positionOnlyMatch[2].toUpperCase()
                 const pos = parseInt(positionOnlyMatch[3].replace(/,/g, ""))
                 normalizedVariant = `${chrom}-${pos}`
-                variantConsequence = null
-                consequencesByTranscriptId = null
             } else {
-                const normalizedVariantAndConsequence = await normalizeVariant(
-                    variant, genomeVersion, showProgressIfCurrent)
-                normalizedVariant = normalizedVariantAndConsequence.variant
-                variantConsequence = normalizedVariantAndConsequence.consequence
-                consequencesByTranscriptId = normalizedVariantAndConsequence.consequencesByTranscriptId
-
-                // Notes about how the input was interpreted, eg. which allele a dbSNP id resolved to
-                for (const warning of (normalizedVariantAndConsequence.warnings || [])) {
-                    showNoteIfCurrent(`Note: ${warning}`)
-                }
-
-                // Show warning if Ensembl API fallback was used. A note like the one above, so it
-                // goes to the same place: it qualifies the scores on screen and belongs above them.
-                if (normalizedVariantAndConsequence.usedFallback) {
-                    // Render "VariantValidator" in the fallback note as a link when the
-                    // reason mentions it; all other reason text stays a plain text node.
-                    // VariantValidator is the only thing that sets usedFallback now, and both of its
-                    // reasons name it, so the link always has somewhere to go.
-                    const reason = normalizedVariantAndConsequence.fallbackReason
-                    const vvIndex = reason.indexOf("VariantValidator")
-                    // Only say the consequence is missing when it actually is. The fallback can still
-                    // get one from GeneBe, in which case saying otherwise contradicts the table.
-                    const consequenceNote = consequencesByTranscriptId
-                        && Object.keys(consequencesByTranscriptId).length ? "" : " VEP consequence is unavailable."
-                    showNoteIfCurrent([
-                        `Note: ${reason.slice(0, vvIndex)}`,
-                        {text: "VariantValidator", href: "https://variantvalidator.org/"},
-                        `${reason.slice(vvIndex + "VariantValidator".length)}.${consequenceNote}`,
-                    ])
-                }
+                resolvedVariant = await normalizeVariant(variant, genomeVersion, showProgressIfCurrent)
+                normalizedVariant = resolvedVariant.variant
+                // Still running. Nothing below waits on it: the scoring requests go out now, the
+                // tables render from the scores alone, and the consequences are dropped into the
+                // cells they left empty once this answers (see the end of this block).
+                consequencesPromise = resolvedVariant.consequencesPromise
             }
 
             if (submissionId !== currentSubmissionId) {
@@ -3974,11 +4293,31 @@
                 return
             }
 
+            // Notes about how the input was interpreted, eg. which allele a dbSNP id resolved to
+            for (const warning of ((resolvedVariant && resolvedVariant.warnings) || [])) {
+                showNoteIfCurrent(`Note: ${warning}`)
+            }
+
+            // The consequence isn't sent with these requests: the backends have no use for it, and
+            // on most searches it isn't known yet anyway. Waiting for it would undo the point of
+            // starting these as soon as the coordinates were known.
             showProgressIfCurrent("Computing SpliceAI and Pangolin scores...")
-            let [spliceaiResponseJson, pangolinResponseJson, otherPredictorsResponseJson] = await Promise.all([
-                generateSplicingResultsTable(normalizedVariant, variantConsequence, consequencesByTranscriptId, "SpliceAI", variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltColumns, isPositionOnly, submissionId),
-                generateSplicingResultsTable(normalizedVariant, variantConsequence, consequencesByTranscriptId, "Pangolin", variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltColumns, isPositionOnly, submissionId),
-                isPositionOnly ? Promise.resolve(null) : generateOtherPredictorsTable(normalizedVariant, variantConsequence, variant, genomeVersion, submissionId),
+
+            // The 'Other scores' table is started here but deliberately NOT awaited below. For an
+            // indel it waits on the consequence lookup to learn the left-aligned spelling gnomAD and
+            // the precomputed tables index (see generateOtherPredictorsTable), and #response-box is
+            // only shown once everything awaited below has finished -- so including it there would
+            // hold finished SpliceAI and Pangolin tables off screen behind a lookup neither of them
+            // needs. It renders itself when ready and guards that write with submissionId. Its
+            // return value was never read.
+            if (!isPositionOnly) {
+                generateOtherPredictorsTable(normalizedVariant, variant, genomeVersion, submissionId, consequencesPromise)
+                    .catch((e) => console.error("Could not build the other scores table:", e))
+            }
+
+            let [spliceaiResponseJson, pangolinResponseJson] = await Promise.all([
+                generateSplicingResultsTable(normalizedVariant, "SpliceAI", variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltColumns, isPositionOnly, submissionId),
+                generateSplicingResultsTable(normalizedVariant, "Pangolin", variant, genomeVersion, basicOrComprehensive, maxDistance, mask, showRefAltColumns, isPositionOnly, submissionId),
             ].map(p => p.catch(e => ({'error': e.message, 'inputError': e.inputError}))))  // if an error is thrown, return {'error': e} instead of the JSON response
 
             if (submissionId !== currentSubmissionId) {
@@ -4028,7 +4367,7 @@
             if (isPositionOnly) {
                 $("#sai10k-table").hide()
             } else {
-                generateSai10kTable(spliceaiResponseJson, genomeVersion, consequencesByTranscriptId)
+                generateSai10kTable(spliceaiResponseJson, genomeVersion)
             }
 
             if (pangolinResponseJson.error) {
@@ -4038,6 +4377,46 @@
             } else {
                 $("#pangolin-table").show()
             }
+
+            // Every table is in the DOM by now, so its empty consequence cells can be filled in as
+            // soon as the lookup answers. Deliberately not awaited: the results are already on
+            // screen, so a slow or unreachable consequence API costs a column rather than the search.
+            // Registering the handler here rather than earlier is what guarantees the cells exist.
+            consequencesPromise.then(({consequence, consequencesByTranscriptId, normalizedVariant: leftAlignedVariant}) => {
+                if (submissionId !== currentSubmissionId) {
+                    //a newer search owns the display now, so don't write into its tables
+                    return
+                }
+                fillInTranscriptConsequences(consequence, consequencesByTranscriptId)
+
+                // The links were built from the spelling that was typed, which for an indel can be
+                // one gnomAD and GeneBe don't index. Now that the left-aligned spelling is known,
+                // point them at it instead.
+                if (leftAlignedVariant && leftAlignedVariant != normalizedVariant) {
+                    pointVariantLinksAtNormalizedSpelling(leftAlignedVariant, genomeVersion)
+                }
+
+                // Show a note if the VariantValidator fallback was used, rather than an error: it
+                // qualifies the scores on screen and belongs above them. Held until here because
+                // whether the consequence is missing is part of what it says.
+                if (resolvedVariant && resolvedVariant.usedFallback) {
+                    // Render "VariantValidator" in the fallback note as a link when the
+                    // reason mentions it; all other reason text stays a plain text node.
+                    // VariantValidator is the only thing that sets usedFallback now, and all of its
+                    // reasons name it, so the link always has somewhere to go.
+                    const reason = resolvedVariant.fallbackReason
+                    const vvIndex = reason.indexOf("VariantValidator")
+                    // Only say the consequence is missing when it actually is. The fallback can still
+                    // get one from GeneBe, in which case saying otherwise contradicts the table.
+                    const consequenceNote = consequencesByTranscriptId
+                        && Object.keys(consequencesByTranscriptId).length ? "" : " VEP consequence is unavailable."
+                    showNoteIfCurrent([
+                        `Note: ${reason.slice(0, vvIndex)}`,
+                        {text: "VariantValidator", href: "https://variantvalidator.org/"},
+                        `${reason.slice(vvIndex + "VariantValidator".length)}.${consequenceNote}`,
+                    ])
+                }
+            })
 
             // Decide the transcript-filter button state ONCE, using the union of
             // transcriptCategories across both tools' responses. The two backends can
@@ -4136,6 +4515,7 @@
         // results for an earlier variant. That includes any per-position modal opened from
         // those results, which belongs to the search being navigated away from.
         dismissPerPositionModal()
+        removeInsertedBasesModals()
         const hgFromUrl = $.urlParam('hg')
         $(`input[name='hg'][value='${hgFromUrl == "37" || hgFromUrl == "19" ? "37" : "38"}']`).prop("checked", true)
         $(`input[name='gencode-gene-set'][value='${$.urlParam('bc') == "comprehensive" ? "comprehensive" : "basic"}']`).prop("checked", true)

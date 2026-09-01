@@ -358,6 +358,12 @@ class TestSpliceAILookupUI(unittest.TestCase):
         self._submit_variant("8-140300616-T-G")
 
         self.assertTrue(self.page.is_visible("#other-predictors-table"))
+        # This table is built off the critical path, so the submit button clearing no longer means
+        # it has rendered. Wait for its own content rather than reading it straight away.
+        self.page.wait_for_function(
+            "() => /CADD|not available for this variant/.test("
+            "  (document.querySelector('#other-predictors-table') || {}).innerText || '')",
+            timeout=TIMEOUT_MS)
         table_text = self.page.inner_text("#other-predictors-table")
         # At least some standard predictors should appear
         found = [p for p in ("CADD", "REVEL", "AlphaMissense", "PrimateAI", "PhyloP")
@@ -623,6 +629,12 @@ class TestSpliceAILookupUI(unittest.TestCase):
         """HGVS variant shows a VEP consequence link in the results."""
         self._submit_variant("NM_001089.3:c.875A>T")
 
+        # The consequence cells are filled in after the tables render, so the submit button
+        # clearing says nothing about whether they have been written yet. Wait for the cell
+        # itself rather than reading the table the moment the spinner stops.
+        self.page.wait_for_selector(
+            "#spliceai-table .transcript-consequence a[href*='predicted_data']",
+            timeout=TIMEOUT_MS)
         spliceai_html = self.page.inner_html("#spliceai-table")
         # The consequence should link to Ensembl's predicted_data page
         self.assertIn("ensembl.org/info/genome/variation/prediction", spliceai_html,
