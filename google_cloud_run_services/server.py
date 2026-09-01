@@ -1973,7 +1973,11 @@ def block_ips():
 @app.route('/log/<string:name>/', strict_slashes=False)
 def log_event(name):
 
-    if name != "show_igv":
+    # "variant_consequence" carries the consequence the front end used to send with the scoring
+    # request itself. It now looks that up alongside those requests rather than before them, so by
+    # the time it knows the consequence the scoring call has already gone out, and this is how the
+    # value still reaches the log column the /analyze queries in connect_to_db.sh read.
+    if name not in ("show_igv", "variant_consequence"):
         message = f"Log error: invalid event name: {name}"
         print(message, flush=True)
         return error_response(f"ERROR: {message}")
