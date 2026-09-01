@@ -239,9 +239,11 @@ class TestSpliceAILookupUI(unittest.TestCase):
 
     def test_genome_version_hg37(self):
         """Selecting hg37 and submitting uses hg=37 in the URL hash and shows results."""
-        # Note: 8-140300616-T-G is an hg38 coordinate; we're testing the
-        # hg37 UI workflow, not the biological accuracy of this position.
-        self._submit_variant("8-140300616-T-G", hg="37")
+        # The GRCh37 coordinate for the same variant as the hg38 examples above. It has to be a
+        # real hg19 variant now: the backends check the REF allele against the reference genome,
+        # so the hg38 coordinate this used to pass is rejected on hg37 (hg19 8:140300616 is C,
+        # not T) and the page shows that error instead of results.
+        self._submit_variant("8-141312982-T-G", hg="37")
 
         self.assertIn("hg=37", self._get_url_hash())
         self.assertTrue(self.page.is_visible("#response-box"))
