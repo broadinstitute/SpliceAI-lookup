@@ -496,11 +496,6 @@
                 <div>
                     <a href="https://github.com/broadinstitute/SpliceAI-lookup/issues" target="_blank">SpliceAI-lookup/issues</a>: issues or feature requests for this website<br />
                     <br/>
-                    <b>September, 2026</b>
-                    <br />
-                    - Searches now start computing SpliceAI and Pangolin scores as soon as the variant's genomic coordinates are known, instead of waiting for the variant consequences first.<br/>
-                    - On hg38, the <a href="https://genebe.net" target="_blank">GeneBe API</a> and the <a href="https://useast.ensembl.org/info/docs/tools/vep/index.html" target="_blank">Ensembl VEP API</a> are now queried at the same time, so searches keep working while either one is down. Genomic coordinates come from whichever answers first, and variant consequences from GeneBe unless it has none.<br/>
-                    <br />
                     <b>August, 2026</b>
                     <br />
                     - Switched to the <a href="https://genebe.net" target="_blank">GeneBe API</a> for faster variant consequence lookup on both hg19 and hg38 as well as HGVS conversion on hg38, while still using <a href="https://useast.ensembl.org/info/docs/tools/vep/index.html" target="_blank">Ensembl VEP API</a> for HGVS on hg19.<br/>
@@ -2003,12 +1998,18 @@
             onProgress("Converting HGVS notation to chrom-pos-ref-alt using the GeneBe and Ensembl APIs...")
             // resolveHgvsWithEnsembl throws to report why it failed, which is one contestant losing
             // rather than the search failing, so its rejection is turned into "no answer" here.
+            // A rejection Ensembl made on the variant's merits is kept aside, though: if nothing
+            // else can resolve the input either, it is the most specific thing anyone said about it.
+            let ensemblRejection = null
             const resolved = await firstUsableAnswer([
                 // Tagged so the consequences below can tell whether GeneBe's own answer is already
                 // in hand, or whether it still has to be asked about the coordinates Ensembl chose.
                 resolveVariantWithGeneBe(variant).then((r) => r && {...r, 'fromGeneBe': true}),
                 resolveHgvsWithEnsembl(variant, genomeVersion).catch((e) => {
                     console.warn("Ensembl API couldn't convert the HGVS notation:", e)
+                    if (e.ensemblRejected) {
+                        ensemblRejection = e
+                    }
                     return null
                 }),
             ])
@@ -2046,6 +2047,14 @@
                     + "converted to genomic coordinates via VariantValidator")
             if (fallback) {
                 return fallback
+            }
+            // VariantValidator is still tried above even when Ensembl rejected the input, since it
+            // parses some notation Ensembl doesn't. But once it has failed too, Ensembl's verdict is
+            // what to report: for a wrong REF allele it names the base the genome actually has, where
+            // the generic message below would also be untrue, Ensembl having converted it just fine.
+            // This is what the hg19 path does with the same flag; the race only defers it.
+            if (ensemblRejection) {
+                throw ensemblRejection
             }
             throw Error(`Neither the GeneBe nor the Ensembl API could convert ${variant} to genomic `
                 + `coordinates. ${GENOMIC_COORDINATE_HINT}`)
