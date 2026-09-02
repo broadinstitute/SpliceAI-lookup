@@ -2062,7 +2062,7 @@
 
         // hg19: Ensembl resolves the coordinates on its own, and its error text is what the user sees
         // when it can't, so this one is awaited rather than raced.
-        onProgress("Converting HGVS notation to chrom-pos-ref-alt using the Ensembl API")
+        onProgress("Converting HGVS notation to chrom-pos-ref-alt using the Ensembl API...")
         let resolved
         try {
             resolved = await resolveHgvsWithEnsembl(variant, genomeVersion)
@@ -2424,13 +2424,28 @@
         return ""
     }
 
-    const isAnnotatedExonBoundary = (pos, scores) => {
-        /* Whether pos is an annotated exon boundary of this transcript, which is what both models
-           mask against. Deliberately not getExonNoteForPosition: that one labels splice sites and
-           so skips the transcript's outermost boundaries, while the models mask against every
-           boundary (spliceai's get_pos_data unions exon_starts with exon_ends; pangolin's
-           process_variant uses the transcript's full position list). */
-        return (scores['EXON_STARTS'] || []).includes(pos) || (scores['EXON_ENDS'] || []).includes(pos)
+    const isMaskingSite = (pos, context) => {
+        /* Whether pos is a site that masking treats as annotated. The two models disagree here.
+           Pangolin masks against every annotated position of the transcript (pangolin.py's
+           process_variant), so membership in EXON_STARTS/EXON_ENDS is the test. SpliceAI masks
+           against only the single exon boundary nearest the variant: its get_pos_data keeps
+           min(union(exon_starts, exon_ends) - pos, key=abs), so its masked output reports a loss
+           at any other annotated boundary as 0.00, and this table has to say the same. Python's
+           min keeps the first of equally near boundaries and numpy's union is sorted, so a tie
+           goes to the smaller coordinate. Deliberately not getExonNoteForPosition: that one
+           labels splice sites and so skips the transcript's outermost boundaries, while both
+           models count every boundary. */
+        const boundaries = [...(context.scores['EXON_STARTS'] || []), ...(context.scores['EXON_ENDS'] || [])]
+        if (context.tool != "spliceai") {
+            return boundaries.includes(pos)
+        }
+        let nearest = null
+        for (const boundary of boundaries.sort((a, b) => a - b)) {
+            if (nearest === null || Math.abs(boundary - context.variantPos) < Math.abs(nearest - context.variantPos)) {
+                nearest = boundary
+            }
+        }
+        return nearest !== null && pos == nearest
     }
 
     const maskPerPositionDelta = ([, kind, compute], row, context) => {
@@ -2441,12 +2456,13 @@
            unmasked would contradict the main results table, which reports 0.00 for exactly these
            cases. Both models define masking the same way (spliceai's --mask, pangolin's -m): a
            gain at an annotated splice site is not a gain, because the site is already there, and a
-           loss at an unannotated site is not a loss, because there was no site to lose. */
+           loss at an unannotated site is not a loss, because there was no site to lose. They differ
+           only in which sites count as annotated; see isMaskingSite. */
         const delta = compute(row)
         if (!context.mask || delta == 0) {
             return delta
         }
-        return isAnnotatedExonBoundary(row.pos, context.scores) == (kind == "gain") ? 0 : delta
+        return isMaskingSite(row.pos, context) == (kind == "gain") ? 0 : delta
     }
 
     const buildPerPositionRows = (rows, context) => {
@@ -3370,10 +3386,12 @@
         // spelling of a variant, while the page deliberately scores whichever equivalent spelling
         // was typed. Only an indel can be written more than one way, so only an indel waits here for
         // the consequence lookup to supply the left-aligned spelling; an SNV is already canonical
-        // and its queries start immediately. The SpliceAI and Pangolin calls never wait either way:
-        // they are already in flight by the time this runs.
+        // and its queries start immediately. Only on hg38: consequencesFrom never fills in
+        // normalizedVariant for hg19, so an hg19 indel would wait for nothing. The SpliceAI and
+        // Pangolin calls never wait either way: they are already in flight by the time this runs.
         let leftAlignedVariant = null
-        if (consequencesPromise && ((variantTokens[2] || "").length > 1 || (variantTokens[3] || "").length > 1)) {
+        if (consequencesPromise && genomeVersion == "38"
+                && ((variantTokens[2] || "").length > 1 || (variantTokens[3] || "").length > 1)) {
             const resolvedConsequences = await consequencesPromise
             if (resolvedConsequences && resolvedConsequences.normalizedVariant
                     && resolvedConsequences.normalizedVariant != normalizedVariant) {
@@ -3644,6 +3662,12 @@
             tableRows.push(missingScoresRow)
         }
         $("#other-predictors-header").after(tableRows.join(""))
+
+        // The page-wide popup() init in handleSubmit binds to the icons present when it runs, and
+        // this table is not awaited there, so its rows usually land after it. Bind this table's
+        // icons here, the way generateSai10kTable does for its row.
+        $("#other-predictors-table .question").popup({on: "click", lastResort: "bottom left"})
+            .css({color: "#666666", cursor: "pointer"})
 
         // This table builds its own variant cell, and it renders on its own schedule now, so it may
         // appear after the consequence handler already repointed the other tables' links. Repoint
