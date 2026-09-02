@@ -474,6 +474,60 @@ RATE_LIMIT_ERROR_MESSAGE = (
 )
 
 
+def align_annotator_mito_chrom(annotator, mito_fasta_name):
+    """Rename the annotator's mitochondrial rows to the name its FASTA uses for that sequence.
+
+    Fixes hg19 mitochondrial variants, which scored as "no scores" whatever the user typed. The
+    three files disagree about what the mitochondrion is called, and only on hg19:
+
+        hg19: FASTA "MT",   SpliceAI annotation "chrM"
+        hg38: FASTA "chrM", SpliceAI annotation "chrM"
+
+    get_delta_scores uses one chromosome name for both lookups, passing it through
+    normalise_chrom(), which only adds or strips a "chr" prefix and so cannot translate M to MT.
+    On hg19 that makes the two lookups want different names and no single value satisfies both:
+    MITO_CHROM_NAME remaps the user's chromosome to "MT" for the FASTA, and normalise_chrom then
+    turns that into "chrMT" for the annotation, which stores "chrM" -- no transcript matches, and
+    the response blames GENCODE coverage. Feeding it "M" instead just moves the failure to the
+    FASTA read.
+
+    So rename the annotation's mito rows to the FASTA's spelling ("chrM" -> "chrMT" on hg19),
+    which makes "MT" resolve correctly on both sides. In memory only: the shipped annotation file
+    is untouched, and hg38, where the two already agree, is a no-op.
+
+    Args:
+        annotator (spliceai.utils.Annotator): a freshly built annotator, mutated in place
+        mito_fasta_name (str): the bare mito name from MITO_CHROM_NAME, or None if the FASTA
+            carries no mitochondrial sequence, in which case there is nothing to align
+    """
+    if not mito_fasta_name:
+        return
+
+    # astype(object) first: assigning the longer "chrMT" into a fixed-width numpy string array
+    # would silently truncate it back to "chrM" and quietly restore the bug.
+    chroms = annotator.chroms.astype(object)
+    if not len(chroms):
+        return
+
+    # Match get_name_and_strand, which normalises against the FIRST row, so the name written here
+    # has to carry the same prefix convention that row does.
+    prefix = "chr" if str(chroms[0]).startswith("chr") else ""
+    wanted = f"{prefix}{mito_fasta_name}"
+
+    renamed = 0
+    for i, chrom in enumerate(chroms):
+        chrom = str(chrom)
+        bare = chrom[3:] if chrom.lower().startswith("chr") else chrom
+        if bare.upper() in ("M", "MT") and chrom != wanted:
+            chroms[i] = wanted
+            renamed += 1
+
+    if renamed:
+        annotator.chroms = chroms
+        print(f"[startup pid={os.getpid()}] renamed {renamed} mitochondrial annotation rows to "
+              f"{wanted!r} to match the FASTA", flush=True)
+
+
 def init_spliceai(genome_version, basic_or_comprehensive):
 
     if (genome_version, basic_or_comprehensive) not in SPLICEAI_ANNOTATOR:
@@ -492,6 +546,8 @@ def init_spliceai(genome_version, basic_or_comprehensive):
                 if candidate in keys:
                     MITO_CHROM_NAME[genome_version] = candidate[3:] if candidate.startswith('chr') else candidate
                     break
+        align_annotator_mito_chrom(SPLICEAI_ANNOTATOR[(genome_version, basic_or_comprehensive)],
+                                   MITO_CHROM_NAME.get(genome_version))
 
 
 def init_pangolin():

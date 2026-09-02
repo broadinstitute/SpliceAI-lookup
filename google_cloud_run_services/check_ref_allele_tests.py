@@ -63,6 +63,8 @@ def load_functions_from_server_py(fasta_path_by_genome_version, function_names=F
         "FASTA": {},
         "_FASTA_LOCK": threading.Lock(),
         "threading": threading,
+        # Stand-ins for the modules server.py imports at the top, for lifted functions that log.
+        "os": os,
     }
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(
