@@ -646,6 +646,29 @@ def main():
                         # unnoticed until the split created services that did not have it: they
                         # came up with no database at all, which silently disables response
                         # caching, per-IP rate limiting and transcript-structure enrichment.
+                        # An HTTP startup probe, replacing Cloud Run's default TCP one, which
+                        # reported these containers ready 25-60s before they were. gunicorn's
+                        # arbiter binds the port and only then forks workers, and a worker needs
+                        # 28s idle (57-63s when three of them share the 2 CPUs under live traffic)
+                        # to import this module and run preload_models(). A tcpSocket probe is
+                        # satisfied by the arbiter's bind a couple of seconds in, so Cloud Run
+                        # routed requests into a socket backlog nothing was reading yet: measured
+                        # on 2026-09-02, p50 latency was 3.4s while p95 was 56s and p99 over 100s,
+                        # and trivial requests (chrM at distance=50) took 34-79s depending only on
+                        # whether they landed on a warm instance. Probing over HTTP fixes that
+                        # exactly, because preload_models() runs at server.py's module scope and
+                        # gunicorn imports that module inside the worker, so no route can answer
+                        # until the startup work the probe is waiting on has finished.
+                        #
+                        # /uptime/ rather than /: it answers 204, and server.py's uptime() comment
+                        # explains that 204 is what keeps probe traffic out of the 2xx/4xx counts
+                        # in monitor_google_cloud_run_latency_stats_and_errors.py. A startup probe
+                        # runs often enough to distort those counts the way the uptime checks did.
+                        #
+                        # 5s x 24 = 120s before the container is declared failed, about 2x the
+                        # slowest startup observed under contention, so an instance coming up
+                        # during a burst is not killed part-way through. Cloud Run caps
+                        # periodSeconds x failureThreshold at 240s, leaving room to raise it.
                         run(f"""gcloud \
 --project {GCLOUD_PROJECT} beta run deploy {service} \
 --image {tag}@{sha256} \
@@ -663,6 +686,7 @@ def main():
 --cpu 2 \
 --cpu-boost \
 --timeout 900s \
+--startup-probe httpGet.path=/uptime/,httpGet.port=8080,periodSeconds=5,timeoutSeconds=5,failureThreshold=24 \
 --update-env-vars "^@^{env_vars}" {dev_flags}""")
 
                         if args.dev:
