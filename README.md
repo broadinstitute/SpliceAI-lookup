@@ -83,7 +83,7 @@ The server creates the tables it needs automatically on the first request (`cach
 
 The `transcripts_hg37`/`transcripts_hg38` tables used for SAI-10k transcript-structure enrichment are *not* created automatically; without them SAI-10k falls back to the bundled annotations. To populate them, see the `update_transcript_tables` command in [build_and_deploy.py](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/google_cloud_run_services/build_and_deploy.py).
 
-If you would like to run your own API instance on Google Cloud instead of locally, see the [build_and_deploy.py](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/google_cloud_run_services/build_and_deploy.py#L224-L238) script which we use to deploy and update the SpliceAI-lookup API on [Google Cloud Run](https://cloud.google.com/run?hl=en). Submit a GitHub issue if you have any questions.
+If you would like to run your own API instance on Google Cloud instead of locally, see the `main()` argument parser in the [build_and_deploy.py](https://github.com/broadinstitute/SpliceAI-lookup/blob/master/google_cloud_run_services/build_and_deploy.py) script, which lists the deploy options, and which we use to deploy and update the SpliceAI-lookup API on [Google Cloud Run](https://cloud.google.com/run?hl=en). Submit a GitHub issue if you have any questions.
 
 ---
 #### For Developers

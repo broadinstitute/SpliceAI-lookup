@@ -10,8 +10,10 @@ Run with:  python3 -m unittest cleanup_old_images_tests -v
 """
 
 import unittest
+from unittest import mock
 
-from cleanup_old_images import images_to_delete
+import cleanup_old_images
+from cleanup_old_images import images_to_delete, pinned_digests
 
 
 def image(digest, create_time, tags=None):
@@ -68,6 +70,40 @@ class ImagesToDeleteTest(unittest.TestCase):
         shuffled = [IMAGES[2], IMAGES[0], IMAGES[4], IMAGES[1], IMAGES[3]]
         self.assertEqual(digests(images_to_delete(shuffled, pinned={"sha256:ee"}, keep=3)),
                          {"sha256:bb", "sha256:aa"})
+
+
+class PinnedDigestsTest(unittest.TestCase):
+    """A revision that can't be described may be the only one serving some image, so a partial
+    answer has to come back as None rather than as the digests that could be read: main() would
+    otherwise take the partial set as complete and delete the unread revision's image."""
+
+    SERVICES = [{"status": {"traffic": [{"revisionName": "spliceai-38-00001"},
+                                        {"revisionName": "spliceai-38-00002"}]}}]
+
+    @staticmethod
+    def fake_gcloud_json(failing_revision):
+        """gcloud_json stand-in: lists SERVICES and describes each revision as serving an image
+        named after it, except failing_revision, whose describe fails."""
+        def fake(args):
+            if args[:3] == ["run", "services", "list"]:
+                return PinnedDigestsTest.SERVICES
+            name = args[3]
+            if name == failing_revision:
+                return None
+            return {"spec": {"containers": [{"image": f"{cleanup_old_images.REPO}/spliceai-38@sha256:{name[-1]}"}]}}
+        return fake
+
+    def test_returns_every_served_digest(self):
+        with mock.patch("cleanup_old_images.gcloud_json", self.fake_gcloud_json(failing_revision=None)):
+            self.assertEqual(pinned_digests(), {"sha256:1", "sha256:2"})
+
+    def test_returns_none_when_one_revision_cannot_be_described(self):
+        with mock.patch("cleanup_old_images.gcloud_json", self.fake_gcloud_json(failing_revision="spliceai-38-00002")):
+            self.assertIsNone(pinned_digests())
+
+    def test_returns_none_when_services_cannot_be_listed(self):
+        with mock.patch("cleanup_old_images.gcloud_json", lambda args: None):
+            self.assertIsNone(pinned_digests())
 
 
 if __name__ == "__main__":

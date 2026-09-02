@@ -18,7 +18,7 @@ import threading
 import unittest
 
 SERVER_PY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server.py")
-FUNCTIONS_UNDER_TEST = ("_get_fasta", "genome_display_name", "check_ref_allele")
+FUNCTIONS_UNDER_TEST = ("_get_fasta", "genome_display_name", "resolve_fasta_sequence_name", "check_ref_allele")
 
 # hg19's FASTA names its sequences without a "chr" prefix and calls the mitochondrion "MT";
 # hg38's uses "chr1".."chrM". The check has to cope with both, so each build gets its own file.
@@ -31,12 +31,17 @@ HG38_SOFTMASKED_CONTIG = ">chr3\nacgtacgtac\n"
 HG38_N_MASKED_CONTIG = ">chr4\nNNNNNNNNNN\n>chr5\nACGNNACGTA\n"
 
 
-def load_functions_from_server_py(fasta_path_by_genome_version):
+def load_functions_from_server_py(fasta_path_by_genome_version, function_names=FUNCTIONS_UNDER_TEST,
+                                  constant_names=()):
     """Exec the functions under test in a namespace of their own.
 
     Args:
         fasta_path_by_genome_version (dict): what server.py's FASTA_PATH should resolve to,
             keyed by genome version ("37"/"38")
+        function_names (tuple): names of the module-level functions to lift out of server.py,
+            in the order they should be exec'd
+        constant_names (tuple): names of module-level constant assignments to lift out too, so a
+            test asserting on a threshold uses server.py's value rather than a copy of it
 
     Return:
         dict: the exec'd namespace, holding the functions plus their module-level state
@@ -47,9 +52,9 @@ def load_functions_from_server_py(fasta_path_by_genome_version):
     sources = {
         node.name: ast.get_source_segment(source, node)
         for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in FUNCTIONS_UNDER_TEST
+        if isinstance(node, ast.FunctionDef) and node.name in function_names
     }
-    missing = set(FUNCTIONS_UNDER_TEST) - set(sources)
+    missing = set(function_names) - set(sources)
     if missing:
         raise AssertionError(f"server.py no longer defines: {sorted(missing)}")
 
@@ -59,7 +64,15 @@ def load_functions_from_server_py(fasta_path_by_genome_version):
         "_FASTA_LOCK": threading.Lock(),
         "threading": threading,
     }
-    for name in FUNCTIONS_UNDER_TEST:
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id in constant_names for t in node.targets):
+            exec(ast.get_source_segment(source, node), namespace)
+    missing_constants = set(constant_names) - set(namespace)
+    if missing_constants:
+        raise AssertionError(f"server.py no longer defines: {sorted(missing_constants)}")
+
+    for name in function_names:
         exec(sources[name], namespace)
     return namespace
 

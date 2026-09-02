@@ -36,6 +36,8 @@ Examples:
 
 import argparse
 import json
+import pathlib
+import re
 import subprocess
 import sys
 
@@ -57,13 +59,38 @@ def gcloud_json(args):
         ["gcloud"] + args + [f"--project={GCLOUD_PROJECT}", "--format=json"],
         capture_output=True, text=True)
     if proc.returncode != 0:
-        print(f"  WARNING: `gcloud {' '.join(args)}` failed: {proc.stderr.strip().splitlines()[-1:]}")
+        error = proc.stderr.strip().splitlines()
+        print(f"  WARNING: `gcloud {' '.join(args)}` failed: {error[-1] if error else 'unknown error'}")
         return None
     try:
         return json.loads(proc.stdout)
     except json.JSONDecodeError:
         print(f"  WARNING: `gcloud {' '.join(args)}` returned output that isn't JSON")
         return None
+
+
+def digests_recorded_in_repo():
+    """Return the image digests this repo's sha256 files name, so cleanup never deletes one.
+
+    A deploy records the digest it pushed and a later plain `deploy` re-reads that file to
+    redeploy the same image, so a digest named there is still reachable even when no Cloud Run
+    revision points at it and it has aged past the --keep window. Deleting it would leave the
+    documented deploy command referring to an image that no longer exists.
+
+    Globbed rather than hard-coded so the copy of this script in the liftover repo (see the
+    module docstring) needs no change: this repo keeps docker/<tool>/sha256_grch<hg>.txt and
+    liftover keeps a single sha256.txt, and both sit under the directory holding this script.
+    Missing files are not an error -- a checkout that never deployed has none.
+    """
+    digests = set()
+    for path in sorted(pathlib.Path(__file__).resolve().parent.glob("**/sha256*.txt")):
+        try:
+            text = path.read_text()
+        except OSError as e:
+            print(f"  WARNING: could not read {path}: {e}")
+            continue
+        digests.update(re.findall(r"sha256:[0-9a-f]{64}", text))
+    return digests
 
 
 def pinned_digests():
@@ -74,12 +101,14 @@ def pinned_digests():
     the same one) pins it too. An image in here is never deleted, however old it is.
 
     Returns:
-        set: "sha256:..." digest strings. Empty if the services can't be listed, which the
-            caller treats as a reason to do nothing rather than to delete unpinned images.
+        set: "sha256:..." digest strings, or None if the services can't be listed or any of
+            their revisions can't be described. A revision that can't be described may be the
+            only one serving some image, so a partial answer is no answer: the caller treats
+            None as a reason to do nothing rather than to delete unpinned images.
     """
     services = gcloud_json(["run", "services", "list", f"--region={REGION}"])
     if not services:
-        return set()
+        return None
 
     revision_names = set()
     for service in services:
@@ -91,7 +120,7 @@ def pinned_digests():
     for name in sorted(revision_names):
         revision = gcloud_json(["run", "revisions", "describe", name, f"--region={REGION}"])
         if not revision:
-            continue
+            return None
         for container in revision.get("spec", {}).get("containers", []):
             if "@sha256:" in container.get("image", ""):
                 digests.add(container["image"].split("@", 1)[1])
@@ -169,16 +198,20 @@ def main():
         return 1
     print(f"{REPO}/{args.package}: {len(images)} images")
 
-    # An empty set means the Cloud Run API didn't answer, not that nothing is deployed. Deleting
-    # on the strength of that would take the newest-N rule as the only protection and could
-    # delete an image production is serving, so stop instead.
+    # None means the Cloud Run API didn't answer for the services or for one of their revisions,
+    # not that nothing is deployed. Deleting on the strength of that would take the newest-N rule
+    # as the only protection and could delete an image production is serving, so stop instead.
     pinned = pinned_digests()
     if not pinned:
         print("ERROR: couldn't read what Cloud Run is serving, so nothing was deleted")
         return 1
     print(f"{len(pinned)} image(s) are being served by a Cloud Run revision and will be kept")
 
-    doomed = images_to_delete(images, pinned, args.keep)
+    recorded = digests_recorded_in_repo()
+    if recorded:
+        print(f"{len(recorded)} image(s) are named by this repo's sha256 files and will be kept")
+
+    doomed = images_to_delete(images, pinned | recorded, args.keep)
     if not doomed:
         print("nothing to delete")
         return 0

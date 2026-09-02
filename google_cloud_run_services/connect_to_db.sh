@@ -5,6 +5,10 @@ PGPASSWORD=$(cat .pgpass) psql -h 34.173.33.168 -d spliceai-lookup-db -U postgre
 
 # useful queries:
 
+# NOTE: log.variant_consequence stopped being populated on 2026-09-01 (server.py's log() no longer
+# takes it; the column is kept for the rows written before then), so the three consequence queries
+# below only cover rows logged before that date.
+
 # count variant consequences (counted once per variant)
 # select variant_consequence, count(*) as c from (select variant_consequence, variant from log where length(variant_consequence) > 1 group by variant_consequence, variant) log group by variant_consequence order by c desc;
 

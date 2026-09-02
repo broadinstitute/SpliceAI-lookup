@@ -1889,7 +1889,12 @@
         }
         const matchedRegExp = String(responseJson[0].vcf_string).match(VARIANT_RE)
         if (!matchedRegExp) {
-            throw ensemblRejection(`Unexpected response: ${JSON.stringify(responseJson)}`)
+            // Deliberately not an ensemblRejection: Ensembl did resolve the variant, and what
+            // failed is VARIANT_RE, which only accepts the primary contigs and plain ACGT alleles
+            // this page can score. An answer on an alt contig or patch lands here, and that is a
+            // limit of this parser rather than a verdict on the variant -- so the hg19 path must
+            // stay free to try VariantValidator, which may return a primary-assembly coordinate.
+            throw Error(`Unexpected response: ${JSON.stringify(responseJson)}`)
         }
         return {
             'variant': `${matchedRegExp[2].toUpperCase()}-${parseInt(matchedRegExp[3])}`
@@ -2424,6 +2429,16 @@
         return ""
     }
 
+    const hasExonAnnotation = (context) => (
+        /* Whether the API sent this transcript's exon coordinates at all. They are optional:
+           server.py leaves EXON_STARTS/EXON_ENDS out of a transcript's scores when the database
+           is unavailable (the self-hosted setup runs without one) and when the transcript has no
+           row in transcripts_hgNN, returning the rest of the response either way. Masking is
+           defined against those boundaries, so with none of them present the answer is "unknown",
+           not "unannotated" -- see maskPerPositionDelta. */
+        (context.scores['EXON_STARTS'] || []).length > 0 || (context.scores['EXON_ENDS'] || []).length > 0
+    )
+
     const isMaskingSite = (pos, context) => {
         /* Whether pos is a site that masking treats as annotated. The two models disagree here.
            Pangolin masks against every annotated position of the transcript (pangolin.py's
@@ -2459,7 +2474,11 @@
            loss at an unannotated site is not a loss, because there was no site to lose. They differ
            only in which sites count as annotated; see isMaskingSite. */
         const delta = compute(row)
-        if (!context.mask || delta == 0) {
+        if (!context.mask || delta == 0 || !hasExonAnnotation(context)) {
+            /* With no exon coordinates, isMaskingSite would answer "not annotated" for every
+               position, which zeroes every loss delta in the table and the CSV while the REF and
+               ALT columns beside them still show the drop the loss came from. Show the unmasked
+               delta instead, and say so above the table (see renderScoreTableFromRows). */
             return delta
         }
         return isMaskingSite(row.pos, context) == (kind == "gain") ? 0 : delta
@@ -2509,7 +2528,14 @@
                     </tr>`
         })
 
-        return `<table class="ui celled table">
+        // Masking is the user's setting, so when it silently could not be applied the table has to
+        // say so -- otherwise the Δ columns read as masked scores that happen to be unmasked.
+        const maskingNote = context.mask && !hasExonAnnotation(context)
+            ? `<div style="padding-bottom:0.5em">The exon coordinates for this transcript were not returned, so the &#916; columns below are unmasked.</div>`
+            : ""
+
+        return `${maskingNote}
+                <table class="ui celled table">
                     <thead>
                         <tr style="text-align:center">
                             <!-- width:1% shrinks a column to its content, so whichever column
@@ -2869,9 +2895,16 @@
         // call actually builds too, so that case reports the real reason rather than letting
         // gunicorn answer with an HTML page the UI can't read.
         if (urlArgs.length > MAX_QUERY_STRING_LENGTH) {
-            throw Error(`This variant is too long for the ${tool} API: its REF and ALT alleles make the `
+            // inputError for the same reason the API-error path below sets it: this is a fact
+            // about the variant, not about one tool. urlArgs carries no tool name (the tool is in
+            // the path), so both calls build the same length and both throw; without the flag,
+            // handleSubmit's inputError check misses them and prints the message once per tool
+            // under a results box it has already shown. Worded without the tool name to match.
+            const tooLong = Error(`This variant is too long for the API: its REF and ALT alleles make the `
                 + `request ${urlArgs.length.toLocaleString()} characters, over the `
                 + `${MAX_QUERY_STRING_LENGTH.toLocaleString()} character limit.`)
+            tooLong.inputError = true
+            throw tooLong
         }
 
         let apiResponse

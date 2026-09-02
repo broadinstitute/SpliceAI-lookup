@@ -111,7 +111,17 @@ def main():
     if args.show_progress_bar:
         iterator = tqdm.tqdm(iterator, total=len(df), unit=" variants", unit_scale=True)
 
+    # server.py appends "__{DEPLOYMENT}" to the key of every non-prod deployment, because dev
+    # revisions share this database with production (see get_splicing_scores_cache_key). The
+    # endpoint is chosen once, from SPLICEAI_API_ENV, so a run that did not match the two would
+    # recompute dev-namespaced entries against production, or production entries against dev,
+    # and report the difference between two deployments as a scoring inconsistency.
+    want_dev_namespace = os.environ.get("SPLICEAI_API_ENV") == "dev"
+
     for i, (cache_key, cache_value, last_accessed) in enumerate(iterator):
+        if cache_key.endswith("__dev") != want_dev_namespace:
+            counter[f"skipped: not the {'dev' if want_dev_namespace else 'prod'} namespace"] += 1
+            continue
         print(f"{i+1:3,d}: Processing", cache_key, "which was last accessed on", last_accessed)
         data = json.loads(cache_value)
 
@@ -128,6 +138,22 @@ def main():
         mask_match = re.search(r"__m([01])__", cache_key)
         assert mask_match, f"Could not parse mask from cache key: {cache_key}"
         mask = mask_match.group(1)
+        # The gene set is part of the key too, and it has to be sent back explicitly: each
+        # service now pins one gene set, and a request that omits bc is answered with whatever
+        # the contacted service pins (server.py's GENE_SET default). Without this, every
+        # __comprehensive__ row would be recomputed by the basic service and reported as a
+        # mismatch. The server 307-redirects bc=comprehensive to the -comprehensive sibling,
+        # and requests follows that, so the un-suffixed base_url below still reaches the right
+        # service.
+        # Anchored to the mask field so it cannot match anything inside the variant, and the
+        # trailing "__" is optional because the field is last in a legacy Pangolin key: before
+        # the CACHE_VERSION component was added, the key ended at the gene set for every tool
+        # whose suffix was empty, which is Pangolin (the sai10k suffix is spliceai-only). Those
+        # rows are exactly the ones that must not silently fall back to basic -- a legacy
+        # "__comprehensive" entry was computed with the comprehensive annotations and has to be
+        # rechecked against them.
+        gene_set_match = re.search(r"__m[01]__(basic|comprehensive)(?:__|$)", cache_key)
+        gene_set = gene_set_match.group(1) if gene_set_match else None
         variant = data["variant"]
 
         # get json response
@@ -142,7 +168,8 @@ def main():
             default_template = "https://dev---{tool}-{hg}-xwkwwwxdwq-uc.a.run.app"
         url_template = os.environ.get("SPLICEAI_API_URL_TEMPLATE", default_template)
         base_url = url_template.format(tool=tool, hg=hg)
-        url = f"{base_url}/{tool}/?hg={hg}&distance={distance}&mask={mask}&variant={variant}&raw={variant}"
+        bc_arg = f"&bc={gene_set}" if gene_set else ""
+        url = f"{base_url}/{tool}/?hg={hg}&distance={distance}&mask={mask}{bc_arg}&variant={variant}&raw={variant}"
         # print(url)
         try:
             response_json = requests.get(f"{url}&force=1").json()
@@ -186,6 +213,16 @@ def main():
         for k, v1 in cached_scores.items():
             if k in ("t_refseq_ids", "t_id", "g_id", "g_name"):
                 # differences in gene ids are not important
+                continue
+
+            # ALL_NON_ZERO_SCORES is written to the cache but stripped from the HTTP response
+            # (server.py keeps it in the dict for the cache, then pops it alongside NAME and
+            # STRAND before serializing), so comparing it here reports it missing for every
+            # single entry -- which also means a genuine missing key could never be spotted.
+            # EXON_STARTS / EXON_ENDS are lists, and the values below go into a set, which a
+            # list cannot enter: without this the first Pangolin entry carrying exon
+            # coordinates aborts the whole run with TypeError: unhashable type: 'list'.
+            if k in ("ALL_NON_ZERO_SCORES", "EXON_STARTS", "EXON_ENDS"):
                 continue
 
             if k not in response_scores:

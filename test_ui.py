@@ -87,10 +87,10 @@ class TestSpliceAILookupUI(unittest.TestCase):
         """Return the URL fragment (everything after #), or empty string."""
         return self.page.url.split("#", 1)[-1] if "#" in self.page.url else ""
 
-    def _wait_for_submit(self):
+    def _wait_for_submit(self, timeout_ms=TIMEOUT_MS):
         """Wait for the submit button to enter and then exit its loading state."""
         self.page.wait_for_selector("#submit-button.loading", timeout=5_000)
-        self.page.wait_for_selector("#submit-button:not(.loading)", timeout=TIMEOUT_MS)
+        self.page.wait_for_selector("#submit-button:not(.loading)", timeout=timeout_ms)
 
     def _click_label(self, input_selector):
         """Click the Semantic UI label for a hidden checkbox/radio input.
@@ -100,14 +100,14 @@ class TestSpliceAILookupUI(unittest.TestCase):
         """
         self.page.locator(input_selector).locator("xpath=..").locator("label").click()
 
-    def _submit_variant(self, variant, hg="38"):
+    def _submit_variant(self, variant, hg="38", timeout_ms=TIMEOUT_MS):
         """Enter a variant, select genome version, click submit, and wait for completion."""
         if hg == "37":
             self._click_label("input[name='hg'][value='37']")
 
         self.page.fill("#search-box", variant)
         self.page.click("#submit-button")
-        self._wait_for_submit()
+        self._wait_for_submit(timeout_ms)
 
     # ------------------------------------------------------------------
     # Page load
@@ -239,11 +239,12 @@ class TestSpliceAILookupUI(unittest.TestCase):
 
     def test_genome_version_hg37(self):
         """Selecting hg37 and submitting uses hg=37 in the URL hash and shows results."""
-        # The GRCh37 coordinate for the same variant as the hg38 examples above. It has to be a
-        # real hg19 variant now: the backends check the REF allele against the reference genome,
-        # so the hg38 coordinate this used to pass is rejected on hg37 (hg19 8:140300616 is C,
-        # not T) and the page shows that error instead of results.
-        self._submit_variant("8-141312982-T-G", hg="37")
+        # The GRCh37 coordinate for the same variant as the hg38 examples above (the liftover
+        # test_api_consistency.py and expected_scores.json use). It has to be a real hg19 variant:
+        # the backends check the REF allele against the reference genome, so the hg38 coordinate
+        # this used to pass is rejected on hg37 (hg19 8:140300616 is C, not T) and the page shows
+        # that error instead of results.
+        self._submit_variant("8-141310715-T-G", hg="37")
 
         self.assertIn("hg=37", self._get_url_hash())
         self.assertTrue(self.page.is_visible("#response-box"))
@@ -269,7 +270,12 @@ class TestSpliceAILookupUI(unittest.TestCase):
     def test_gencode_comprehensive_option(self):
         """Selecting 'comprehensive' routes to the comprehensive services and shows results."""
         self._click_label("input[name='gencode-gene-set'][value='comprehensive']")
-        self._submit_variant("8-140300616-T-G")
+        # Double the wait, for the reason test_url_hash_navigation does: the comprehensive gene
+        # set is served by its own low-traffic Cloud Run services, which scale to zero and which
+        # no other test in this suite warms, so this single submit pays two simultaneous cold
+        # starts. At the 60s default that times out here often enough to abort the test before
+        # any assertion below runs, which would hide the routing regressions they exist to catch.
+        self._submit_variant("8-140300616-T-G", timeout_ms=TIMEOUT_MS * 2)
 
         self.assertIn("bc=comprehensive", self._get_url_hash())
         # The hash is written even when both API calls fail, so assert on the results
@@ -359,17 +365,23 @@ class TestSpliceAILookupUI(unittest.TestCase):
 
         self.assertTrue(self.page.is_visible("#other-predictors-table"))
         # This table is built off the critical path, so the submit button clearing no longer means
-        # it has rendered. Wait for its own content rather than reading it straight away.
-        self.page.wait_for_function(
-            "() => /CADD|not available for this variant/.test("
-            "  (document.querySelector('#other-predictors-table') || {}).innerText || '')",
-            timeout=TIMEOUT_MS)
-        table_text = self.page.inner_text("#other-predictors-table")
-        # At least some standard predictors should appear
+        # it has rendered. Wait for a row that actually carries a score, not just for any content:
+        # when every lookup fails the table holds only the "... scores are not available for this
+        # variant" row, which names the missing predictors, so waiting on the table's text and
+        # then searching it for predictor names passes on exactly the failure this test exists to
+        # catch. Only a scored row has a "three wide column" cell (index.html's
+        # generateOtherPredictorsTable); the missing-scores row is one "four wide column" spanning
+        # the rest.
+        self.page.wait_for_selector("#other-predictors-table td.three.wide.column",
+                                    timeout=TIMEOUT_MS)
+        # At least some standard predictors should appear, named by a row that has a score
+        labels = " | ".join(self.page.locator(
+            "#other-predictors-table tr:has(td.three.wide.column) td.four.wide.column"
+        ).all_inner_texts())
         found = [p for p in ("CADD", "REVEL", "AlphaMissense", "PrimateAI", "PhyloP")
-                 if p.lower() in table_text.lower()]
+                 if p.lower() in labels.lower()]
         self.assertGreater(len(found), 0,
-                           f"Expected predictor names in other-predictors table, got: {table_text[:300]}")
+                           f"Expected scored predictor rows in other-predictors table, got: {labels[:300]}")
 
     # ------------------------------------------------------------------
     # Score color-coding

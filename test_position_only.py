@@ -143,8 +143,12 @@ def query_position_api(tool, hg, position, **extra_params):
 class TestPositionParsing(ServerHelperTestCase):
     """parse_position and its precedence relative to parse_variant."""
 
-    def test_accepts_the_separators_the_frontend_emits(self):
-        """Every separator index.html's POSITION_ONLY_RE accepts must parse server-side."""
+    def test_accepts_the_separators_direct_api_callers_use(self):
+        """The chrom/pos separators the API accepts from callers that hit it directly.
+
+        index.html itself never sends these: it normalizes a position-only query to "chrom-pos"
+        before calling the API and passes the typed text only in the echoed-back `raw` parameter.
+        """
         for position in ("chr8-140300616", "8-140300616", "chr8:140300616", "8 140300616"):
             with self.subTest(position=position):
                 self.assertEqual(server.parse_position(position), ("8", 140300616))
@@ -231,18 +235,30 @@ class TestPositionOnlyCacheKey(ServerHelperTestCase):
 
         Every component is part of the cache identity, so changing any of them orphans all
         existing entries at once. That is intended when CACHE_VERSION, SAI10K_VERSION,
-        GENCODE_VERSION or the pinned model commit changes, and a bug in every other case.
+        GENCODE_VERSION or the pinned model commit changes, and a bug in every other case. The
+        one component that is not a version is DEPLOYMENT, which keeps a dev revision's entries
+        off the keys production reads: it adds nothing for "prod" and "__dev" for a dev revision.
         """
         # MODEL_COMMIT is patched rather than read, so the model component is pinned as a literal
         # here too. Left unpatched it is empty outside the container, and the expected string would
         # then omit the component on both sides -- pinning nothing about its format. The patched
-        # value's first eight characters differ from the rest, so a truncation taken from the wrong
-        # end fails instead of matching by luck.
-        with mock.patch.object(server, "MODEL_COMMIT", "0123456789abcdef0123456789abcdef01234567"):
+        # value's first eight characters differ from its last eight, so a truncation taken from
+        # the wrong end fails instead of matching by luck. DEPLOYMENT is patched for the same reason: it is
+        # read from the environment, so left alone the test would pass or fail with the shell it
+        # runs in.
+        with mock.patch.object(server, "MODEL_COMMIT", "0123456789abcdef0123456789abcdeffedcba98"), \
+                mock.patch.object(server, "DEPLOYMENT", "prod"):
+            prod_key = server.get_splicing_scores_cache_key("spliceai", TEST_VARIANT, "38", "500", "0", "basic")
             self.assertEqual(
-                server.get_splicing_scores_cache_key("spliceai", TEST_VARIANT, "38", "500", "0", "basic"),
+                prod_key,
                 f"spliceai__{TEST_VARIANT}__hg38__d500__m0__basic__{server.CACHE_VERSION}"
                 f"__sai10k-{server.SAI10K_VERSION}__model-01234567__gencode-{server.GENCODE_VERSION}",
+            )
+        with mock.patch.object(server, "MODEL_COMMIT", "0123456789abcdef0123456789abcdeffedcba98"), \
+                mock.patch.object(server, "DEPLOYMENT", "dev"):
+            self.assertEqual(
+                server.get_splicing_scores_cache_key("spliceai", TEST_VARIANT, "38", "500", "0", "basic"),
+                prod_key + "__dev",
             )
 
     def test_key_omits_the_model_component_when_the_commit_is_unset(self):
@@ -384,10 +400,10 @@ class TestPositionOnlyAPI(unittest.TestCase):
         # An ALT allele is what makes a delta score meaningful, and there isn't
         # one here -- the response must not claim otherwise. Only "ref" and "alt" are
         # checked here: they come from the results dict, so the server can put them in a
-        # REF-only response on its own. "mask" and "variant_consequence" are echoed back
-        # only when the client sends them, which this query does not, so asserting their
-        # absence here could never fail. test_a_client_supplied_mask_is_not_echoed_back
-        # sends mask and is therefore the test that can actually catch a regression.
+        # REF-only response on its own. "mask" is echoed back only when the client sends it,
+        # which this query does not, so asserting its absence here could never fail.
+        # test_a_client_supplied_mask_is_not_echoed_back sends mask and is therefore the test
+        # that can actually catch a regression.
         for absent_key in ("ref", "alt"):
             self.assertNotIn(absent_key, response, f"{tool} REF-only response should not include '{absent_key}'")
 

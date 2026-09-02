@@ -25,9 +25,10 @@ from flask_talisman import Talisman
 # SAI-10k-calc predictions for splice consequences
 from sai10k_predictions import sai10k_get_transcript_predictions, sai10k_select_transcript, TRANSCRIPT_PRIORITY_ORDER
 
-# Gunicorn worker classes that run more than one request at a time inside a single process.
+# Gunicorn worker classes that run more than one request at a time inside a single process, by
+# module name under gunicorn.workers (not by -k alias: -k gevent loads gunicorn.workers.ggevent).
 # gthread is what --threads N (N > 1) selects; the others are the async workers.
-_CONCURRENT_GUNICORN_WORKERS = ("gthread", "gevent", "eventlet", "tornado")
+_CONCURRENT_GUNICORN_WORKERS = ("gthread", "ggevent", "geventlet", "gtornado")
 
 
 def _assert_one_request_per_process():
@@ -51,7 +52,9 @@ def _assert_one_request_per_process():
     Detection reads sys.modules rather than sys.argv: gunicorn imports only the worker class it
     is going to use, and that catches configurations argv does not carry, such as
     GUNICORN_CMD_ARGS="--threads 5" or a gunicorn.conf.py. Nothing is raised when no gunicorn
-    worker module is loaded at all, which is the local Flask dev server and the unit tests.
+    worker module is loaded at all, which is the unit tests and the local Flask dev server; the
+    latter is kept to one request at a time by the threaded=False in app.run() at the bottom of
+    this file, since Flask's default is threaded=True.
     """
     loaded = [name for name in _CONCURRENT_GUNICORN_WORKERS
               if f"gunicorn.workers.{name}" in sys.modules]
@@ -68,7 +71,7 @@ def _assert_one_request_per_process():
                 requested = f" (--threads {token.split('=', 1)[1]})"
 
     raise RuntimeError(
-        f"Refusing to start: gunicorn is using the '{loaded[0]}' worker{requested}, which runs "
+        f"Refusing to start: gunicorn is using the gunicorn.workers.{loaded[0]} worker{requested}, which runs "
         f"more than one request at a time in a single process. The pyfastx reference-genome "
         f"handles this server shares across requests are not safe to use concurrently and "
         f"return silently wrong sequence, so a threaded worker would corrupt REF-allele checks "
@@ -176,6 +179,105 @@ def genome_display_name(genome_version):
     return "hg19" if genome_version == "37" else "hg38"
 
 
+def resolve_fasta_sequence_name(fasta, chrom):
+    """Return the name this FASTA actually uses for `chrom`, or None if it carries no such sequence.
+
+    hg19's FASTA names its sequences "1".."22","X","Y","MT"; hg38's uses "chr1".."chrM". Accept
+    either spelling from the caller and look up whichever one this FASTA actually carries.
+
+    The mitochondrion is the one sequence whose bare name also differs between the builds: "MT"
+    in hg19, "M" (as "chrM") in hg38. get_spliceai_scores applies its own MITO_CHROM_NAME remap
+    for the model, but only after the checks that call this run, and get_pangolin_scores has no
+    remap at all -- MITO_CHROM_NAME is built by init_spliceai and does not exist in the Pangolin
+    container. So the alias is resolved here for both callers, where it is a fact about the
+    reference rather than about the tool, and both services validate the same variants.
+
+    Args:
+        fasta (pyfastx.Fasta): an open handle from _get_fasta
+        chrom (str): chromosome name, with or without a "chr" prefix
+    """
+    bare_chrom = chrom[3:] if chrom.lower().startswith("chr") else chrom
+    candidate_names = [chrom, bare_chrom, f"chr{bare_chrom}"]
+    if bare_chrom.upper() in ("M", "MT"):
+        alias = "MT" if bare_chrom.upper() == "M" else "M"
+        candidate_names += [alias, f"chr{alias}"]
+    return next((name for name in candidate_names if name in fasta), None)
+
+
+# Bases of sequence context both models read on each side of a variant, on top of the `distance`
+# the request asks for. Both slice that window straight out of pyfastx with no bounds check of
+# their own: spliceai's get_delta_scores and get_reference_scores do
+# ref_fasta[chrom][pos-wid//2-1 : pos+wid//2] where wid//2 == MODEL_FLANK_SIZE+distance, and
+# pangolin's process_variant and process_position do fasta[chrom][pos-5001-distance : ...].
+# Same start index either way, which is why one check covers both tools.
+MODEL_FLANK_SIZE = 5000
+
+
+def check_model_context_window(chrom, pos, ref_length, distance, genome_version):
+    """Check that the reference has enough sequence around `pos` for the models to read.
+
+    Returns an error message naming what is missing, or None when the window fits and scoring
+    should go ahead.
+
+    The start check exists because a window that runs off the *beginning* of a contig makes both
+    tools slice pyfastx with a negative start index, and pyfastx answers that by segfaulting --
+    killing the gunicorn worker and turning the request into a 503 rather than any kind of error
+    response. Every mitochondrial variant in a gene did this at the default distance (chrM's
+    genes start at 576, well inside the 5,500-base window), as did chr1's DDX11L1/WASH7P at
+    distance=10000. So unlike check_ref_allele this half deliberately does NOT fail open: it is
+    pure arithmetic on `pos` and `distance` and never consults the FASTA, because a FASTA that
+    failed to open must not turn the guard off and hand the crash back.
+
+    The end check is the mirror image and is only a message improvement: an over-long window is
+    answered by a short read rather than a signal, which SpliceAI already turns into "no scores"
+    (blaming GENCODE coverage, which sends users looking in the wrong place) and Pangolin into a
+    500. It needs the contig length, so it fails open like check_ref_allele when the FASTA or the
+    contig is unavailable.
+
+    Args:
+        chrom (str): chromosome name, with or without a "chr" prefix
+        pos (int): 1-based position of the variant
+        ref_length (int): length of the REF allele; 1 for a position-only query
+        distance (int): the request's "distance" parameter
+        genome_version (str): "37" or "38"
+    """
+    flank = MODEL_FLANK_SIZE + distance
+
+    if pos - flank - 1 < 0:
+        message = (f"{chrom}-{pos} is only {pos - 1:,}bp from the start of {chrom}, but SpliceAI and "
+                   f"Pangolin both read {flank:,}bp of sequence on each side of a variant "
+                   f"({MODEL_FLANK_SIZE:,}bp plus the distance setting of {distance:,}bp).")
+        # A smaller distance only helps once the position clears the fixed flank on its own.
+        if pos > MODEL_FLANK_SIZE:
+            return message + f" Retry with distance={pos - MODEL_FLANK_SIZE - 1} or less."
+        return message + (f" No distance setting is small enough, since {MODEL_FLANK_SIZE:,}bp of "
+                          f"context is required regardless of distance.")
+
+    fasta = _get_fasta(genome_version)
+    if fasta is None:
+        return None
+
+    sequence_name = resolve_fasta_sequence_name(fasta, chrom)
+    if sequence_name is None:
+        return None
+
+    # Pangolin's process_variant reads to pos+len(ref)+4999+distance, one base further than
+    # SpliceAI for every REF longer than a single base. Check the wider of the two.
+    contig_length = len(fasta[sequence_name])
+    bases_after = contig_length - pos
+    if pos + ref_length + flank - 1 > contig_length:
+        message = (f"{chrom}-{pos} is only {bases_after:,}bp from the end of {chrom}, but SpliceAI and "
+                   f"Pangolin both read {flank:,}bp of sequence on each side of a variant "
+                   f"({MODEL_FLANK_SIZE:,}bp plus the distance setting of {distance:,}bp).")
+        max_distance = bases_after - ref_length + 1 - MODEL_FLANK_SIZE
+        if max_distance >= 0:
+            return message + f" Retry with distance={max_distance} or less."
+        return message + (f" No distance setting is small enough, since {MODEL_FLANK_SIZE:,}bp of "
+                          f"context is required regardless of distance.")
+
+    return None
+
+
 def check_ref_allele(chrom, pos, ref, genome_version):
     """Check the variant's REF allele against the reference genome.
 
@@ -204,19 +306,7 @@ def check_ref_allele(chrom, pos, ref, genome_version):
     if fasta is None:
         return None
 
-    # hg19's FASTA names its sequences "1".."22","X","Y","MT"; hg38's uses "chr1".."chrM". Accept
-    # either spelling from the caller and look up whichever one this FASTA actually carries.
-    bare_chrom = chrom[3:] if chrom.lower().startswith("chr") else chrom
-    candidate_names = [chrom, bare_chrom, f"chr{bare_chrom}"]
-    # The mitochondrion is the one sequence whose bare name also differs between the builds: "MT"
-    # in hg19, "M" (as "chrM") in hg38. get_spliceai_scores remaps it before calling here, but
-    # get_pangolin_scores cannot -- MITO_CHROM_NAME is built by init_spliceai and does not exist in
-    # the Pangolin container. Resolve the alias here instead, where it is a fact about the reference
-    # rather than about the tool, so both services validate the same variants.
-    if bare_chrom.upper() in ("M", "MT"):
-        alias = "MT" if bare_chrom.upper() == "M" else "M"
-        candidate_names += [alias, f"chr{alias}"]
-    sequence_name = next((name for name in candidate_names if name in fasta), None)
+    sequence_name = resolve_fasta_sequence_name(fasta, chrom)
     if sequence_name is None:
         return None
 
@@ -526,13 +616,14 @@ BLOCKED_IPS = frozenset(ip.strip() for ip in os.environ.get("BLOCKED_IPS", "").s
 if not BLOCKED_IPS:
     print("WARNING: BLOCKED_IPS env var is unset/empty; no IPs will be blocked at the door", flush=True)
 
-# Module-level connection pool for Cloud SQL. Flask under Cloud Run typically
-# serves multiple concurrent requests per instance via threaded workers, so use
-# ThreadedConnectionPool (thread-safe) rather than SimpleConnectionPool.
-# Each gunicorn worker is a separate process (the Dockerfiles deliberately omit --preload, so
-# every worker imports this module itself after the fork) with its own pool, and runs
-# single-threaded (--threads 1), so it serves one request at a time and needs only one DB
-# connection. maxconn=2 keeps a one-slot safety margin. The previous maxconn=80 assumed Cloud
+# Module-level connection pool for Cloud SQL. ThreadedConnectionPool is used for its
+# getconn/putconn bookkeeping, not because anything here serves requests concurrently:
+# _assert_one_request_per_process refuses to start under a concurrent gunicorn worker and the
+# dev server is started with threaded=False, so one request per process is an invariant rather
+# than a typical case. Each gunicorn worker is a separate process (the Dockerfiles deliberately
+# omit --preload, so every worker imports this module itself after the fork) with its own pool,
+# and runs single-threaded (--threads 1), so it serves one request at a time and needs only one
+# DB connection. maxconn=2 keeps a one-slot safety margin. The previous maxconn=80 assumed Cloud
 # Run's default concurrency of 80, but the deploy pins --workers/--concurrency to
 # 6, so 80 per worker let a single instance open far more connections than the
 # tier allows -- exhausting max_connections and leaving dozens of idle backends.
@@ -574,6 +665,8 @@ _SCHEMA_DDL_STATEMENTS = (
     # duplicate index write on every cached response. Dropping it by hand was not enough -- this
     # statement recreated it on the next container start.
     "CREATE TABLE IF NOT EXISTS cache (key TEXT UNIQUE, value TEXT, counter INT, accessed TIMESTAMP DEFAULT now())",
+    # variant_consequence has not been written since 2026-09-01 (log() no longer takes it); it stays
+    # in the DDL so the rows written before then, and connect_to_db.sh's queries over them, keep working.
     "CREATE TABLE IF NOT EXISTS log (event_name TEXT, ip TEXT, logtime TIMESTAMP DEFAULT now(), duration REAL, variant TEXT, genome VARCHAR(10), bc VARCHAR(20), distance INT, mask INT4, details TEXT, variant_consequence TEXT)",
     "CREATE INDEX IF NOT EXISTS idx_log_ip_logtime ON log USING btree (ip, logtime DESC)",
     "CREATE INDEX IF NOT EXISTS idx_log_event_name ON log USING btree (event_name)",
@@ -1060,6 +1153,17 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
             "inputError": True,
         }
 
+    # Must run before get_delta_scores: a window that underruns the contig segfaults the worker.
+    context_window_error = check_model_context_window(chrom, pos, len(ref), distance_param, genome_version)
+    if context_window_error:
+        return {
+            "variant": variant,
+            "source": "spliceai",
+            "error": context_window_error,
+            # Same for both tools on the same input -- see the comment above.
+            "inputError": True,
+        }
+
     # spliceai's normalise_chrom() handles "chr" prefix mismatches but not the
     # M↔MT alias, so a user submitting M/chrM against hg19 (which uses "MT")
     # would otherwise hit KeyError. Remap to whichever name the fasta uses.
@@ -1282,6 +1386,17 @@ def get_spliceai_reference_scores(variant, genome_version, distance_param, basic
     """
     chrom, pos = parse_position(variant)
 
+    # Checked before the mito remap below, on the chromosome name the user submitted, so both
+    # tools word this the same way -- see the matching comment in get_spliceai_scores.
+    context_window_error = check_model_context_window(chrom, pos, 1, distance_param, genome_version)
+    if context_window_error:
+        return {
+            "variant": variant,
+            "source": "spliceai",
+            "error": context_window_error,
+            "inputError": True,
+        }
+
     # spliceai's normalise_chrom() handles "chr" prefix mismatches but not the
     # M↔MT alias -- see the matching comment in get_spliceai_scores.
     if chrom.upper() in {"M", "MT"} and genome_version in MITO_CHROM_NAME:
@@ -1392,6 +1507,19 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
             "variant": variant,
             "source": "pangolin",
             "error": ref_allele_error,
+            # see the matching comment in get_spliceai_scores
+            "inputError": True,
+        }
+
+    # See the matching comment in get_spliceai_scores. Pangolin reads the FASTA before it checks
+    # for an overlapping gene, so unlike SpliceAI it segfaults on any variant this close to a
+    # contig start, whether or not the position falls in a gene.
+    context_window_error = check_model_context_window(chrom, pos, len(ref), distance_param, genome_version)
+    if context_window_error:
+        return {
+            "variant": variant,
+            "source": "pangolin",
+            "error": context_window_error,
             # see the matching comment in get_spliceai_scores
             "inputError": True,
         }
@@ -1536,6 +1664,16 @@ def get_pangolin_reference_scores(variant, genome_version, distance_param, basic
 
     chrom, pos = parse_position(variant)
 
+    # see the matching comment in get_pangolin_scores
+    context_window_error = check_model_context_window(chrom, pos, 1, distance_param, genome_version)
+    if context_window_error:
+        return {
+            "variant": variant,
+            "source": "pangolin",
+            "error": context_window_error,
+            "inputError": True,
+        }
+
     class PangolinArgs:
         reference_file = FASTA_PATH[genome_version]
         distance = distance_param
@@ -1636,6 +1774,9 @@ def per_transcript_scores_response(results, transcript_id, tool_name):
     if "error" in results:
         return error_response(results["error"], source=tool_name)
 
+    # run_splice_prediction_tool now checks this before the model runs, so this is a backstop for
+    # any future caller rather than the path a bad request takes. Kept because dropping it would
+    # let a None reach the loop below and answer with 'Transcript "None" not found'.
     if not transcript_id:
         return error_response('"transcript" not specified.\n', source=tool_name)
 
@@ -1790,6 +1931,15 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
         target_host = request.host.replace(this_service, other_service, 1)
         print(f"{logging_prefix}: redirecting bc={basic_or_comprehensive_param} request to {target_host}", flush=True)
         return redirect(f"https://{target_host}{request.full_path}", code=307)
+
+    # Checked here rather than where the value is used, in per_transcript_scores_response: that
+    # call happens after the cache lookup, the rate-limit check, the model run and the cache
+    # write, so a /scores request that forgot "transcript" used to pay a full inference (up to
+    # the image's 870s gunicorn timeout at distance=10000) before being told it was malformed.
+    # These endpoints are public and unauthenticated. After the redirect block, so a request
+    # aimed at the wrong gene set is still forwarded to the service that can answer it.
+    if scores_for_one_transcript and not params.get("transcript"):
+        return error_response('"transcript" not specified.\n', source=tool_name)
 
     # A bare chrom-pos position (no ref/alt) requests REF-only scores instead
     # of the usual REF-vs-ALT delta scores. Try the full variant format first
@@ -2016,10 +2166,24 @@ def log_event(name):
 
 @app.route('/', strict_slashes=False)
 def index():
-    # Bare-root probes (uptime checkers, scanners polling `*.run.app/`) would
-    # otherwise generate 404 noise that drowns out real client errors in the
-    # monitoring breakdown. Return a tiny 200 so they look like normal traffic.
+    # Bare-root probes (scanners polling `*.run.app/`) would otherwise generate
+    # 404 noise that drowns out real client errors in the monitoring breakdown.
+    # Return a tiny 200 so they look like normal traffic.
     return Response("OK\n", status=200, mimetype='text/plain')
+
+
+@app.route('/uptime/', strict_slashes=False)
+def uptime():
+    # The endpoint the Cloud Monitoring uptime checks probe, and the reason it answers 204
+    # rather than 200: run.googleapis.com/request_count is only labelled by status code, with
+    # no path or user-agent, so the only way the monitoring report can tell a probe from real
+    # traffic is to give probes a status code nothing else returns. Six checker regions every
+    # 300s is ~1,700 requests/day/service, which is larger than a quiet service's entire real
+    # volume — pooled into 2xx it would bury the 5xx rate, and pooled into 4xx (what probing
+    # /spliceai/ with no parameters used to do) it buried genuine client errors instead. No
+    # endpoint here answers 204 to a real caller, so monitor_google_cloud_run_latency_stats_
+    # and_errors.py can drop 204 and nothing else. Keep the two in sync if this ever changes.
+    return Response(status=204)
 
 
 @app.route('/<path:path>/')
@@ -2118,4 +2282,7 @@ print(f"[startup pid={os.getpid()}] server.py module loaded in "
 # workers — silently defeating the gunicorn worker recycling (--timeout 120) this
 # image relies on to recover from stuck inferences.
 if __name__ == '__main__':
-    app.run(debug=DEBUG, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+    # threaded=False because Flask's default is threaded=True, which would serve overlapping
+    # requests from threads sharing the pyfastx handles that _assert_one_request_per_process
+    # exists to protect (the guard cannot see this path: no gunicorn worker module is loaded).
+    app.run(debug=DEBUG, host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), threaded=False)

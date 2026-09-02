@@ -74,10 +74,15 @@ CAPTURABLE_ERROR_MARKERS = (
 )
 
 # Seconds between capture queries. The API restricts an IP that logs 150 computed requests
-# within 7 minutes (block_ips in server.py), and a capture fires one request per
-# (variant, hg, tool) with nothing in between, which is how those rate-limit entries got into
-# the baseline in the first place.
-CAPTURE_DELAY_SECONDS = 3
+# within 7 minutes (exceeds_rate_limit in server.py). A capture on its own is 38 variants x 2
+# tools = 76 requests, which cannot reach 150 however it is paced, so the delay is not what
+# makes a lone capture safe. What it protects is a capture started right after a full test run
+# from the same IP, where that run's own 76 requests are still inside the window and 76 + 76 =
+# 152 would trip the limit. At this spacing the capture issues at most 420/6 = 70 requests
+# inside any 7-minute window, so the worst case is 76 + 70 = 146 and the test run's burst ages
+# out before the limit is reached. Three seconds, the previous value, left 140 in the window
+# and did not.
+CAPTURE_DELAY_SECONDS = 6
 
 
 def scores_match(actual, expected):

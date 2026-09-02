@@ -695,8 +695,6 @@ def main():
                             # record, and is not what the check compares.
                             with open(built_here_path, "w") as stamp:
                                 stamp.write(f"{sha256}\n{current_git_commit()}\n")
-                            print(f"To promote {service} to production, deploy the digest this run recorded:")
-                            print(f"  python3 build_and_deploy.py -t {tool} -g {genome_version} -s {gene_set} --promote")
                         else:
                             # Required when a previous --dev deploy left the service in manual-traffic mode; otherwise `gcloud run deploy` keeps traffic on the old revision.
                             run(f"gcloud --project {GCLOUD_PROJECT} run services update-traffic {service} "
@@ -704,6 +702,18 @@ def main():
 
                                 # --add-volume=name=ref,type=cloud-storage,bucket=spliceai-lookup-reference-data,readonly=true \
                 # --add-volume-mount=volume=ref,mount-path=/ref \
+
+                    if args.dev:
+                        # One hint per image, printed after every service's stamp is written. It
+                        # repeats -s only when this run was narrowed to one gene set. A promote
+                        # narrowed with -s skips the production digest write below (see the
+                        # comment there), which is right after a narrowed dev run but would leave
+                        # docker/<tool>/sha256_grch<hg>.txt stale if a run that deployed both
+                        # services were followed by two narrowed promotes, one per service.
+                        services = " and ".join(get_service_name(tool, genome_version, gene_set) for gene_set in gene_sets)
+                        print(f"To promote {services} to production, deploy the digest this run recorded:")
+                        print(f"  python3 build_and_deploy.py -t {tool} -g {genome_version}"
+                              f"{' -s ' + args.gene_set if args.gene_set else ''} --promote")
 
                     # Record the promoted digest as the production one. Written once after the
                     # gene-set loop rather than inside it, because the path has no gene-set
