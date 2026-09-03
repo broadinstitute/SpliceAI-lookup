@@ -5,6 +5,7 @@ Loops forever, printing every --interval minutes (default 30):
   - error log breakdown by signature
   - response-code totals (2xx/3xx/4xx/5xx)
   - CPU and memory utilization (p95/p99)
+  - instance count against each service's max-instances ceiling
   - request latency (p50/p95/p99) with sample counts
   - GeneBe and Ensembl VEP API latency, measured by probing them directly (see probe_external_apis)
   - container cold-start count and startup latency (p50/p95/p99)
@@ -145,17 +146,27 @@ def parse_iso(s):
     return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
-def get_production_revisions():
-    """Return {service_name: revision_name} for the revision currently serving 100% production traffic.
+def describe_production_services():
+    """Return ({service: revision at 100% traffic}, {service: max-instances ceiling}).
 
-    Picks any traffic entry with `percent == 100`.
+    Both are read from one `gcloud run services describe` per service, because the same JSON
+    carries them: a second round of describes for the ceiling would double the calls and could
+    see a different state part-way through a deploy, leaving the table's limit disagreeing with
+    the revision its counts came from.
+
+    The revision is any traffic entry with `percent == 100`. The ceiling is the
+    autoscaling.knative.dev/maxScale annotation on the service's template, which Cloud Run
+    leaves unset when none was ever applied -- that means the account default, not "unlimited",
+    so an absent annotation is reported as None and instance_counts()'s table says so rather
+    than inventing a number to compare against.
 
     A service that can't be described is warned about and skipped rather than raising: the
     deploy workflow runs one job per tool/genome, so a partial or in-progress rollout can
     legitimately leave some of the services in SERVICES absent, and one missing service must
     not blank out the error counts and latencies of the ones that are up.
     """
-    out = {}
+    revisions = {}
+    limits = {}
     for svc in SERVICES:
         proc = subprocess.run([
             "gcloud", "run", "services", "describe", svc,
@@ -164,12 +175,17 @@ def get_production_revisions():
         if proc.returncode != 0:
             print(f"  WARNING: skipping {svc}: {proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else 'gcloud describe failed'}")
             continue
-        for entry in json.loads(proc.stdout)["status"].get("traffic", []):
+        described = json.loads(proc.stdout)
+        for entry in described["status"].get("traffic", []):
             if entry.get("percent", 0) != 100:
                 continue
-            out[svc] = entry["revisionName"]
+            revisions[svc] = entry["revisionName"]
             break
-    return out
+        max_scale = (described.get("spec", {}).get("template", {}).get("metadata", {})
+                     .get("annotations", {}).get("autoscaling.knative.dev/maxScale"))
+        if max_scale is not None:
+            limits[svc] = int(max_scale)
+    return revisions, limits
 
 
 def revisions_with_traffic(client, start, end):
@@ -227,7 +243,7 @@ def tagged_revisions(start):
 
 
 def production_revisions(client, start, end):
-    """Return ({service: [revision, ...]}, {service: current_100_percent_revision}).
+    """Return ({service: [revision, ...]}, {service: current_100_percent_revision}, {service: max-instances}).
 
     The first mapping is every revision that served production traffic during the window, which
     is what the metric and log queries must filter on. Filtering on the single revision at 100%
@@ -239,7 +255,7 @@ def production_revisions(client, start, end):
     A revision that only ever answered on a tag hostname is excluded, which is the dev/test
     traffic the revision filter existed to keep out in the first place.
     """
-    current = get_production_revisions()
+    current, limits = describe_production_services()
     served = revisions_with_traffic(client, start, end)
     tagged = tagged_revisions(start)
     out = {}
@@ -251,7 +267,7 @@ def production_revisions(client, start, end):
             revs.add(current[svc])
         if revs:
             out[svc] = sorted(revs)
-    return out, current
+    return out, current, limits
 
 
 def uptime_check_accepted_codes():
@@ -407,6 +423,42 @@ def sample_count(client, metric, start, end, revisions=None, extra_filter=None):
         svc = ts.resource.labels.get("service_name", "?")
         for p in ts.points:
             out[svc] = out.get(svc, 0) + int(p.value.distribution_value.count)
+    return out
+
+
+def instance_counts(client, start, end, revisions=None):
+    """Return {service: [instance count per minute, ...]} over the window.
+
+    ALIGN_MAX within each series and then REDUCE_SUM across them, because instance_count is
+    split by a `state` label (active/idle) as well as by revision while max-instances caps the
+    total, so answering "did it reach the ceiling" means adding those back together. The max
+    rather than the mean within each minute keeps a brief scale-out from being averaged away,
+    which is the event this is read for.
+
+    Note for the caller: Cloud Run reports nothing while a service is scaled to zero, so the
+    returned list is the minutes the service was actually running, not the whole window. A
+    percentage computed from it is a share of the service's running time -- which is the useful
+    denominator here, since idle minutes cannot be near a ceiling.
+    """
+    f = f'metric.type="run.googleapis.com/container/instance_count"'
+    if revisions:
+        f += f" AND {revision_filter_clause(revisions)}"
+    out = {}
+    for ts in client.list_time_series(request={
+        "name": f"projects/{PROJECT}",
+        "filter": f,
+        "interval": monitoring_v3.TimeInterval(end_time=end, start_time=start),
+        "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
+        "aggregation": monitoring_v3.Aggregation(
+            alignment_period={"seconds": 60},
+            per_series_aligner=monitoring_v3.Aggregation.Aligner.ALIGN_MAX,
+            cross_series_reducer=monitoring_v3.Aggregation.Reducer.REDUCE_SUM,
+            group_by_fields=["resource.label.service_name"],
+        ),
+    }):
+        svc = ts.resource.labels.get("service_name", "?")
+        for p in ts.points:
+            out.setdefault(svc, []).append(p.value.double_value or p.value.int64_value)
     return out
 
 
@@ -791,9 +843,10 @@ def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params
 
     if args.all_revisions:
         prod_revs = None
+        max_instances = {}
         rev_label = "(all revisions, including dev/test traffic)"
     else:
-        prod_map, current_map = production_revisions(client, start, now)
+        prod_map, current_map, max_instances = production_revisions(client, start, now)
         if not prod_map:
             # Either nothing served production traffic and no service has a revision at 100%
             # (e.g. all simultaneously rolling out), or every describe call failed. Fall back
@@ -891,6 +944,42 @@ def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params
             fmt_pct(mv.get('p95')),
             fmt_pct(mv.get('p99')),
         ])
+    print_table(rows, aligns=['l', 'r', 'r', 'r', 'r', 'r', 'r'])
+    print()
+
+    # Whether the autoscaler ever ran out of room. A service pinned at its ceiling queues
+    # requests inside its instances instead of scaling out, which shows up as latency rather
+    # than as an error, so nothing else in this report would name it. "mins" is the minutes the
+    # service was running (Cloud Run reports nothing while scaled to zero), and the percentages
+    # are shares of that, not of the window.
+    print("=== Instances vs the max-instances ceiling ===")
+    inst = instance_counts(client, start, now, revisions=prod_revs)
+    rows = [["service", "limit", "mins", "peak", "at limit", "within 1", "mean"]]
+    for svc in SERVICES:
+        vals = inst.get(svc, [])
+        limit = max_instances.get(svc)
+        limit_s = str(limit) if limit else "?"
+        if not vals:
+            rows.append([svc, limit_s, "0", "?", "?", "?", "?"])
+            continue
+        n = len(vals)
+        if limit:
+            at = sum(1 for v in vals if v >= limit)
+            at_s = f"{at} ({at / n * 100:.1f}%)"
+            # "within 1" only says something once limit-1 is at least 2: a running service
+            # always has an instance, so on liftover's limit of 2 it would report every minute
+            # as near the ceiling and read as saturation that is not there.
+            if limit >= 3:
+                near = sum(1 for v in vals if v >= limit - 1)
+                near_s = f"{near} ({near / n * 100:.1f}%)"
+            else:
+                near_s = "-"
+        else:
+            # Either --all-revisions skipped the describe calls, or the service carries no
+            # maxScale annotation. Report the counts that stand on their own rather than
+            # comparing against a ceiling this run does not know.
+            at_s = near_s = "-"
+        rows.append([svc, limit_s, str(n), f"{max(vals):.0f}", at_s, near_s, f"{sum(vals) / n:.2f}"])
     print_table(rows, aligns=['l', 'r', 'r', 'r', 'r', 'r', 'r'])
     print()
 
