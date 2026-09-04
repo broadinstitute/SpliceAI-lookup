@@ -490,7 +490,7 @@ def main():
                 # Raised 3 -> 6 so bursts of cache-miss traffic scale out across instances
                 # instead of saturating a few and timing out (504). This is only a ceiling:
                 # min_instances=0 means idle services still scale to zero, so the baseline
-                # cost is unchanged.
+                # cost is unchanged. The basic services override this per deploy below.
                 max_instances = 6
                 # Keep dev image digests separate from prod so a stray non-dev
                 # deploy from the same checkout can't accidentally promote the
@@ -569,6 +569,19 @@ def main():
                         # from the environment by the image's gunicorn command, so this overrides
                         # the value baked in at build time without needing a separate image.
                         service_workers = workers if gene_set == "basic" else 2
+
+                        # The basic services carry ~98% of the traffic and are the ones that
+                        # saturate during a burst, so only they get the ceiling raised 6 -> 12;
+                        # comprehensive stays at 6, where its share of traffic has never come
+                        # close. Like max_instances above this is only a ceiling, and
+                        # min_instances=0 keeps idle services at zero, so the baseline cost is
+                        # unchanged. It does raise the fleet-wide worst case for Cloud SQL
+                        # connections (see the pool comment in server.py): every gunicorn worker
+                        # holds minconn=1, so full scale-out goes from 4 x 6 x 3 + 4 x 6 x 2 =
+                        # 120 to 4 x 12 x 3 + 4 x 6 x 2 = 192 against max_connections=75. That
+                        # bound was already exceeded before this change and closing it needs a
+                        # bigger database tier, not a smaller ceiling here.
+                        service_max_instances = 12 if gene_set == "basic" else max_instances
 
                         if args.dev:
                             # Whether the service already exists decides whether --no-traffic can
@@ -675,7 +688,7 @@ def main():
 --add-cloudsql-instances {GCLOUD_PROJECT}:us-central1:spliceai-lookup-db \
 --min-instances {min_instances} \
 --service-min-instances {min_instances} \
---max-instances {max_instances} \
+--max-instances {service_max_instances} \
 --concurrency {service_workers} \
 --service-account 1042618492363-compute@developer.gserviceaccount.com \
 --execution-environment gen2 \
