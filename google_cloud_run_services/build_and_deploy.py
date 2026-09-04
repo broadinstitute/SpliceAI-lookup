@@ -678,10 +678,17 @@ def main():
                         # in monitor_google_cloud_run_latency_stats_and_errors.py. A startup probe
                         # runs often enough to distort those counts the way the uptime checks did.
                         #
-                        # 5s x 24 = 120s before the container is declared failed, about 2x the
-                        # slowest startup observed under contention, so an instance coming up
-                        # during a burst is not killed part-way through. Cloud Run caps
-                        # periodSeconds x failureThreshold at 240s, leaving room to raise it.
+                        # 5s x 40 = 200s before the container is declared failed, raised from
+                        # 120s after 274 starts had been measured: the slowest landed in the
+                        # 71-78s bucket, leaving only ~1.6x headroom, and the worst case is not
+                        # fixed. It scales with how many instances come up at once, because the
+                        # three workers then share two CPUs; one burst stretched
+                        # init_transcript_annotations from its usual 1.9s to 38.7s. This costs
+                        # nothing when startup is normal, since the probe stops at its first
+                        # success roughly 20-35s in. What it does cost is that a container that
+                        # will NEVER start takes 200s rather than 120s to be declared dead and
+                        # replaced. Cloud Run caps periodSeconds x failureThreshold at 240s, so
+                        # this is close to the maximum available.
                         run(f"""gcloud \
 --project {GCLOUD_PROJECT} beta run deploy {service} \
 --image {tag}@{sha256} \
@@ -699,7 +706,7 @@ def main():
 --cpu 2 \
 --cpu-boost \
 --timeout 900s \
---startup-probe httpGet.path=/uptime/,httpGet.port=8080,periodSeconds=5,timeoutSeconds=5,failureThreshold=24 \
+--startup-probe httpGet.path=/uptime/,httpGet.port=8080,periodSeconds=5,timeoutSeconds=5,failureThreshold=40 \
 --update-env-vars "^@^{env_vars}" {dev_flags}""")
 
                         if args.dev:
