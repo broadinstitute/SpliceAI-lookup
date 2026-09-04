@@ -9,7 +9,7 @@ Loops forever, printing every --interval minutes (default 30):
   - request latency (p50/p95/p99) with sample counts
   - GeneBe and Ensembl VEP API latency, measured by probing them directly (see probe_external_apis)
   - container cold-start count and startup latency (p50/p95/p99)
-  - response-cache hit rate today / past 7 days / past 30 days, split by tool and genome build
+  - response-cache hit rate over the past 24 hours / 7 days / 30 days, split by tool and genome build
 
 If a baseline window is provided, latency p50/p95/p99 are also compared
 to that window so regressions stand out.
@@ -68,6 +68,10 @@ CACHE_EVENT_NAMES = tuple(f"{tool}:{outcome}"
                           for tool in ("spliceai", "pangolin")
                           for outcome in ("from-cache", "computed"))
 CACHE_HIT_OUTCOME = "from-cache"
+
+# The external-API table is the one table that measures nothing historical: it calls the APIs
+# while the snapshot is printing, so it has no window to report.
+PROBE_WINDOW_LABEL = "n/a, live probes"
 
 # log.genome holds the "hg" request parameter, which is "37" or "38"; the site calls those
 # builds hg19 and hg38, so the report does too.
@@ -648,10 +652,14 @@ def cache_hit_windows(now):
     the database's own now(), and the instance runs in UTC. Comparing that column against an
     aware value would make the boundary depend on the session's TimeZone setting instead of
     being the plain timestamp comparison it looks like.
+
+    All three end at `now`. The shortest was the calendar UTC day until that turned out to be
+    read as a full day whatever the hour: run at 00:33Z it counted 109 requests over its 33
+    minutes, where the 24 hours before it held about 19,000.
     """
     naive_now = now.replace(tzinfo=None)
     return [
-        ("today (UTC)", naive_now.replace(hour=0, minute=0, second=0, microsecond=0)),
+        ("past 24 hours", naive_now - timedelta(hours=24)),
         ("past 7 days", naive_now - timedelta(days=7)),
         ("past 30 days", naive_now - timedelta(days=30)),
     ]
@@ -818,6 +826,21 @@ def print_external_api_latencies(probe_results):
     print_table(rows, aligns=['l', 'l', 'r', 'r', 'r', 'r', 'r', 'l'])
 
 
+def print_section_header(title, window):
+    """Print a table's `=== title (window: ...) ===` line.
+
+    Every table spells out its own window because they do not all share one: most follow
+    --window-hours, the cache table has its own three and the cost chart follows --cost-days.
+    Without this the window named once in the snapshot header reads as if it covered every
+    table under it.
+
+    Args:
+        title (str): what the table shows, without the `===` markers.
+        window (str): the period it covers, e.g. "last 12h" or "n/a, live probes".
+    """
+    print(f"=== {title} (window: {window}) ===")
+
+
 def print_table(rows, aligns=None, indent="  ", gap="  "):
     """Print rows aligned by max column widths.
 
@@ -840,6 +863,7 @@ def print_table(rows, aligns=None, indent="  ", gap="  "):
 def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params=None):
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=args.window_hours)
+    window_label = f"last {args.window_hours:g}h"
 
     if args.all_revisions:
         prod_revs = None
@@ -877,7 +901,7 @@ def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params
     print("=" * 100)
     print()
 
-    print("=== Errors by signature (window) ===")
+    print_section_header("Errors by signature", window_label)
     errs, truncated = gcloud_errors(start, revisions=prod_revs)
     if not errs:
         print("  none")
@@ -888,7 +912,8 @@ def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params
         print("  WARNING: error log query hit 1000-entry cap — older errors in window are truncated.")
     print()
 
-    print("=== Response codes (3xx, 404s and each service's uptime-check status ignored as probe/redirect noise) ===")
+    print_section_header("Response codes (3xx, 404s and each service's uptime-check status "
+                         "ignored as probe/redirect noise)", window_label)
     codes = request_counts(client, start, now, revisions=prod_revs)
     accepted = uptime_check_accepted_codes()
     for svc in SERVICES:
@@ -925,7 +950,7 @@ def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params
                 print(f"                  {cls}: " + ", ".join(f"{code}={c}" for code, c in items))
     print()
 
-    print("=== CPU / Memory utilization ===")
+    print_section_header("CPU / Memory utilization", window_label)
     cpu_metric = "run.googleapis.com/container/cpu/utilizations"
     mem_metric = "run.googleapis.com/container/memory/utilizations"
     cpu = percentiles(client, cpu_metric, start, now, revisions=prod_revs)
@@ -952,7 +977,7 @@ def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params
     # than as an error, so nothing else in this report would name it. "mins" is the minutes the
     # service was running (Cloud Run reports nothing while scaled to zero), and the percentages
     # are shares of that, not of the window.
-    print("=== Instances vs the max-instances ceiling ===")
+    print_section_header("Instances vs the max-instances ceiling", window_label)
     inst = instance_counts(client, start, now, revisions=prod_revs)
     rows = [["service", "limit", "mins", "peak", "at limit", "within 1", "mean"]]
     for svc in SERVICES:
@@ -1001,10 +1026,12 @@ def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params
         # Baseline window predates current revisions; query unfiltered to capture pre-deploy traffic.
         baseline_lat = percentiles(client, lat_metric, baseline_start, baseline_end,
                                    extra_filter=lat_filter)
-        print(f"=== Latency (p50/p95/p99 in s) — vs {args.baseline_days:g}d baseline ending {args.baseline_end} ===")
+        print_section_header("Latency (p50/p95/p99 in s)",
+                             f"{window_label} vs a {args.baseline_days:g}d baseline "
+                             f"ending {args.baseline_end}")
     else:
         baseline_lat = None
-        print("=== Latency (p50/p95/p99 in s) ===")
+        print_section_header("Latency (p50/p95/p99 in s)", window_label)
 
     rows = [["service", "n", "p50", "p95", "p99"]]
     for svc in SERVICES:
@@ -1028,16 +1055,17 @@ def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params
     # needs one. The numbers below are live probes from this machine rather than real user
     # traffic, so they measure the API rather than what any particular user experienced.
     if args.probe_samples < 1:
-        print("=== External API latency (skipped, --probe-samples 0) ===")
+        print_section_header("External API latency (skipped, --probe-samples 0)", PROBE_WINDOW_LABEL)
     else:
-        print(f"=== External API latency ({args.probe_samples} probe"
-              f"{'' if args.probe_samples == 1 else 's'} per query shape, from this machine) ===")
+        print_section_header(f"External API latency ({args.probe_samples} probe"
+                             f"{'' if args.probe_samples == 1 else 's'} per query shape, from this machine)",
+                             PROBE_WINDOW_LABEL)
         print_external_api_latencies(probe_external_apis(args.probe_samples))
     print()
 
     # Container startup latency distribution — count = number of cold starts in window,
     # percentiles = how long each new instance took to become ready to serve requests.
-    print("=== Container startup (cold starts; p50/p95/p99 in s) ===")
+    print_section_header("Container startup (cold starts; p50/p95/p99 in s)", window_label)
     startup_metric = "run.googleapis.com/container/startup_latencies"
     startup = percentiles(client, startup_metric, start, now, revisions=prod_revs)
     startup_n = sample_count(client, startup_metric, start, now, revisions=prod_revs)
@@ -1062,13 +1090,17 @@ def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params
     # A `force=1` request counts as a miss, which is what it is: the lookup is skipped and the
     # model runs. Basic and comprehensive gene sets are pooled here; the table's `bc` column
     # separates them for anyone who needs that breakdown.
-    print("=== Cache hit rate (share of scoring requests answered from the response cache) ===")
+
+    # Computed before the header rather than inside the else below so the header names the
+    # windows even when the database is unreachable and no table follows it.
+    windows = cache_hit_windows(now)
+    print_section_header("Cache hit rate (share of scoring requests answered from the response cache)",
+                         ", ".join(label for label, _ in windows))
     if db_connect_params is None:
         print(f"  (skipped, no database connection: needs {DB_PASSWORD_FILE}, plus either "
               f"SPLICEAI_LOOKUP_DB_HOST or a working "
               f"`gcloud sql instances describe {DB_INSTANCE}`)")
     else:
-        windows = cache_hit_windows(now)
         try:
             hits, totals, earliest = cache_hit_counts(db_connect_params, windows)
         except psycopg2.Error as e:
@@ -1080,7 +1112,7 @@ def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params
             print_cache_hit_rates(hits, totals, windows, earliest)
     print()
 
-    print(f"=== Project cost over the last {args.cost_days:g} days (net of credits) ===")
+    print_section_header("Project cost (net of credits)", f"last {args.cost_days:g} days")
     if bq_client is None or billing_table is None:
         print("  (skipped — billing-export discovery cache not found at "
               f"{BILLING_CACHE_DIR}; run /analyze-gcloud-costs once to populate it)")
@@ -1096,7 +1128,9 @@ def main():
     parser.add_argument("--once", action="store_true",
                         help="Print one snapshot and exit (default is to loop forever).")
     parser.add_argument("--window-hours", type=float, default=2.0,
-                        help="Length of each snapshot's window in hours (default: 2)")
+                        help="Length of each snapshot's window in hours (default: 2). Covers every "
+                             "table except the external-API probes, the cache hit rate (its own "
+                             "24h/7d/30d windows) and the cost chart (--cost-days).")
     parser.add_argument("--baseline-end",
                         help="Optional ISO-8601 (YYYY-MM-DDTHH:MM:SSZ) end of a baseline window for latency comparison.")
     parser.add_argument("--baseline-days", type=float, default=7.0,
