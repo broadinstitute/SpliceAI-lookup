@@ -9,6 +9,10 @@ Loops forever, printing every --interval minutes (default 30):
   - request latency (p50/p95/p99) with sample counts
   - GeneBe and Ensembl VEP API latency, measured by probing them directly (see probe_external_apis)
   - container cold-start count and startup latency (p50/p95/p99)
+  - Cloud SQL health: CPU/memory/disk utilization and connection count vs max_connections,
+    flagged as overloaded when CPU, disk or connections cross their warning threshold
+  - database query round-trip latency, measured by probing server.py's own query shapes
+    directly (see probe_db_queries)
   - response-cache hit rate over the past 24 hours / 7 days / 30 days, split by tool and genome build
 
 If a baseline window is provided, latency p50/p95/p99 are also compared
@@ -61,6 +65,55 @@ DB_INSTANCE = "spliceai-lookup-db"
 DB_NAME = "spliceai-lookup-db"
 DB_USER = "postgres"
 DB_PASSWORD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".pgpass")
+
+# Fractions of quota above which the Cloud SQL health table below calls DB_INSTANCE overloaded.
+# Memory has no such threshold: Cloud SQL's memory/utilization metric counts the OS page cache
+# as "used", so it reads ~100% on a healthy, idle instance too (verified on DB_INSTANCE, which
+# is a db-f1-micro) and would flag every snapshot if compared against one.
+DB_CPU_WARN_THRESHOLD = 0.80
+DB_DISK_WARN_THRESHOLD = 0.80
+DB_CONNECTIONS_WARN_THRESHOLD = 0.80
+
+# Query shapes server.py actually issues against DB_INSTANCE on the hot request path (see
+# run_sql() and its callers there): the response cache lookup and write, one scoring
+# request's log() write, the rate limiter's three checks (whitelist, restricted-ip block
+# list, recent-request count), and the transcript-structure batch fetch SAI-10k uses for
+# exon annotation. Cloud Monitoring has no per-query-shape latency for Cloud SQL, only the
+# instance-wide aggregates the health table above reports, so -- like EXTERNAL_API_PROBES
+# below -- this measures round trip by running the real query shapes directly.
+#
+# This is the round trip from wherever this script runs to DB_INSTANCE's public IP, over
+# whatever network path connects the two. server.py instead reaches it over a Unix socket
+# via the Cloud SQL Auth connector sidecar inside Cloud Run, so these numbers approximate
+# the query's cost on the database side; they are not what a production request experiences.
+#
+# The two INSERT/UPDATE shapes (cache write, log write) are real production statements run
+# for their round-trip cost, then rolled back (see probe_db_queries) rather than committed,
+# so probing here never leaves a fake row in the same cache/log tables the sections above
+# and below read.
+DB_QUERY_PROBES = [
+    ("cache lookup", "SELECT value FROM cache WHERE key=%s",
+     ("__monitor_probe__",)),
+    ("cache write", "INSERT INTO cache (key, value, counter, accessed) VALUES (%s, %s, 1, now()) "
+                    "ON CONFLICT (key) DO UPDATE SET key=%s, value=%s, counter=cache.counter+1, accessed=now()",
+     ("__monitor_probe__", "{}", "__monitor_probe__", "{}")),
+    ("log write", "INSERT INTO log (event_name, ip, duration, variant, genome, distance, mask, bc, details) "
+                  "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+     ("__monitor_probe__", "0.0.0.0", 0.0, "chr1-1-A-T", "38", 50, 0, "b", None)),
+    ("whitelist check", "SELECT COUNT(ip) FROM whitelist_ips WHERE ip=%s",
+     ("0.0.0.0",)),
+    ("restricted-ip check",
+     "SELECT COUNT(ip) FROM restricted_ips WHERE ip=%s AND created >= NOW() - INTERVAL '1 weeks'",
+     ("0.0.0.0",)),
+    ("rate-limit log count",
+     "SELECT COUNT(ip) FROM log WHERE event_name LIKE %s AND ip=%s AND logtime >= NOW() - INTERVAL '7 minutes'",
+     ("%computed%", "0.0.0.0")),
+    ("transcript structure fetch",
+     "SELECT transcript_id, strand, cds_start, cds_end, exon_starts, exon_ends "
+     "FROM transcripts_hg38 WHERE transcript_id = ANY(%s)",
+     (["ENST00000450305"],)),
+]
+DB_QUERY_PROBE_SAMPLES = 3
 
 # server.py's log() writes exactly one of these per scoring request that gets past validation
 # and the rate limiter, so the two together are the denominator of the cache hit rate.
@@ -645,6 +698,195 @@ def discover_db_connection_params():
             "connect_timeout": 20}
 
 
+def discover_db_max_connections():
+    """Return DB_INSTANCE's Postgres max_connections flag, or None if it can't be read.
+
+    Cloud SQL only lists a flag under databaseFlags once it has been set explicitly; a fresh
+    instance runs on Postgres's own built-in default (100) without the flag ever appearing.
+    Returns None on a describe failure so the caller can still print raw connection counts
+    without a limit to compare them against, instead of failing the whole snapshot.
+    """
+    proc = subprocess.run([
+        "gcloud", "sql", "instances", "describe", DB_INSTANCE,
+        f"--project={PROJECT}", "--format=json",
+    ], capture_output=True, text=True)
+    if proc.returncode != 0:
+        return None
+    flags = json.loads(proc.stdout).get("settings", {}).get("databaseFlags", [])
+    return next((int(f["value"]) for f in flags if f.get("name") == "max_connections"), 100)
+
+
+def db_resource_series(client, metric, start, end, sum_across_series=False):
+    """Return the raw per-minute values for a Cloud SQL GAUGE metric on DB_INSTANCE.
+
+    Cloud SQL's cpu/memory/disk utilization and num_backends are plain GAUGE points sampled
+    every 60s, not the DELTA+DISTRIBUTION metrics percentiles() above handles, so
+    print_db_health() computes percentiles itself instead of asking Cloud Monitoring for
+    REDUCE_PERCENTILE_X.
+
+    num_backends is split into one series per database on the instance (metric label
+    `database`); sum_across_series adds those back into one total-connections series.
+    """
+    request = {
+        "name": f"projects/{PROJECT}",
+        "filter": f'metric.type="{metric}" AND resource.label.database_id="{PROJECT}:{DB_INSTANCE}"',
+        "interval": monitoring_v3.TimeInterval(end_time=end, start_time=start),
+        "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
+    }
+    if sum_across_series:
+        request["aggregation"] = monitoring_v3.Aggregation(
+            alignment_period={"seconds": 60},
+            per_series_aligner=monitoring_v3.Aggregation.Aligner.ALIGN_MEAN,
+            cross_series_reducer=monitoring_v3.Aggregation.Reducer.REDUCE_SUM,
+        )
+    values = []
+    for ts in client.list_time_series(request=request):
+        for p in ts.points:
+            values.append(p.value.double_value or p.value.int64_value)
+    return values
+
+
+def local_percentile(values, pct):
+    """Return the pct-th percentile of values by linear interpolation, or None if empty.
+
+    A local computation rather than a Cloud Monitoring REDUCE_PERCENTILE_X reducer because
+    db_resource_series() reads plain GAUGE points, which that reducer is not built for (see
+    db_resource_series()'s docstring).
+    """
+    if not values:
+        return None
+    ordered = sorted(values)
+    k = (len(ordered) - 1) * pct / 100
+    lo, hi = int(k), min(int(k) + 1, len(ordered) - 1)
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (k - lo)
+
+
+def print_db_health(client, start, end, max_connections):
+    """Print DB_INSTANCE's CPU/memory/disk utilization and connection count, and flag overload.
+
+    CPU, disk and connections are compared against their DB_*_WARN_THRESHOLD so an instance
+    pinned near one of those limits is called out explicitly rather than left for someone to
+    notice in the raw numbers. Memory is printed for visibility only and left out of that
+    comparison -- see the DB_CPU_WARN_THRESHOLD comment for why it would otherwise always fire.
+    """
+    cpu = db_resource_series(client, "cloudsql.googleapis.com/database/cpu/utilization", start, end)
+    mem = db_resource_series(client, "cloudsql.googleapis.com/database/memory/utilization", start, end)
+    disk = db_resource_series(client, "cloudsql.googleapis.com/database/disk/utilization", start, end)
+    conns = db_resource_series(client, "cloudsql.googleapis.com/database/postgresql/num_backends",
+                                start, end, sum_across_series=True)
+
+    def fmt_conn(x):
+        # Raw count alongside the share of max_connections, since the count on its own
+        # doesn't say how close DB_INSTANCE is to running out of connections.
+        return f"{x:.0f} ({x / max_connections * 100:.0f}%)" if max_connections else f"{x:.0f}"
+
+    rows = [["metric", "n", "p95", "p99", "peak"]]
+    for label, values, fmt in [
+        ("CPU utilization", cpu, fmt_pct),
+        ("Memory utilization", mem, fmt_pct),
+        ("Disk utilization", disk, fmt_pct),
+        ("Connections", conns, fmt_conn),
+    ]:
+        rows.append([
+            label, str(len(values)),
+            fmt(local_percentile(values, 95)) if values else "?",
+            fmt(local_percentile(values, 99)) if values else "?",
+            fmt(max(values)) if values else "?",
+        ])
+    print_table(rows, aligns=['l', 'r', 'r', 'r', 'r'])
+    print(f"  Connections are against max_connections={max_connections}."
+          if max_connections is not None else
+          "  Connections have no max_connections to compare against (instance describe failed).")
+
+    warnings = []
+    cpu_p95 = local_percentile(cpu, 95)
+    if cpu_p95 is not None and cpu_p95 >= DB_CPU_WARN_THRESHOLD:
+        warnings.append(f"CPU p95 {fmt_pct(cpu_p95)} >= {fmt_pct(DB_CPU_WARN_THRESHOLD)}")
+    disk_peak = max(disk) if disk else None
+    if disk_peak is not None and disk_peak >= DB_DISK_WARN_THRESHOLD:
+        warnings.append(f"disk {fmt_pct(disk_peak)} >= {fmt_pct(DB_DISK_WARN_THRESHOLD)}")
+    conn_peak = max(conns) if conns else None
+    if max_connections and conn_peak is not None and conn_peak >= max_connections * DB_CONNECTIONS_WARN_THRESHOLD:
+        warnings.append(f"connections peaked at {conn_peak:.0f}/{max_connections} "
+                         f"({conn_peak / max_connections * 100:.0f}%)")
+    if warnings:
+        print(f"  OVERLOADED: {'; '.join(warnings)}")
+    else:
+        print("  not overloaded (CPU, disk and connections all below their warning thresholds)")
+
+
+def probe_db_queries(connect_params, samples=DB_QUERY_PROBE_SAMPLES, probes=DB_QUERY_PROBES):
+    """Time each server.py query shape in `probes` by running it `samples` times.
+
+    Uses its own connection, opened and closed here rather than passed in, so a probe that
+    left the transaction aborted (see the rollback below) can never affect a connection
+    another part of the snapshot is still using.
+
+    Every call is rolled back, never committed -- a SELECT has nothing to undo, and an
+    INSERT/UPDATE probe (cache write, log write) must not leave a fake row in production
+    data. See the comment above DB_QUERY_PROBES for why this is representative of query
+    cost but not of what a production request's round trip actually looks like.
+
+    Args:
+        connect_params (dict): psycopg2.connect kwargs, from discover_db_connection_params().
+        samples (int): number of times to run each query shape.
+        probes (list): (label, sql, params) tuples.
+
+    Returns:
+        list: one (label, results) pair per probe, where results is a list of
+            (elapsed_seconds, outcome) and outcome is "ok" or a short failure description.
+    """
+    conn = psycopg2.connect(**connect_params)
+    out = []
+    try:
+        for label, sql, params in probes:
+            results = []
+            for _ in range(samples):
+                started = time.monotonic()
+                outcome = "ok"
+                try:
+                    with conn.cursor() as cursor:
+                        cursor.execute(sql, params)
+                        try:
+                            cursor.fetchall()
+                        except psycopg2.ProgrammingError:
+                            pass  # No result set, e.g. from the INSERT probes.
+                except psycopg2.Error as e:
+                    outcome = type(e).__name__
+                finally:
+                    conn.rollback()
+                results.append((time.monotonic() - started, outcome))
+            out.append((label, results))
+    finally:
+        conn.close()
+    return out
+
+
+def print_db_query_latencies(probe_results):
+    """Print the per-query round-trip latency table for probe_db_queries()'s results.
+
+    min/median/max cover the successful calls only, matching print_external_api_latencies().
+    """
+    rows = [["query", "n", "ok", "min", "med", "max", "failures"]]
+    for label, results in probe_results:
+        ok = sorted(sec for sec, outcome in results if outcome == "ok")
+        failures = collections.Counter(outcome for _, outcome in results if outcome != "ok")
+        notes = []
+        for outcome, count in failures.most_common():
+            elapsed = [sec for sec, o in results if o == outcome]
+            notes.append(f"{count}x {outcome} (~{statistics.median(elapsed):.2f}s)")
+        rows.append([
+            label,
+            str(len(results)),
+            str(len(ok)),
+            fmt_s(ok[0] * 1000) if ok else "-",
+            fmt_s(statistics.median(ok) * 1000) if ok else "-",
+            fmt_s(ok[-1] * 1000) if ok else "-",
+            ", ".join(notes),
+        ])
+    print_table(rows, aligns=['l', 'r', 'r', 'r', 'r', 'r', 'l'])
+
+
 def cache_hit_windows(now):
     """Return [(label, start), ...] for the cache-hit report, as naive UTC datetimes.
 
@@ -860,7 +1102,8 @@ def print_table(rows, aligns=None, indent="  ", gap="  "):
         print((indent + gap.join(cells)).rstrip())
 
 
-def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params=None):
+def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params=None,
+             db_max_connections=None):
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=args.window_hours)
     window_label = f"last {args.window_hours:g}h"
@@ -1082,6 +1325,28 @@ def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params
     print_table(rows, aligns=['l', 'r', 'r', 'r', 'r'])
     print()
 
+    # DB_INSTANCE is the log database cache_hit_counts() below queries, not a Cloud Run
+    # service, so it gets its own Cloud Monitoring metrics (cloudsql.googleapis.com/database/*)
+    # rather than the run.googleapis.com/* ones every table above reads.
+    print_section_header(f"Cloud SQL health ({DB_INSTANCE})", window_label)
+    print_db_health(client, start, now, db_max_connections)
+    print()
+
+    # See the comment above DB_QUERY_PROBES for why this measures round trip from wherever
+    # this script runs rather than from inside a Cloud Run container.
+    print_section_header("Database query latency (round trip, live probes of server.py's own "
+                         "query shapes from this machine)", PROBE_WINDOW_LABEL)
+    if db_connect_params is None:
+        print(f"  (skipped, no database connection: needs {DB_PASSWORD_FILE}, plus either "
+              f"SPLICEAI_LOOKUP_DB_HOST or a working "
+              f"`gcloud sql instances describe {DB_INSTANCE}`)")
+    else:
+        try:
+            print_db_query_latencies(probe_db_queries(db_connect_params))
+        except psycopg2.Error as e:
+            print(f"  (skipped, could not run probe queries: {str(e).strip()})")
+    print()
+
     # A cache hit never reaches the model, so it costs a fraction of a miss -- this rate is what
     # says how much of the traffic the scoring services actually have to compute. It comes from
     # the `log` table server.py writes, not from Cloud Monitoring, which cannot tell the two
@@ -1156,11 +1421,14 @@ def main():
     # Discovered once for the same reason: the instance IP costs a gcloud call to look up, and
     # it does not change between snapshots. The connection itself is opened per snapshot.
     db_connect_params = discover_db_connection_params()
+    # Discovered once for the same reason: the max_connections flag costs its own gcloud
+    # describe call and does not change between snapshots either.
+    db_max_connections = discover_db_max_connections()
     while True:
         print("Processing...")
         try:
             snapshot(client, args, bq_client=bq_client, billing_table=billing_table,
-                     db_connect_params=db_connect_params)
+                     db_connect_params=db_connect_params, db_max_connections=db_max_connections)
         except Exception as e:
             import traceback
             print(f"\n[snapshot failed: {type(e).__name__}: {e} — retrying next interval]")
