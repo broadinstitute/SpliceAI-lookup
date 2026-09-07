@@ -14,8 +14,10 @@ images.
 
 What it keeps:
 
-  - the newest --keep images in the package, so a recent deploy can still be rolled back, and
-  - every image a Cloud Run revision in some service's traffic block points at, whatever its age.
+  - the newest --keep images in the package, so a recent deploy can still be rolled back,
+  - every image a Cloud Run revision in some service's traffic block points at, whatever its age,
+    and
+  - each service's newest superseded revision, which is what a one-command rollback needs.
 
 The second rule is the one that matters. Production and the no-traffic "dev" revision can sit on
 very different images: on 2026-09-01 liftover served production from a 2026-05-12 image while its
@@ -25,8 +27,14 @@ container. Pinning the traffic block covers both the production and the dev revi
 service, since `gcloud run deploy --tag dev --no-traffic` leaves the dev revision listed there at
 0 percent.
 
-Deleting an image only breaks revisions that are not in any traffic block, i.e. superseded ones
-that would have to be rolled back to explicitly.
+The third rule exists because the first two leave a gap right after a deploy: the traffic block
+then names only the revision just created, so the image the previous revision runs has nothing
+protecting it and is the oldest of the recent builds, i.e. first in line for the newest-N rule.
+That is the image a rollback needs. On 2026-09-07 a cleanup run 20 minutes after a deploy would
+have deleted it at every --keep value.
+
+Deleting an image now only breaks revisions older than the one a rollback would reach for, which
+would have to be rolled back to explicitly by name.
 
 Examples:
   ./cleanup_old_images.py --package spliceai-38
@@ -127,6 +135,60 @@ def pinned_digests():
     return digests
 
 
+def rollback_digests():
+    """Return each service's rollback image: the newest revision it is NOT currently serving.
+
+    pinned_digests only covers the traffic block, which names what is serving right now. A
+    cleanup run straight after a deploy therefore deletes the image the previous revision runs,
+    and that is precisely the image wanted when a deploy misbehaves: `gcloud run services
+    update-traffic --to-revisions=<previous>=100` cannot start a container once its image is
+    gone. Nothing else protects it, since the newest-N rule sorts by build date and the
+    superseded image is by definition the older one.
+
+    Keeping it costs one image per service and it stops being kept as soon as the next deploy
+    makes it the second-newest superseded revision rather than the first.
+
+    Returns:
+        set: "sha256:..." digest strings, empty when every revision of every service is in its
+            traffic block. None if the services or the revisions can't be listed, which the
+            caller treats the way it treats a None from pinned_digests: a partial answer is a
+            reason to delete nothing rather than to delete what could not be checked.
+    """
+    services = gcloud_json(["run", "services", "list", f"--region={REGION}"])
+    if not services:
+        return None
+
+    serving = set()
+    for service in services:
+        for entry in service.get("status", {}).get("traffic", []):
+            if entry.get("revisionName"):
+                serving.add(entry["revisionName"])
+
+    revisions = gcloud_json(["run", "revisions", "list", f"--region={REGION}"])
+    if revisions is None:
+        return None
+
+    # One list call covers every service in the region, matching pinned_digests' reach, so a
+    # service sharing an image has its rollback target kept too.
+    newest_superseded = {}
+    for revision in revisions:
+        metadata = revision.get("metadata", {})
+        name = metadata.get("name")
+        service = metadata.get("labels", {}).get("serving.knative.dev/service")
+        created = metadata.get("creationTimestamp", "")
+        if not name or not service or name in serving:
+            continue
+        if created > newest_superseded.get(service, ("", None))[0]:
+            newest_superseded[service] = (created, revision)
+
+    digests = set()
+    for _, revision in newest_superseded.values():
+        for container in revision.get("spec", {}).get("containers", []):
+            if "@sha256:" in container.get("image", ""):
+                digests.add(container["image"].split("@", 1)[1])
+    return digests
+
+
 def images_to_delete(images, pinned, keep):
     """Pick the images to delete: everything except the newest `keep` and the pinned ones.
 
@@ -211,7 +273,18 @@ def main():
     if recorded:
         print(f"{len(recorded)} image(s) are named by this repo's sha256 files and will be kept")
 
-    doomed = images_to_delete(images, pinned | recorded, args.keep)
+    # Same reasoning as the pinned check above: a partial answer here would let the newest-N
+    # rule delete the image a rollback needs, which is the one image worth having when a deploy
+    # has just gone wrong.
+    rollback = rollback_digests()
+    if rollback is None:
+        print("ERROR: couldn't read which revisions a rollback would need, so nothing was deleted")
+        return 1
+    if rollback:
+        print(f"{len(rollback)} image(s) are a service's newest superseded revision "
+              f"(its rollback target) and will be kept")
+
+    doomed = images_to_delete(images, pinned | recorded | rollback, args.keep)
     if not doomed:
         print("nothing to delete")
         return 0

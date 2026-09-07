@@ -13,7 +13,7 @@ import unittest
 from unittest import mock
 
 import cleanup_old_images
-from cleanup_old_images import images_to_delete, pinned_digests
+from cleanup_old_images import images_to_delete, pinned_digests, rollback_digests
 
 
 def image(digest, create_time, tags=None):
@@ -104,6 +104,90 @@ class PinnedDigestsTest(unittest.TestCase):
     def test_returns_none_when_services_cannot_be_listed(self):
         with mock.patch("cleanup_old_images.gcloud_json", lambda args: None):
             self.assertIsNone(pinned_digests())
+
+
+class RollbackDigestsTest(unittest.TestCase):
+    """The traffic block names only what is serving now, so right after a deploy the image the
+    previous revision runs is unprotected and is the oldest of the recent builds. That is the
+    one a rollback needs, so it gets kept until a newer superseded revision takes its place."""
+
+    SERVICES = [{"status": {"traffic": [{"revisionName": "liftover-00048"}]}}]
+
+    REVISIONS = [
+        {"metadata": {"name": "liftover-00048", "creationTimestamp": "2026-09-07T17:50:00Z",
+                      "labels": {"serving.knative.dev/service": "liftover"}},
+         "spec": {"containers": [{"image": f"{cleanup_old_images.REPO}/liftover@sha256:new"}]}},
+        {"metadata": {"name": "liftover-00047", "creationTimestamp": "2026-09-01T12:00:00Z",
+                      "labels": {"serving.knative.dev/service": "liftover"}},
+         "spec": {"containers": [{"image": f"{cleanup_old_images.REPO}/liftover@sha256:prev"}]}},
+        {"metadata": {"name": "liftover-00046", "creationTimestamp": "2026-08-31T12:00:00Z",
+                      "labels": {"serving.knative.dev/service": "liftover"}},
+         "spec": {"containers": [{"image": f"{cleanup_old_images.REPO}/liftover@sha256:older"}]}},
+    ]
+
+    @staticmethod
+    def fake_gcloud_json(services=None, revisions=None):
+        """gcloud_json stand-in returning the given services and revisions lists."""
+        def fake(args):
+            if args[:3] == ["run", "services", "list"]:
+                return RollbackDigestsTest.SERVICES if services is None else services
+            if args[:3] == ["run", "revisions", "list"]:
+                return RollbackDigestsTest.REVISIONS if revisions is None else revisions
+            raise AssertionError(f"unexpected gcloud call: {args}")
+        return fake
+
+    def test_keeps_the_newest_superseded_revision_not_the_serving_one(self):
+        with mock.patch("cleanup_old_images.gcloud_json", self.fake_gcloud_json()):
+            self.assertEqual(rollback_digests(), {"sha256:prev"})
+
+    def test_keeps_one_rollback_target_per_service(self):
+        revisions = self.REVISIONS + [
+            {"metadata": {"name": "spliceai-38-00010", "creationTimestamp": "2026-09-02T12:00:00Z",
+                          "labels": {"serving.knative.dev/service": "spliceai-38"}},
+             "spec": {"containers": [{"image": f"{cleanup_old_images.REPO}/spliceai-38@sha256:s2"}]}},
+            {"metadata": {"name": "spliceai-38-00009", "creationTimestamp": "2026-09-01T12:00:00Z",
+                          "labels": {"serving.knative.dev/service": "spliceai-38"}},
+             "spec": {"containers": [{"image": f"{cleanup_old_images.REPO}/spliceai-38@sha256:s1"}]}},
+        ]
+        with mock.patch("cleanup_old_images.gcloud_json",
+                        self.fake_gcloud_json(revisions=revisions)):
+            self.assertEqual(rollback_digests(), {"sha256:prev", "sha256:s2"})
+
+    def test_a_no_traffic_dev_revision_does_not_become_the_rollback_target(self):
+        # A dev revision sits in the traffic block at 0 percent, so it is already pinned and the
+        # rollback target has to be the newest revision below it.
+        services = [{"status": {"traffic": [{"revisionName": "liftover-00048"},
+                                            {"revisionName": "liftover-00047"}]}}]
+        with mock.patch("cleanup_old_images.gcloud_json",
+                        self.fake_gcloud_json(services=services)):
+            self.assertEqual(rollback_digests(), {"sha256:older"})
+
+    def test_returns_empty_when_every_revision_is_serving(self):
+        services = [{"status": {"traffic": [{"revisionName": r["metadata"]["name"]}
+                                            for r in self.REVISIONS]}}]
+        with mock.patch("cleanup_old_images.gcloud_json",
+                        self.fake_gcloud_json(services=services)):
+            self.assertEqual(rollback_digests(), set())
+
+    def test_returns_none_when_services_cannot_be_listed(self):
+        with mock.patch("cleanup_old_images.gcloud_json", lambda args: None):
+            self.assertIsNone(rollback_digests())
+
+    def test_returns_none_when_the_revision_list_call_fails(self):
+        def fake(args):
+            if args[:3] == ["run", "services", "list"]:
+                return self.SERVICES
+            return None
+        with mock.patch("cleanup_old_images.gcloud_json", fake):
+            self.assertIsNone(rollback_digests())
+
+    def test_ignores_a_revision_with_no_service_label(self):
+        revisions = [dict(self.REVISIONS[1], metadata={"name": "orphan",
+                                                       "creationTimestamp": "2026-09-01T12:00:00Z",
+                                                       "labels": {}})]
+        with mock.patch("cleanup_old_images.gcloud_json",
+                        self.fake_gcloud_json(revisions=revisions)):
+            self.assertEqual(rollback_digests(), set())
 
 
 if __name__ == "__main__":
