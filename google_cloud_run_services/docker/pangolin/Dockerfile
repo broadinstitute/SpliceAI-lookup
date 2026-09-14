@@ -1,5 +1,11 @@
 FROM python:3.9-slim-bullseye
 
+# See the matching comment in docker/spliceai/Dockerfile: deb.debian.org served a bullseye-security
+# index whose pool objects were missing, 404ing every apt-get install on 2026-09-14. This points the
+# security suite at Debian's other official mirror alias, which serves the same index with the files
+# present. Drop this line once deb.debian.org has reconciled.
+RUN sed -i 's|http://deb.debian.org/debian-security|http://cloudfront.debian.net/debian-security|g' /etc/apt/sources.list
+
 RUN apt update && apt-get install --no-install-recommends -y \
     ca-certificates \
     wget \

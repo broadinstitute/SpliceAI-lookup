@@ -1,5 +1,14 @@
 FROM python:3.9-slim-bullseye
 
+# 2026-09-14: deb.debian.org published a bullseye-security index naming package versions its Fastly
+# nodes did not actually hold, so apt-get install 404'd on libc6-dev, libcurl4, libcurl4-openssl-dev,
+# liblzma-dev, libperl5.32 and libexpat1, and all four images failed to build from two different nodes.
+# Only the security suite was affected; the bullseye main archive was fine. cloudfront.debian.net is
+# Debian's other official mirror alias, on a separate CDN, and serves the same index (byte-identical
+# Packages.gz) with those pool files present. security.debian.org is NOT a fix: it publishes the same
+# index and returns 404 for the same libc6-dev. Drop this line once deb.debian.org has reconciled.
+RUN sed -i 's|http://deb.debian.org/debian-security|http://cloudfront.debian.net/debian-security|g' /etc/apt/sources.list
+
 RUN apt update && apt-get install --no-install-recommends -y \
     ca-certificates \
     wget \
