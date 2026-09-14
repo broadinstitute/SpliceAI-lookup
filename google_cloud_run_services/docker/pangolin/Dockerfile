@@ -41,7 +41,7 @@ RUN python3 -m pip install --upgrade -r /requirements.txt
 # rebuild cannot silently change the scores this service returns. See the equivalent comment in
 # docker/spliceai/Dockerfile. Bump deliberately, then re-run test_api_consistency.py against
 # the dev deployment.
-ARG PANGOLIN_COMMIT=860ab8003482cfa1138c4cb6cc5825b73df0b30a
+ARG PANGOLIN_COMMIT=eaa676aca8a61512bb88a93aae60f9a37e8ff96c
 RUN git clone https://github.com/bw2/Pangolin.git \
     && cd Pangolin \
 	&& git checkout ${PANGOLIN_COMMIT} \

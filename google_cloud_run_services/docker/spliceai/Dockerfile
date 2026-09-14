@@ -46,7 +46,7 @@ RUN python3 -m pip install --upgrade -r /requirements.txt
 # against the dev deployment afterwards. Changing the SHA changes the URL, which is what
 # invalidates the build cache for this layer -- the ARG RANDOM cache-buster that used to be
 # needed for that is gone.
-ARG SPLICEAI_COMMIT=5c0bd57a6c3b9c9d87a3bca5fe417db28e6d11fb
+ARG SPLICEAI_COMMIT=f87e2124b8f9b1d906f1d0306a58f57692b121f4
 RUN python3 -m pip install https://github.com/bw2/SpliceAI/archive/${SPLICEAI_COMMIT}.zip
 
 # Carried into the container so server.py can mix it into the response cache key. Bumping the
