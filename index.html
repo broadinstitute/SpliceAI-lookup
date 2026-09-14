@@ -1415,6 +1415,33 @@
         return `${ref.slice(start, ref.length - end)}/${alt.slice(start, alt.length - end)}`
     }
 
+    const trimSharedBases = (pos, ref, alt) => {
+        /* Trim the bases REF and ALT share, giving the shortest spelling of a variant: 55057513 TG>TA
+         * becomes 55057514 G>A. It's the spelling the SpliceAI and Pangolin services score, and
+         * trim_shared_bases in server.py trims the same way. Shared bases at the end go first, then shared
+         * bases at the start, and each allele keeps at least one base, so an insertion or deletion keeps
+         * its anchor base. Unlike left-alignment, this never shifts an indel through a repeat.
+         *
+         * Args:
+         *  pos (number): 1-based position
+         *  ref (string): reference allele
+         *  alt (string): alternate allele
+         *
+         * Return:
+         *  object: {pos, ref, alt}
+         */
+        while (ref.length > 1 && alt.length > 1 && ref[ref.length - 1] == alt[alt.length - 1]) {
+            ref = ref.slice(0, -1)
+            alt = alt.slice(0, -1)
+        }
+        while (ref.length > 1 && alt.length > 1 && ref[0] == alt[0]) {
+            ref = ref.slice(1)
+            alt = alt.slice(1)
+            pos += 1
+        }
+        return {pos, ref, alt}
+    }
+
     const transcriptIdKey = (transcriptId) => {
         /* Key used to match a transcript id returned by a consequence API against the t_id values in
          * SpliceAI / Pangolin responses. Dropping the version also drops the "_7" suffix that Gencode
@@ -1811,9 +1838,9 @@
             'consequence': usable ? usable.consequence || null : null,
             'consequencesByTranscriptId': usable ? usable.consequencesByTranscriptId || null : null,
             // The resolver's own spelling of the variant. GeneBe left-aligns indels, and that is the
-            // spelling gnomAD, myvariant.info and the precomputed score tables index, where the page
-            // scores whichever equivalent spelling was typed. Callers use this for those lookups and
-            // for the external links, and the typed spelling for everything else.
+            // spelling gnomAD, myvariant.info and the precomputed score tables index, where the services
+            // score the trimmed spelling (see trimSharedBases), which inside a repeat can be a different
+            // one. Callers use this for those lookups and to repoint the external links.
             'normalizedVariant': genomeVersion == '38' && usable ? usable.variant || null : null,
         }
     }
@@ -1983,10 +2010,11 @@
             // scoring requests instead of ahead of them.
             //
             // hg38 used to hand back GeneBe's own left-aligned spelling of these coordinates instead
-            // (1-1000095-CGC-C came back as 1-1000094-CCG-C). It now scores exactly what was typed,
+            // (1-1000095-CGC-C came back as 1-1000094-CCG-C). It now sends exactly what was typed,
             // the way hg19 always has. Waiting on GeneBe purely to re-spell the variant is the delay
-            // this avoids, and the backends neither normalize nor care which equivalent spelling of
-            // an indel they are given.
+            // this avoids. The backends don't left-align either: they only trim the bases REF and ALT
+            // share (see trimSharedBases), after checking the full REF, which is why the untrimmed
+            // spelling is the one sent.
             const chrom = matchedRegExp[2].toUpperCase()
             const pos = parseInt(matchedRegExp[3].replace(/,/g, ""))
             const ref = matchedRegExp[4].toUpperCase()
@@ -2808,9 +2836,9 @@
     const pointVariantLinksAtNormalizedSpelling = (normalizedVariant, genomeVersion) => {
         /* Repoint the gnomAD and GeneBe links at the left-aligned spelling of the variant.
 
-         * Both sites are keyed by the left-aligned spelling, so for an indel typed some other
-         * equivalent way the links built from the typed spelling lead nowhere. The variant cell
-         * still shows what was typed, since that is what was searched for and scored; only where
+         * Both sites are keyed by the left-aligned spelling, so for an indel inside a repeat the links
+         * built from the trimmed spelling the services score (see trimSharedBases) can lead nowhere.
+         * The variant cell still shows what was typed, since that is what was searched for; only where
          * the links point changes.
          *
          * Args:
@@ -2941,6 +2969,12 @@
             return generatePositionOnlyResultsTable(apiResponseJson, tool, variant, chrom, pos, genomeVersion)
         }
 
+        // The service scores the shortest spelling of the variant (see trimSharedBases) and measures every
+        // position in its response from it, so the rows below use the spelling it scored, not the one sent.
+        const scoredPos = parseInt(apiResponseJson.pos)
+        const scoredRef = apiResponseJson.ref
+        const scoredAlt = apiResponseJson.alt
+
         // Restore the shared table headers to their normal (delta-score) wording, in case
         // a prior search on this page was a position-only (REF-only) search that relabeled them.
         $(`#${tool.toLowerCase()}-variant-header`).text("Variant")
@@ -3002,7 +3036,7 @@
             }
 
             const variantCellHtml = transcriptIndex === 0
-                ? buildVariantCellHtml(variant, normalizedVariant, genomeVersion, subRowCount)
+                ? buildVariantCellHtml(variant, `${chrom}-${scoredPos}-${scoredRef}-${scoredAlt}`, genomeVersion, subRowCount)
                 : `<td rowspan="${subRowCount}"></td>`
 
             // everything the per-position table modal needs for this transcript, so its icon
@@ -3016,9 +3050,9 @@
                 toolName: tool,
                 scores: scores,
                 chrom: chrom,
-                variantPos: parseInt(pos),
-                ref: ref,
-                alt: alt,
+                variantPos: scoredPos,
+                ref: scoredRef,
+                alt: scoredAlt,
                 geneName: scores['g_name'],
                 transcriptId: scores['t_id'],
                 strand: scores['t_strand'] == "-" ? "minus" : "plus",
@@ -3051,8 +3085,8 @@
                 // through renderScoreTableFromRows identically. Always spliceai: only SpliceAI
                 // reports SCORES_FOR_INSERTED_BASES.
                 const detailedScoresTable = generateTableOfScoresForInsertedBases(
-                    modalDialogId, scores[scoreKey], scores[positionKey], ref, alt, scores["SCORES_FOR_INSERTED_BASES"],
-                    {tool: "spliceai", chrom: chrom, variantPos: parseInt(pos), alt: alt, scores: scores, mask: mask == "1"})
+                    modalDialogId, scores[scoreKey], scores[positionKey], scoredRef, scoredAlt, scores["SCORES_FOR_INSERTED_BASES"],
+                    {tool: "spliceai", chrom: chrom, variantPos: scoredPos, alt: scoredAlt, scores: scores, mask: mask == "1"})
 
                 if (detailedScoresTable) {
                     modalDialogIds.push(modalDialogId)
@@ -3068,7 +3102,7 @@
                                 parseFloat(scores[scoreKey]) == 0 &&
                                 parseFloat(scores[REF_scoreKey]) == 0 &&
                                 parseFloat(scores[ALT_scoreKey]) == 0
-                            )? "" : updatePositionAccountingForInsertedBases(scoreKey, scores[scoreKey], scores[positionKey], ref, alt, scores["SCORES_FOR_INSERTED_BASES"])}
+                            )? "" : updatePositionAccountingForInsertedBases(scoreKey, scores[scoreKey], scores[positionKey], scoredRef, scoredAlt, scores["SCORES_FOR_INSERTED_BASES"])}
                         </td>`
 
                 if (showRefAltScoreColumns == "1") {
@@ -3413,23 +3447,28 @@
            the one every source queried here indexes; see the wait below. */
         console.log(`Generating other scores table for ${normalizedVariant} from ${primateAndPromoterAiTableUrls[genomeVersion]}`)
 
-        let variantTokens = (normalizedVariant || "---").split("-")
+        // Trimmed the way the SpliceAI and Pangolin services trim it before scoring (see trimSharedBases),
+        // so a variant typed with extra unchanged bases is looked up, and shown, as the variant it is.
+        const typedTokens = (normalizedVariant || "---").split("-")
+        const shortest = trimSharedBases(parseInt(typedTokens[1]), typedTokens[2] || "", typedTokens[3] || "")
+        const shortestVariant = `${typedTokens[0]}-${shortest.pos}-${shortest.ref}-${shortest.alt}`
+        let variantTokens = shortestVariant.split("-")
 
         // gnomAD, myvariant.info and the precomputed score tables all index the left-aligned
-        // spelling of a variant, while the page deliberately scores whichever equivalent spelling
-        // was typed. Only an indel can be written more than one way, so only an indel waits here for
-        // the consequence lookup to supply the left-aligned spelling; an SNV is already canonical
-        // and its queries start immediately. Only on hg38: consequencesFrom never fills in
-        // normalizedVariant for hg19, so an hg19 indel would wait for nothing. The SpliceAI and
-        // Pangolin calls never wait either way: they are already in flight by the time this runs.
+        // spelling of a variant, which for an indel inside a repeat can differ from the trimmed
+        // spelling the services score. Only an indel can be written more than one way, so only an
+        // indel waits here for the consequence lookup to supply the left-aligned spelling; an SNV is
+        // already canonical and its queries start immediately. Only on hg38: consequencesFrom never
+        // fills in normalizedVariant for hg19, so an hg19 indel would wait for nothing. The SpliceAI
+        // and Pangolin calls never wait either way: they are already in flight by the time this runs.
         let leftAlignedVariant = null
         if (consequencesPromise && genomeVersion == "38"
-                && ((variantTokens[2] || "").length > 1 || (variantTokens[3] || "").length > 1)) {
+                && (variantTokens[2].length > 1 || variantTokens[3].length > 1)) {
             const resolvedConsequences = await consequencesPromise
             if (resolvedConsequences && resolvedConsequences.normalizedVariant
-                    && resolvedConsequences.normalizedVariant != normalizedVariant) {
+                    && resolvedConsequences.normalizedVariant != shortestVariant) {
                 console.log(`Querying the score lookups with the left-aligned `
-                    + `${resolvedConsequences.normalizedVariant} rather than ${normalizedVariant}`)
+                    + `${resolvedConsequences.normalizedVariant} rather than ${shortestVariant}`)
                 leftAlignedVariant = resolvedConsequences.normalizedVariant
                 variantTokens = leftAlignedVariant.split("-")
             }
@@ -3640,7 +3679,7 @@
 
         $(`#other-predictors-header`).nextAll().remove()
         let firstColumn = buildVariantCellHtml(
-            variant, normalizedVariant, genomeVersion, Object.keys(otherPredictorScores).length, "eight wide column")
+            variant, shortestVariant, genomeVersion, Object.keys(otherPredictorScores).length, "eight wide column")
 
 
         const tableRows = []
@@ -4455,9 +4494,9 @@
                 }
                 fillInTranscriptConsequences(consequence, consequencesByTranscriptId)
 
-                // The links were built from the spelling that was typed, which for an indel can be
-                // one gnomAD and GeneBe don't index. Now that the left-aligned spelling is known,
-                // point them at it instead.
+                // The links were built from the trimmed spelling the services score, which for an
+                // indel inside a repeat can be one gnomAD and GeneBe don't index. Now that the
+                // left-aligned spelling is known, point them at it instead.
                 if (leftAlignedVariant && leftAlignedVariant != normalizedVariant) {
                     pointVariantLinksAtNormalizedSpelling(leftAlignedVariant, genomeVersion)
                 }

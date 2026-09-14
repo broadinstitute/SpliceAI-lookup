@@ -278,6 +278,45 @@ def check_model_context_window(chrom, pos, ref_length, distance, genome_version)
     return None
 
 
+def check_ref_allele_fits_window(ref, alt, distance):
+    """Check that the bases a variant replaces fit inside the window being scored.
+
+    The model reports one score per position from `distance` bases before the variant to `distance`
+    bases after it. Alleles of the same length are scored position by position, so any length fits,
+    but when the lengths differ the changed bases have to be collapsed onto the REF positions, and a
+    REF that reaches past the end of the window has nothing to collapse there. SpliceAI skips those
+    records, and without this check the empty result that comes back is reported as the variant
+    missing GENCODE's genes, which names the wrong cause.
+
+    This mirrors span_fits_in_output_window in the SpliceAI fork (spliceai/score_alignment.py), which
+    decides the same thing for the model. server.py can't import it: this same file also runs in the
+    Pangolin image, which has no spliceai package.
+
+    Args:
+        ref (str): REF allele
+        alt (str): ALT allele
+        distance (int): the request's "distance" parameter
+
+    Return:
+        str: an error message naming the real limit, or None when the REF fits
+    """
+    trimmed_pos, trimmed_ref, trimmed_alt = trim_shared_bases(0, ref, alt)
+    if len(trimmed_ref) == len(trimmed_alt):
+        return None
+
+    if trimmed_pos + len(trimmed_ref) <= distance + 1:
+        return None
+
+    retry_distance = len(ref) - 1
+    if retry_distance <= MAX_DISTANCE_LIMIT:
+        return (f"This variant's REF allele is {len(ref):,d} bases long, so it reaches past the "
+                f"{distance:,d} bases on either side of it that are being scored. "
+                f"Retry with distance={retry_distance} or more.")
+
+    return (f"This variant's REF allele is {len(ref):,d} bases long, so it reaches past the "
+            f"{MAX_DISTANCE_LIMIT:,d} bases on either side of a variant that can be scored.")
+
+
 def check_ref_allele(chrom, pos, ref, genome_version):
     """Check the variant's REF allele against the reference genome.
 
@@ -619,6 +658,66 @@ def parse_position(position_str):
         raise ValueError(f"Unable to parse position: {position_str}")
 
     return match['chrom'], int(match['pos'])
+
+
+def trim_shared_bases(pos, ref, alt):
+    """Trim the bases a variant's REF and ALT alleles share, giving its shortest spelling.
+
+    Bases shared at the end are dropped first, then bases shared at the start, and each allele always
+    keeps at least one base, so an insertion or deletion keeps its anchor base the way VCF writes it.
+    Dropping a leading base moves the position one base to the right; the variant is never shifted
+    through a repeat. For example 1-55057513-TG-TA trims to 1-55057514-G-A, and 1-55057512-CTG-CT to
+    1-55057513-TG-T. The SpliceAI fork trims the same way before it lines up ALT scores with REF
+    positions (bw2/SpliceAI spliceai/score_alignment.py), as does trimSharedBases in index.html.
+
+    Args:
+        pos (int): 1-based position of the variant
+        ref (str): REF allele
+        alt (str): ALT allele
+
+    Return:
+        tuple: (pos, ref, alt) of the shortest spelling
+    """
+    while len(ref) > 1 and len(alt) > 1 and ref[-1] == alt[-1]:
+        ref, alt = ref[:-1], alt[:-1]
+    while len(ref) > 1 and len(alt) > 1 and ref[0] == alt[0]:
+        pos, ref, alt = pos + 1, ref[1:], alt[1:]
+    return pos, ref, alt
+
+
+def get_spelling_to_score(chrom, pos, ref, alt, genome_version):
+    """Pick the spelling of a variant to score: its shortest one, unless its REF allele is wrong.
+
+    Scoring the shortest spelling gives every equivalent spelling of a variant the same scores. Otherwise
+    SpliceAI's scores for REF and ALT alleles that are both longer than one base depended on how many
+    unchanged bases were typed around the change
+    (https://github.com/broadinstitute/SpliceAI-lookup/issues/137), and Pangolin rejects such alleles
+    outright.
+
+    The caller re-spells the variant for its cache key only when trimming changed something, and then
+    without a "chr" prefix, the way the page sends variants. So a spelling that needed no trimming, typed
+    as chr1-55057514-G-A, keeps a cache entry of its own, as spellings that differ only in notation always
+    have. The scores are the same either way.
+
+    Trimming drops the unchanged bases without reading them, and the REF check that get_spliceai_scores
+    and get_pangolin_scores run would then see only what was left, so a wrong unchanged base would go
+    unreported. The full REF is checked here first instead, and a variant whose REF doesn't match is
+    returned as given, for that later check to report in the usual way.
+
+    Args:
+        chrom (str): chromosome name, with or without a "chr" prefix
+        pos (int): 1-based position of the variant
+        ref (str): REF allele
+        alt (str): ALT allele
+        genome_version (str): "37" or "38"
+
+    Return:
+        tuple: (pos, ref, alt) to score
+    """
+    shortest_spelling = trim_shared_bases(pos, ref, alt)
+    if shortest_spelling != (pos, ref, alt) and check_ref_allele(chrom, pos, ref, genome_version):
+        return pos, ref, alt
+    return shortest_spelling
 
 
 def _env_flag(name, default=False):
@@ -1209,6 +1308,18 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
             "inputError": True,
         }
 
+    # Must run before get_delta_scores too: it skips a variant whose REF reaches past the scored window,
+    # and the empty result that comes back would otherwise be reported as a missing gene annotation.
+    # Deliberately not an inputError: Pangolin has no such limit and answers these variants, and the page
+    # shows an inputError on its own in place of both tools' tables.
+    ref_window_error = check_ref_allele_fits_window(ref, alt, distance_param)
+    if ref_window_error:
+        return {
+            "variant": variant,
+            "source": "spliceai",
+            "error": ref_window_error,
+        }
+
     # Must run before get_delta_scores: a window that underruns the contig segfaults the worker.
     context_window_error = check_model_context_window(chrom, pos, len(ref), distance_param, genome_version)
     if context_window_error:
@@ -1549,13 +1660,6 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
             "error": str(e),
         }
 
-    if len(ref) > 1 and len(alt) > 1:
-        return {
-            "variant": variant,
-            "source": "pangolin",
-            "error": f"Pangolin does not currently support complex InDels like {chrom}-{pos}-{ref}-{alt}",
-        }
-
     # See the matching comment in get_spliceai_scores: a wrong REF scores as silence otherwise.
     ref_allele_error = check_ref_allele(chrom, pos, ref, genome_version)
     if ref_allele_error:
@@ -1565,6 +1669,15 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
             "error": ref_allele_error,
             # see the matching comment in get_spliceai_scores
             "inputError": True,
+        }
+
+    # Checked after the REF so that a wrong REF is reported as one. That includes a variant padded with
+    # unchanged bases, which get_spelling_to_score leaves untrimmed when its REF doesn't match.
+    if len(ref) > 1 and len(alt) > 1:
+        return {
+            "variant": variant,
+            "source": "pangolin",
+            "error": f"Pangolin does not currently support complex InDels like {chrom}-{pos}-{ref}-{alt}",
         }
 
     # See the matching comment in get_spliceai_scores. Pangolin reads the FASTA before it checks
@@ -1931,7 +2044,7 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
         return error_response(f'Invalid "distance": "{distance_param}". The value must be non-negative.\n', source=tool_name)
 
     if distance_param > MAX_DISTANCE_LIMIT:
-        return error_response(f'Invalid "distance": "{distance_param}". The value must be < {MAX_DISTANCE_LIMIT}.\n', source=tool_name)
+        return error_response(f'Invalid "distance": "{distance_param}". The value must be at most {MAX_DISTANCE_LIMIT}.\n', source=tool_name)
 
     mask_param = params.get("mask", str(DEFAULT_MASK))
     if mask_param not in ("0", "1"):
@@ -2024,6 +2137,18 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
     # immediately once the models are cached; it stays as a guard for direct callers.) That the
     # gene set is fixed at startup is also why a request for the other one is redirected above
     # rather than served: nothing is loaded here that could answer it.
+
+    # Score the variant's shortest spelling, and look it up in the cache under that spelling, so every
+    # equivalent spelling of it gets the same scores (see get_spelling_to_score). The response still
+    # echoes the requested spelling in "variant", while its "pos", "ref" and "alt" name the spelling that
+    # was scored, which the positions in the scores are measured from.
+    requested_variant = variant
+    if not is_position_only:
+        chrom, pos, ref, alt = parse_variant(variant)
+        scored_pos, scored_ref, scored_alt = get_spelling_to_score(chrom, pos, ref, alt, genome_version)
+        if (scored_pos, scored_ref, scored_alt) != (pos, ref, alt):
+            variant = f"{chrom}-{scored_pos}-{scored_ref}-{scored_alt}"
+            print(f"{logging_prefix}: scoring {requested_variant} as its shortest spelling, {variant}", flush=True)
 
     # check cache before processing the variant (short DB scope)
     results = {}
@@ -2119,6 +2244,9 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
     if is_position_only:
         response_json.pop("mask", None)
     response_json.update(results)
+    # results names the spelling that was scored, which is shorter than the requested one when the
+    # request had unchanged bases to trim (see the get_spelling_to_score call above)
+    response_json["variant"] = requested_variant
 
     response_log_string = ", ".join([f"{k}: {v}" for k, v in response_json.items() if not k.startswith("allNonZeroScores")])
     print(f"{logging_prefix}: {variant} response took {str(datetime.now() - start_time)}: {response_log_string}", flush=True)

@@ -32,7 +32,7 @@ or to get Pangolin scores while also setting the `distance` and `mask` parameter
 
 Parameter descriptions:  
 
-- **variant** (required) a variant in the format "chrom-pos-ref-alt"  
+- **variant** (required) a variant in the format "chrom-pos-ref-alt". Bases that REF and ALT share are trimmed off before scoring, so `chr1-55057513-TG-TA` is scored as `1-55057514-G-A`. The response echoes the requested variant in `variant`, while its `pos`, `ref` and `alt` give the spelling that was scored, which the delta score positions are measured from.  
 - **hg** (required) can be 37 or 38  
 - **distance** (optional) distance parameter of SpliceAI model (default: 50)   
 - **mask** (optional) can be 0 which means raw scores or 1 which means masked scores (default: 0). 

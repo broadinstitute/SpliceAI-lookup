@@ -18,9 +18,11 @@ Note on the first run after a model re-pin: the pinned model commit is part of t
 response cache key (MODEL_COMMIT in server.py), so re-pinning retires every cached
 entry and each of these queries recomputes instead of being served from cache. A
 computed request counts against the per-IP rate limit and a cached one does not, so
-that first run costs up to 76 computed requests against a budget of 150 per 7 minutes.
-It fits, and it also repopulates what it recomputed, so a later identical run is served
-from cache and costs nothing again.
+that first run costs 80 computed requests against a budget of 150 per 7 minutes: 76
+for the recorded variants and 4 for TestEquivalentSpellings, whose padded spellings are
+then served from the cache entries their shortest spellings just filled (up to 86 when a
+result can't be cached). It fits, and it also repopulates what it recomputed, so a later
+identical run is served from cache and costs nothing again.
 """
 
 import json
@@ -77,12 +79,13 @@ CAPTURABLE_ERROR_MARKERS = (
 # within 7 minutes (exceeds_rate_limit in server.py). A capture on its own is 38 variants x 2
 # tools = 76 requests, which cannot reach 150 however it is paced, so the delay is not what
 # makes a lone capture safe. What it protects is a capture started right after a full test run
-# from the same IP, where that run's own 76 requests are still inside the window and 76 + 76 =
-# 152 would trip the limit. At this spacing the capture issues at most 420/6 = 70 requests
-# inside any 7-minute window, so the worst case is 76 + 70 = 146 and the test run's burst ages
-# out before the limit is reached. Three seconds, the previous value, left 140 in the window
-# and did not.
-CAPTURE_DELAY_SECONDS = 6
+# from the same IP, where that run's own requests are still inside the window: 80, or up to 86
+# when a result can't be cached (see the note at the top), and 86 + 76 = 162 would trip the
+# limit. At this spacing the capture issues at most 420/7 = 60 requests inside any 7-minute
+# window, so the worst case is 86 + 60 = 146 and the test run's burst ages out before the limit
+# is reached. Six seconds allowed 70, which reached the limit once TestEquivalentSpellings
+# brought a test run to 80 (80 + 70 = 150), and three seconds allowed 140.
+CAPTURE_DELAY_SECONDS = 7
 
 
 def scores_match(actual, expected):
@@ -390,6 +393,38 @@ class TestAPIConsistency(unittest.TestCase):
                 f"{key}: {sk} mismatch: got {actual[sk]}, expected {expected[sk]} "
                 f"(differs by {abs(actual[sk] - expected[sk]):.3f}, tolerance {SCORE_TOLERANCE})",
             )
+
+
+# (shortest spelling, spellings of the same variant padded with unchanged bases, hg). The padded
+# spellings used to get different SpliceAI scores (https://github.com/broadinstitute/SpliceAI-lookup/issues/137)
+# and were rejected by Pangolin.
+EQUIVALENT_SPELLINGS = [
+    ("1-55057514-G-A",  ("1-55057513-TG-TA", "1-55057511-GCTG-GCTA"), "38"),  # PCSK9 exon 7 donor SNV
+    ("1-55057513-TG-T", ("1-55057512-CTG-CT",),                       "38"),  # the same donor base deleted
+]
+
+
+class TestEquivalentSpellings(unittest.TestCase):
+    """Verify that a variant padded with unchanged bases scores exactly like its shortest spelling.
+
+    Needs no baseline: the shortest spelling's own response is what the padded ones are compared to.
+    """
+
+    def test_padded_spellings_score_like_the_shortest_spelling(self):
+        for shortest, padded_spellings, hg in EQUIVALENT_SPELLINGS:
+            for tool in ("spliceai", "pangolin"):
+                expected = query_api(tool, hg, shortest)
+                self.assertNotIn("error", expected, f"API error for {shortest}: {expected.get('error')}")
+                for padded in padded_spellings:
+                    with self.subTest(tool=tool, variant=padded):
+                        response = query_api(tool, hg, padded)
+                        self.assertNotIn("error", response, f"API error for {padded}: {response.get('error')}")
+                        self.assertEqual(response["variant"], padded, "the requested spelling is echoed")
+                        self.assertEqual(
+                            (response["pos"], response["ref"], response["alt"]),
+                            (expected["pos"], expected["ref"], expected["alt"]),
+                            "the shortest spelling is the one scored")
+                        self.assertEqual(response["scores"], expected["scores"])
 
 
 # Dynamically generate one test method per (variant, hg, tool) combination.
