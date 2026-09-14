@@ -1,0 +1,7 @@
+# Not needed in the deployed function: the build installs dependencies from package-lock.json
+.gcloudignore
+.gitignore
+node_modules/
+*.test.js
+deploy.py
+README.md

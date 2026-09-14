@@ -1,0 +1,4 @@
+node_modules/
+# The repository root ignores *.json*, but the function needs these to build
+!package.json
+!package-lock.json

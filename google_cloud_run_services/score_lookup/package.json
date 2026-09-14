@@ -1,0 +1,19 @@
+{
+  "name": "score-lookup",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloud Run function that returns AlphaMissense, PrimateAI-3D, PromoterAI, and AlphaGenome AVI scores for one variant",
+  "type": "module",
+  "main": "index.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "functions-framework --target=scoreLookup",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@gmod/tabix": "3.8.2",
+    "@google-cloud/functions-framework": "5.0.5"
+  }
+}
