@@ -32,7 +32,7 @@ class FakeAnnotator:
 
 
 def normalise_chrom(source, target):
-    """Verbatim copy of spliceai.utils.normalise_chrom (pinned fork 7f36ca84).
+    """Verbatim copy of spliceai.utils.normalise_chrom (pinned fork 5c0bd57).
 
     Copied rather than imported because the spliceai package only exists inside the containers.
     The tests below use it to assert the end-to-end property that actually matters: that ONE
