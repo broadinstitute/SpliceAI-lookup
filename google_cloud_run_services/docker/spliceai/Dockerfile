@@ -1,13 +1,19 @@
 FROM python:3.9-slim-bullseye
 
-# 2026-09-14: deb.debian.org published a bullseye-security index naming package versions its Fastly
-# nodes did not actually hold, so apt-get install 404'd on libc6-dev, libcurl4, libcurl4-openssl-dev,
-# liblzma-dev, libperl5.32 and libexpat1, and all four images failed to build from two different nodes.
-# Only the security suite was affected; the bullseye main archive was fine. cloudfront.debian.net is
-# Debian's other official mirror alias, on a separate CDN, and serves the same index (byte-identical
-# Packages.gz) with those pool files present. security.debian.org is NOT a fix: it publishes the same
-# index and returns 404 for the same libc6-dev. Drop this line once deb.debian.org has reconciled.
-RUN sed -i 's|http://deb.debian.org/debian-security|http://cloudfront.debian.net/debian-security|g' /etc/apt/sources.list
+# 2026-09-14: Debian is republishing the bullseye-security pool, so its published indexes name .deb
+# files the mirrors do not yet hold and every apt-get install 404s. This is not one bad mirror:
+# deb.debian.org and cloudfront.debian.net each 404 on a DIFFERENT subset, the failing subset shifts
+# within the hour, and security.debian.org serves the same index and 404s too. Only the security suite
+# is affected; the bullseye main archive is consistent, so it stays on deb.debian.org.
+#
+# snapshot.debian.org serves a point-in-time archive whose index and pool always agree, and all nine
+# packages that failed here resolve there. check-valid-until=no is required because a snapshot serves
+# the Release it had on that date, and this one's Valid-Until lapsed on 2026-09-07.
+#
+# TEMPORARY: this also freezes security updates at 2026-09-01, and snapshot.debian.org is rate-limited
+# and slower, so revert to deb.debian.org once the pool has settled. Bullseye is oldoldstable now, so
+# expect this to recur until the base image moves to a supported release.
+RUN sed -i 's|^deb .*debian-security.*|deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20260901T000000Z bullseye-security main|' /etc/apt/sources.list
 
 RUN apt update && apt-get install --no-install-recommends -y \
     ca-certificates \

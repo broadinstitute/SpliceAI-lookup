@@ -1,10 +1,11 @@
 FROM python:3.9-slim-bullseye
 
-# See the matching comment in docker/spliceai/Dockerfile: deb.debian.org served a bullseye-security
-# index whose pool objects were missing, 404ing every apt-get install on 2026-09-14. This points the
-# security suite at Debian's other official mirror alias, which serves the same index with the files
-# present. Drop this line once deb.debian.org has reconciled.
-RUN sed -i 's|http://deb.debian.org/debian-security|http://cloudfront.debian.net/debian-security|g' /etc/apt/sources.list
+# See the matching comment in docker/spliceai/Dockerfile: on 2026-09-14 Debian was republishing the
+# bullseye-security pool, so its indexes named .deb files no mirror held yet and every apt-get install
+# 404'd. This pins the security suite to a point-in-time snapshot, whose index and pool agree.
+# TEMPORARY: it freezes security updates at 2026-09-01, so revert to deb.debian.org once the pool has
+# settled. The main archive is consistent and deliberately left on deb.debian.org.
+RUN sed -i 's|^deb .*debian-security.*|deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20260901T000000Z bullseye-security main|' /etc/apt/sources.list
 
 RUN apt update && apt-get install --no-install-recommends -y \
     ca-certificates \
