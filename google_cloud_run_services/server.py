@@ -317,6 +317,36 @@ def check_ref_allele_fits_window(ref, alt, distance):
             f"{MAX_DISTANCE_LIMIT:,d} bases on either side of a variant that can be scored.")
 
 
+def check_ref_allele_fits_pangolin_window(ref, distance):
+    """Check a variant's REF allele against the limit Pangolin sets on its own length.
+
+    Pangolin scores a window that extends `distance` bases past the end of the REF allele, so the bases
+    a variant changes always fall inside it, and unlike SpliceAI it needs no check that they fit. It does
+    refuse a REF longer than twice the distance ("Deletion too large" in process_variant), which reaches
+    the caller as an empty result and is reported as the model simply having no scores, naming no cause.
+
+    Args:
+        ref (str): REF allele
+        distance (int): the request's "distance" parameter
+
+    Return:
+        str: an error message naming the real limit, or None when the REF is short enough
+    """
+    if len(ref) <= 2 * distance:
+        return None
+
+    # Pangolin takes a REF of exactly twice the distance, so half its length, rounded up, is the
+    # smallest distance that works.
+    retry_distance = (len(ref) + 1) // 2
+    if retry_distance <= MAX_DISTANCE_LIMIT:
+        return (f"This variant's REF allele is {len(ref):,d} bases long, which is more than twice the "
+                f"{distance:,d} bases on either side of it that are being scored. "
+                f"Retry with distance={retry_distance} or more.")
+
+    return (f"This variant's REF allele is {len(ref):,d} bases long, which is more than twice the "
+            f"{MAX_DISTANCE_LIMIT:,d} bases on either side of a variant that can be scored.")
+
+
 def check_ref_allele(chrom, pos, ref, genome_version):
     """Check the variant's REF allele against the reference genome.
 
@@ -691,8 +721,8 @@ def get_spelling_to_score(chrom, pos, ref, alt, genome_version):
     Scoring the shortest spelling gives every equivalent spelling of a variant the same scores. Otherwise
     SpliceAI's scores for REF and ALT alleles that are both longer than one base depended on how many
     unchanged bases were typed around the change
-    (https://github.com/broadinstitute/SpliceAI-lookup/issues/137), and Pangolin rejects such alleles
-    outright.
+    (https://github.com/broadinstitute/SpliceAI-lookup/issues/137), and Pangolin rejected such alleles
+    outright until its pinned fork learned to line their scores up.
 
     The caller re-spells the variant for its cache key only when trimming changed something, and then
     without a "chr" prefix, the way the page sends variants. So a spelling that needed no trimming, typed
@@ -1673,11 +1703,16 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
 
     # Checked after the REF so that a wrong REF is reported as one. That includes a variant padded with
     # unchanged bases, which get_spelling_to_score leaves untrimmed when its REF doesn't match.
-    if len(ref) > 1 and len(alt) > 1:
+    #
+    # Alleles that are both longer than one base were rejected here as "complex InDels" until the
+    # pinned Pangolin fork learned to line their scores up (pangolin/score_alignment.py). What is left
+    # is Pangolin's own limit on how long a REF allele it will score.
+    ref_window_error = check_ref_allele_fits_pangolin_window(ref, distance_param)
+    if ref_window_error:
         return {
             "variant": variant,
             "source": "pangolin",
-            "error": f"Pangolin does not currently support complex InDels like {chrom}-{pos}-{ref}-{alt}",
+            "error": ref_window_error,
         }
 
     # See the matching comment in get_spliceai_scores. Pangolin reads the FASTA before it checks
