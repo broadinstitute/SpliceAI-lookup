@@ -419,11 +419,11 @@
                                             </span>
                                         </td>
                                     </tr>
-                                    <tr style="display:none;" class="more-details2"><td><a href="#variant=8%3A140300616%20T%3EG&hg=38&bc=basic&distance=500&mask=0&ra=0">8:140300616 T&gt;G</a></td><td>'chr' <i>prefix is optional</i></td></tr>
-                                    <tr style="display:none;" class="more-details2"><td><a href="#variant=1%3A930130%3AC%3AG&hg=38&bc=basic&distance=500&mask=0&ra=0">1:930130:C:G</a></td><td><i>position with overlapping genes</i></td></tr>
-                                    <tr style="display:none;" class="more-details2"><td><a href="#variant=1-1042601-A-AGAGAG&hg=38&bc=basic&distance=500&mask=0&ra=0">1-1042601-A-AGAGAG</a></td><td><i>insertion of GAGAG</i></td></tr>
-                                    <tr style="display:none;" class="more-details2"><td><a href="#variant=1-1042466-GGGC-G&hg=38&bc=basic&distance=500&mask=0&ra=0">1-1042466-GGGC-G</a></td><td><i>deletion of GGC</i></td></tr>
-                                    <tr style="display:none;" class="more-details2"><td><a href="#variant=NM_000249.4(MLH1)%3Ac.116G%3EA&hg=38&bc=basic&distance=500&mask=0&ra=0">NM_000249.4(MLH1):c.116G>A</a></td><td><i>another HGVS example</i></td></tr>
+                                    <tr style="display:none;" class="more-details2"><td><a href="#variant=8%3A140300616%20T%3EG&hg=38&bc=basic&distance=500&mask=0&ra=0">8:140300616 T&gt;G</a></td><td></td></tr>
+                                    <tr style="display:none;" class="more-details2"><td><a href="#variant=1%3A930130%3AC%3AG&hg=38&bc=basic&distance=500&mask=0&ra=0">1:930130:C:G</a></td><td></td></tr>
+                                    <tr style="display:none;" class="more-details2"><td><a href="#variant=1-1042601-A-AGAGAG&hg=38&bc=basic&distance=500&mask=0&ra=0">1-1042601-A-AGAGAG</a></td><td></td></tr>
+                                    <tr style="display:none;" class="more-details2"><td><a href="#variant=1-1042466-GGGC-G&hg=38&bc=basic&distance=500&mask=0&ra=0">1-1042466-GGGC-G</a></td><td></td></tr>
+                                    <tr style="display:none;" class="more-details2"><td><a href="#variant=NM_000249.4(MLH1)%3Ac.116G%3EA&hg=38&bc=basic&distance=500&mask=0&ra=0">NM_000249.4(MLH1):c.116G>A</a></td><td></td></tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -1103,7 +1103,7 @@
     }
 
     const helpTextForPredictorScores = {
-        "alphagenome_avi": (record) => `<a href='https://storage.googleapis.com/deepmind-media/DeepMind.com/Blog/alphagenome-atlas-a-predictive-map-of-every-possible-dna-letter-change-in-the-human-genome/alphagenome-atlas.pdf' target='_blank'>AlphaGenome Variant Impact (AVI)</a> &nbsp; scores combine AlphaGenome regulatory predictions with AlphaMissense, protein-truncation annotations, and conservation to score both coding and non-coding SNVs. The PHRED score ranks the raw score against all possible hg38 SNVs: 10 is the top 10%, 20 the top 1%, and 30 the top 0.1%. The authors do not define a pathogenicity threshold, and recommend ranking variants rather than applying a fixed cutoff. Precomputed AVI scores are only available for hg38, and are provided by Google DeepMind for research use only.`,
+        "alphagenome_avi": (record) => `<a href='https://storage.googleapis.com/deepmind-media/DeepMind.com/Blog/alphagenome-atlas-a-predictive-map-of-every-possible-dna-letter-change-in-the-human-genome/alphagenome-atlas.pdf' target='_blank'>AlphaGenome Variant Impact (AVI)</a> scores combine AlphaGenome regulatory predictions with AlphaMissense, protein-truncation annotations, and conservation to score both coding and non-coding SNVs. The PHRED score ranks the raw score against all possible hg38 SNVs: 10 is the top 10%, 20 the top 1%, and 30 the top 0.1%. The authors do not define a pathogenicity threshold, and recommend ranking variants rather than applying a fixed cutoff. Precomputed AVI scores are only available for hg38, and are provided by Google DeepMind for research use only.`,
         "primateai3d": (record) => `<a href='https://www.ncbi.nlm.nih.gov/pmc/articles/PMC10187174/' target='_blank'>PrimateAI-3D</a> gene-specific thresholds are provided by the authors. Values above the threshold are shown with a red background to indicate a 'likely deleterious' prediction.`,
         "promoterai": (record) => `<a href='https://www.science.org/doi/10.1126/science.ads7373' target='_blank'>PromoterAI</a>  &nbsp; <a href='https://github.com/Illumina/PromoterAI' target='_blank'><i class='github square icon'></i></a> &nbsp; scores range from -1 to 1 with 0 meaning no activity. Negative values represent under-expression and positive values represent over-expression. A threshold of +/-0.1 is used for high sensitivity, and +/-0.5 for high precision.`,
         "cadd": (record) => computeHelpTextForPredictorScores("cadd", record),
