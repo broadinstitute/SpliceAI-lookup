@@ -6,7 +6,7 @@ Loops forever, printing every --interval minutes (default 30):
   - response-code totals (2xx/3xx/4xx/5xx)
   - CPU and memory utilization (p95/p99)
   - instance count against each service's max-instances ceiling
-  - request latency (p50/p95/p99) with sample counts
+  - request latency (p50/p95/p99) of 200 responses, with sample counts
   - GeneBe and Ensembl VEP API latency, measured by probing them directly (see probe_external_apis)
   - container cold-start count and startup latency (p50/p95/p99)
   - Cloud SQL health: CPU/memory/disk utilization and connection count vs max_connections,
@@ -1252,15 +1252,14 @@ def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params
     print()
 
     lat_metric = "run.googleapis.com/request_latencies"
-    # Drop the uptime probes here too, for the same reason the response-code table drops them:
-    # each scoring service takes roughly 1,700 a day, which on the quiet comprehensive services
-    # is more than their entire real traffic, and a probe returns without doing any scoring work.
-    # Left in, the p50 would describe the probe rather than the requests this table is read for.
-    # The statuses come from the same live check configs (see uptime_check_accepted_codes); the
-    # filter is one query for every service, so it is the union rather than each service's own
-    # status -- harmless while every scoring check accepts the same one.
-    probe_codes = sorted({code for codes in accepted.values() for code in codes})
-    lat_filter = " AND ".join(f'metric.label.response_code != "{code}"' for code in probe_codes)
+    # Only 200s, since everything else returns in ~10ms without doing any scoring work: the uptime
+    # probes' 400s, and a security scanner (TsunamiSecurityScanner) that sends every service the
+    # same ~500 redirects, 404s and 405s every 2 hours. On the quiet comprehensive services that
+    # is nearly all of their traffic, and left in, the p50 would describe those requests rather
+    # than the scoring requests this table is read for. The metric has no path label, so 200s
+    # from pings to / (the same scanner, third-party status pages) are still counted and still
+    # pull the p50 down.
+    lat_filter = 'metric.label.response_code = "200"'
     lat = percentiles(client, lat_metric, start, now, revisions=prod_revs, extra_filter=lat_filter)
     lat_n = sample_count(client, lat_metric, start, now, revisions=prod_revs, extra_filter=lat_filter)
     if args.baseline_end:
@@ -1269,12 +1268,12 @@ def snapshot(client, args, bq_client=None, billing_table=None, db_connect_params
         # Baseline window predates current revisions; query unfiltered to capture pre-deploy traffic.
         baseline_lat = percentiles(client, lat_metric, baseline_start, baseline_end,
                                    extra_filter=lat_filter)
-        print_section_header("Latency (p50/p95/p99 in s)",
+        print_section_header("Latency of 200 responses (p50/p95/p99 in s)",
                              f"{window_label} vs a {args.baseline_days:g}d baseline "
                              f"ending {args.baseline_end}")
     else:
         baseline_lat = None
-        print_section_header("Latency (p50/p95/p99 in s)", window_label)
+        print_section_header("Latency of 200 responses (p50/p95/p99 in s)", window_label)
 
     rows = [["service", "n", "p50", "p95", "p99"]]
     for svc in SERVICES:
