@@ -204,80 +204,6 @@ def resolve_fasta_sequence_name(fasta, chrom):
     return next((name for name in candidate_names if name in fasta), None)
 
 
-# Bases of sequence context both models read on each side of a variant, on top of the `distance`
-# the request asks for. Both slice that window straight out of pyfastx with no bounds check of
-# their own: spliceai's get_delta_scores and get_reference_scores do
-# ref_fasta[chrom][pos-wid//2-1 : pos+wid//2] where wid//2 == MODEL_FLANK_SIZE+distance, and
-# pangolin's process_variant and process_position do fasta[chrom][pos-5001-distance : ...].
-# Same start index either way, which is why one check covers both tools.
-MODEL_FLANK_SIZE = 5000
-
-
-def check_model_context_window(chrom, pos, ref_length, distance, genome_version):
-    """Check that the reference has enough sequence around `pos` for the models to read.
-
-    Returns an error message naming what is missing, or None when the window fits and scoring
-    should go ahead.
-
-    The start check exists because a window that runs off the *beginning* of a contig makes both
-    tools slice pyfastx with a negative start index, and pyfastx answers that by segfaulting --
-    killing the gunicorn worker and turning the request into a 503 rather than any kind of error
-    response. Every mitochondrial variant in a gene did this at the default distance (chrM's
-    genes start at 576, well inside the 5,500-base window), as did chr1's DDX11L1/WASH7P at
-    distance=10000. So unlike check_ref_allele this half deliberately does NOT fail open: it is
-    pure arithmetic on `pos` and `distance` and never consults the FASTA, because a FASTA that
-    failed to open must not turn the guard off and hand the crash back.
-
-    The end check is the mirror image and is only a message improvement: an over-long window is
-    answered by a short read rather than a signal, which SpliceAI already turns into "no scores"
-    (blaming GENCODE coverage, which sends users looking in the wrong place) and Pangolin into a
-    500. It needs the contig length, so it fails open like check_ref_allele when the FASTA or the
-    contig is unavailable.
-
-    Args:
-        chrom (str): chromosome name, with or without a "chr" prefix
-        pos (int): 1-based position of the variant
-        ref_length (int): length of the REF allele; 1 for a position-only query
-        distance (int): the request's "distance" parameter
-        genome_version (str): "37" or "38"
-    """
-    flank = MODEL_FLANK_SIZE + distance
-
-    if pos - flank - 1 < 0:
-        message = (f"{chrom}-{pos} is only {pos - 1:,}bp from the start of {chrom}, but SpliceAI and "
-                   f"Pangolin both read {flank:,}bp of sequence on each side of a variant "
-                   f"({MODEL_FLANK_SIZE:,}bp plus the distance setting of {distance:,}bp).")
-        # A smaller distance only helps once the position clears the fixed flank on its own.
-        if pos > MODEL_FLANK_SIZE:
-            return message + f" Retry with distance={pos - MODEL_FLANK_SIZE - 1} or less."
-        return message + (f" No distance setting is small enough, since {MODEL_FLANK_SIZE:,}bp of "
-                          f"context is required regardless of distance.")
-
-    fasta = _get_fasta(genome_version)
-    if fasta is None:
-        return None
-
-    sequence_name = resolve_fasta_sequence_name(fasta, chrom)
-    if sequence_name is None:
-        return None
-
-    # Pangolin's process_variant reads to pos+len(ref)+4999+distance, one base further than
-    # SpliceAI for every REF longer than a single base. Check the wider of the two.
-    contig_length = len(fasta[sequence_name])
-    bases_after = contig_length - pos
-    if pos + ref_length + flank - 1 > contig_length:
-        message = (f"{chrom}-{pos} is only {bases_after:,}bp from the end of {chrom}, but SpliceAI and "
-                   f"Pangolin both read {flank:,}bp of sequence on each side of a variant "
-                   f"({MODEL_FLANK_SIZE:,}bp plus the distance setting of {distance:,}bp).")
-        max_distance = bases_after - ref_length + 1 - MODEL_FLANK_SIZE
-        if max_distance >= 0:
-            return message + f" Retry with distance={max_distance} or less."
-        return message + (f" No distance setting is small enough, since {MODEL_FLANK_SIZE:,}bp of "
-                          f"context is required regardless of distance.")
-
-    return None
-
-
 def check_ref_allele_fits_window(ref, alt, distance):
     """Check that the bases a variant replaces fit inside the window being scored.
 
@@ -307,11 +233,14 @@ def check_ref_allele_fits_window(ref, alt, distance):
     if trimmed_pos + len(trimmed_ref) <= distance + 1:
         return None
 
-    retry_distance = len(ref) - 1
+    # The smallest distance SpliceAI accepts: the check above is measured on the trimmed spelling,
+    # but get_delta_scores also skips any record whose full REF is longer than twice the distance
+    # ("ref too long"), so a long REF whose ALT shares its trailing bases is bound by the latter.
+    retry_distance = max(trimmed_pos + len(trimmed_ref) - 1, (len(ref) + 1) // 2)
     if retry_distance <= MAX_DISTANCE_LIMIT:
         return (f"This variant's REF allele is {len(ref):,d} bases long, so it reaches past the "
                 f"{distance:,d} bases on either side of it that are being scored. "
-                f"Retry with distance={retry_distance} or more.")
+                f"Retry with 'Max distance' set to {retry_distance} or more.")
 
     return (f"This variant's REF allele is {len(ref):,d} bases long, so it reaches past the "
             f"{MAX_DISTANCE_LIMIT:,d} bases on either side of a variant that can be scored.")
@@ -341,7 +270,7 @@ def check_ref_allele_fits_pangolin_window(ref, distance):
     if retry_distance <= MAX_DISTANCE_LIMIT:
         return (f"This variant's REF allele is {len(ref):,d} bases long, which is more than twice the "
                 f"{distance:,d} bases on either side of it that are being scored. "
-                f"Retry with distance={retry_distance} or more.")
+                f"Retry with 'Max distance' set to {retry_distance} or more.")
 
     return (f"This variant's REF allele is {len(ref):,d} bases long, which is more than twice the "
             f"{MAX_DISTANCE_LIMIT:,d} bases on either side of a variant that can be scored.")
@@ -1350,17 +1279,6 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
             "error": ref_window_error,
         }
 
-    # Must run before get_delta_scores: a window that underruns the contig segfaults the worker.
-    context_window_error = check_model_context_window(chrom, pos, len(ref), distance_param, genome_version)
-    if context_window_error:
-        return {
-            "variant": variant,
-            "source": "spliceai",
-            "error": context_window_error,
-            # Same for both tools on the same input -- see the comment above.
-            "inputError": True,
-        }
-
     # spliceai's normalise_chrom() handles "chr" prefix mismatches but not the
     # M↔MT alias, so a user submitting M/chrM against hg19 (which uses "MT")
     # would otherwise hit KeyError. Remap to whichever name the fasta uses.
@@ -1583,17 +1501,6 @@ def get_spliceai_reference_scores(variant, genome_version, distance_param, basic
     """
     chrom, pos = parse_position(variant)
 
-    # Checked before the mito remap below, on the chromosome name the user submitted, so both
-    # tools word this the same way -- see the matching comment in get_spliceai_scores.
-    context_window_error = check_model_context_window(chrom, pos, 1, distance_param, genome_version)
-    if context_window_error:
-        return {
-            "variant": variant,
-            "source": "spliceai",
-            "error": context_window_error,
-            "inputError": True,
-        }
-
     # spliceai's normalise_chrom() handles "chr" prefix mismatches but not the
     # M↔MT alias -- see the matching comment in get_spliceai_scores.
     if chrom.upper() in {"M", "MT"} and genome_version in MITO_CHROM_NAME:
@@ -1713,19 +1620,6 @@ def get_pangolin_scores(variant, genome_version, distance_param, mask_param, bas
             "variant": variant,
             "source": "pangolin",
             "error": ref_window_error,
-        }
-
-    # See the matching comment in get_spliceai_scores. Pangolin reads the FASTA before it checks
-    # for an overlapping gene, so unlike SpliceAI it segfaults on any variant this close to a
-    # contig start, whether or not the position falls in a gene.
-    context_window_error = check_model_context_window(chrom, pos, len(ref), distance_param, genome_version)
-    if context_window_error:
-        return {
-            "variant": variant,
-            "source": "pangolin",
-            "error": context_window_error,
-            # see the matching comment in get_spliceai_scores
-            "inputError": True,
         }
 
     class PangolinArgs:
@@ -1867,16 +1761,6 @@ def get_pangolin_reference_scores(variant, genome_version, distance_param, basic
         raise ValueError(f"Invalid basic_or_comprehensive_param: {basic_or_comprehensive_param}")
 
     chrom, pos = parse_position(variant)
-
-    # see the matching comment in get_pangolin_scores
-    context_window_error = check_model_context_window(chrom, pos, 1, distance_param, genome_version)
-    if context_window_error:
-        return {
-            "variant": variant,
-            "source": "pangolin",
-            "error": context_window_error,
-            "inputError": True,
-        }
 
     class PangolinArgs:
         reference_file = FASTA_PATH[genome_version]

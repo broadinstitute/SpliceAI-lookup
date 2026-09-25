@@ -73,16 +73,40 @@ class CheckRefAlleleFitsWindowTest(unittest.TestCase):
 
     def test_message_suggests_a_distance_that_would_fit(self):
         message = self.check("A" * 600, "A", self.default_distance)
-        self.assertIn("Retry with distance=599 or more", message)
-        # the suggestion has to be usable in a URL, so no thousands separator
-        self.assertNotIn("distance=5,99", message)
+        self.assertIn("Retry with 'Max distance' set to 599 or more", message)
+        # the suggestion is meant to be typed into the "Max distance" field, so no thousands separator
+        self.assertNotIn("set to 5,99", message)
 
     def test_deletion_insertion_past_the_window_is_reported(self):
         self.assertIsNotNone(self.check("A" * 600, "GC", self.default_distance))
 
+    def test_the_suggested_distance_is_the_smallest_one_that_works(self):
+        # SpliceAI accepts a distance only when the changed bases fit the window (this check) AND the
+        # full REF is no longer than twice the distance (get_delta_scores' "ref too long" skip), so the
+        # suggestion has to be the smallest distance that satisfies both
+        def spliceai_accepts(ref, alt, distance):
+            return self.check(ref, alt, distance) is None and len(ref) <= 2 * distance
+
+        for ref, alt in (("A" * 3662, "A"),
+                         ("A" * 3662, "GC"),
+                         ("G" + "C" * 1800 + "A" * 1861, "G" + "A" * 1861),
+                         ("A" * 600 + "G" + "C" * 1000, "T" * 600 + "C" * 1000)):
+            with self.subTest(ref=ref[:10], alt=alt[:10]):
+                message = self.check(ref, alt, self.default_distance)
+                suggested = int(message.split("set to ")[1].split(" ")[0])
+                self.assertTrue(spliceai_accepts(ref, alt, suggested))
+                self.assertFalse(spliceai_accepts(ref, alt, suggested - 1))
+
+    def test_shared_trailing_bases_are_bound_by_the_full_ref_length(self):
+        # "G" + 1,800 deleted bases + 1,861 kept bases: the deletion ends 1,800 bases past the variant,
+        # which fits at distance 1800, but the 3,662-base REF needs 1831 to be at most twice the distance
+        message = self.check("G" + "C" * 1800 + "A" * 1861, "G" + "A" * 1861, self.default_distance)
+        self.assertIn("3,662 bases long", message)
+        self.assertIn("set to 1831 or more", message)
+
     def test_the_largest_distance_the_api_accepts_is_still_suggested(self):
         # the API rejects only distances above the limit, so a REF needing exactly it can be retried
-        self.assertIn(f"Retry with distance={self.max_distance} or more",
+        self.assertIn(f"Retry with 'Max distance' set to {self.max_distance} or more",
                       self.check("A" * (self.max_distance + 1), "A", self.default_distance))
 
     def test_a_ref_past_what_any_distance_can_reach_is_reported_as_unscoreable(self):
@@ -134,16 +158,17 @@ class CheckRefAlleleFitsPangolinWindowTest(unittest.TestCase):
         for length in (1001, 1002):
             with self.subTest(length=length):
                 message = self.check("A" * length, self.default_distance)
-                suggested = int(message.split("distance=")[1].split(" ")[0])
+                suggested = int(message.split("set to ")[1].split(" ")[0])
                 self.assertIsNone(self.check("A" * length, suggested))
                 self.assertIsNotNone(self.check("A" * length, suggested - 1))
 
     def test_the_suggestion_is_usable_in_a_url(self):
         # a thousands separator would make the suggested distance invalid as a query parameter
-        self.assertIn("Retry with distance=5001 or more", self.check("A" * 10001, self.default_distance))
+        self.assertIn("Retry with 'Max distance' set to 5001 or more",
+                      self.check("A" * 10001, self.default_distance))
 
     def test_the_largest_distance_the_api_accepts_is_still_suggested(self):
-        self.assertIn(f"Retry with distance={self.max_distance} or more",
+        self.assertIn(f"Retry with 'Max distance' set to {self.max_distance} or more",
                       self.check("A" * (2 * self.max_distance), self.default_distance))
 
     def test_a_ref_past_what_any_distance_can_reach_is_reported_as_unscoreable(self):
