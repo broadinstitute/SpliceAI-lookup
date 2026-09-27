@@ -4370,6 +4370,10 @@
         clearProgress()
         dismissPerPositionModal()
         removeInsertedBasesModals()
+        // Collapse the [show older updates] panel so the results of the new search
+        // aren't pushed down by a long list of old release notes
+        $("#more-details3").hide()
+        $("#more-details3-button").show()
 
         // Tear down any existing IGV browser so the next "Show" click rebuilds
         // it from scratch with only the new variant's tracks. Without this,
