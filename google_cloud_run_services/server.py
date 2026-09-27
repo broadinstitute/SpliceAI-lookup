@@ -1959,8 +1959,8 @@ def run_splice_prediction_tool(tool_name, scores_for_one_transcript=False):
     except Exception as e:
         return error_response(f'Invalid "distance": "{distance_param}". The value must be an integer.\n', source=tool_name)
 
-    if distance_param < 0:
-        return error_response(f'Invalid "distance": "{distance_param}". The value must be non-negative.\n', source=tool_name)
+    if distance_param < 1:
+        return error_response(f'Invalid "distance": "{distance_param}". The value must be at least 1.\n', source=tool_name)
 
     if distance_param > MAX_DISTANCE_LIMIT:
         return error_response(f'Invalid "distance": "{distance_param}". The value must be at most {MAX_DISTANCE_LIMIT}.\n', source=tool_name)

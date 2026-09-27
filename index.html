@@ -111,9 +111,10 @@
             margin: 0;
         }
 
-        /* Red border on a form field whose value was rejected at submit time. An id selector so it
-           also outranks Semantic UI's `.ui.input>input:focus` border color, which would otherwise
+        /* Red border on a form field whose value was rejected at submit time. Id selectors so they
+           also outrank Semantic UI's `.ui.input>input:focus` border color, which would otherwise
            take over while the field still has focus after the Submit click. */
+        #search-box.invalid,
         #max-distance-input.invalid {
             border-color: #db2828;
         }
@@ -1311,14 +1312,14 @@
     const clearProgress = () => $("#progress-box").hide().text("")
 
     // A form value rejected at submit time: outline the field in red and say why under the form.
-    // .text() because the messages are fixed strings that never carry user input.
+    // .text() because the messages are built from fixed strings and lengths, never from user input.
     const showInputError = ($input, errorMessage) => {
         $input.addClass("invalid")
         $("#input-error-box").text(errorMessage).show()
     }
 
     const clearInputError = () => {
-        $("#max-distance-input").removeClass("invalid")
+        $("#search-box, #max-distance-input").removeClass("invalid")
         $("#input-error-box").hide().text("")
     }
 
@@ -4283,28 +4284,23 @@
         // rejected input doesn't supersede (and orphan the loading state of) a search
         // that's still in flight.
         if (!variant) return
-        // showError only appends to #error-box, and these checks return before the box is
-        // cleared further down, so without this a second rejected submit would stack another
-        // copy of the message under the first. Only #error-box: the checks below return without
-        // hiding the previous search's results, and a note explains those results (eg. which allele
-        // a dbSNP id resolved to), so clearing it here would strip the caveat off scores still on
-        // screen. Both boxes are cleared further down, once a submission is actually accepted.
-        // The input error box and red field outline are cleared here too, since a resubmit is
-        // the only thing that clears them: either the value is still bad and gets flagged again,
-        // or it was fixed and the search goes ahead.
-        $("#error-box").hide().html("")
+        // A resubmit is the only thing that clears the input error box and the red field outline:
+        // either the value is still bad and gets flagged again below, or it was fixed and the
+        // search goes ahead. Only that box: the checks below return without hiding the previous
+        // search's results, and its notes and errors explain those results (eg. which allele a
+        // dbSNP id resolved to), so clearing them here would strip the caveats off scores still
+        // on screen. Those boxes are cleared further down, once a submission is actually accepted.
         clearInputError()
         if (variant.length > MAX_VARIANT_LENGTH) {
-            showError(`Input variant is ${variant.length.toLocaleString()} characters which exceeds `
+            showInputError($("#search-box"),
+                `Input variant is ${variant.length.toLocaleString()} characters which exceeds `
                 + `the API's request size limit of ${MAX_VARIANT_LENGTH.toLocaleString()} characters.`)
             return
         }
         // Read up here with the other input checks, rather than alongside the remaining form
         // fields below, so an out-of-range distance is rejected before the submission id is
-        // bumped. The regex also rejects a blank or non-numeric box, which the API answers with
-        // the same 400 as an over-limit value. A distance of 0 is refused here even though the
-        // API accepts it: it scores only the variant's own position, which is never what a user
-        // typing into this form wants.
+        // bumped. The regex also rejects a blank or non-numeric box, and 0 is refused along with
+        // over-limit values, matching the API's own bounds.
         const maxDistance = $("#max-distance-input").val().trim()
         if (!/^\d+$/.test(maxDistance) || parseInt(maxDistance) < 1 || parseInt(maxDistance) > MAX_DISTANCE_LIMIT) {
             showInputError($("#max-distance-input"),
