@@ -4309,6 +4309,17 @@
             showInputError($("#search-box"), `"${variant}" is not a variant. ${GENOMIC_COORDINATE_HINT}`)
             return
         }
+        // With REF and ALT the same there is nothing to compare: every delta is 0, and the
+        // summary table's REF score, read at the position of the largest delta, lands on an
+        // arbitrary position and reads 0 too, which looks like a verdict on the site. The REF
+        // scores at a position are what a bare chrom-pos search reports, so point there.
+        const refAltMatch = variant.match(VARIANT_RE)
+        if (refAltMatch && refAltMatch[4].toUpperCase() === refAltMatch[5].toUpperCase()) {
+            showInputError($("#search-box"),
+                `REF and ALT are the same. To see the REF scores at this position, search for `
+                + `"chr${refAltMatch[2].toUpperCase()}-${refAltMatch[3].replace(/,/g, "")}" instead.`)
+            return
+        }
         // Read up here with the other input checks, rather than alongside the remaining form
         // fields below, so an out-of-range distance is rejected before the submission id is
         // bumped. The regex also rejects a blank or non-numeric box, and 0 is refused along with
