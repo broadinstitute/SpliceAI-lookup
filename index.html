@@ -111,6 +111,13 @@
             margin: 0;
         }
 
+        /* Red border on a form field whose value was rejected at submit time. An id selector so it
+           also outranks Semantic UI's `.ui.input>input:focus` border color, which would otherwise
+           take over while the field still has focus after the Submit click. */
+        #max-distance-input.invalid {
+            border-color: #db2828;
+        }
+
         /* Highlight the row under the pointer. The table is wide enough that reading a value in
            one of the right-hand columns back to its position means tracking across eleven
            columns, which is exactly where a row is easy to lose. Cells that carry a score
@@ -624,6 +631,11 @@
         <div class="one wide column only-large-screen"></div>
         <div class="fourteen wide column">
             <div class="results-div">
+                <!-- A form value rejected before the search starts. Shown here, in the progress line's
+                     spot right under the form, rather than in #error-box: that box sits below every
+                     table, so with a previous search's results on screen a message there is off the
+                     bottom of the page and a rejected Submit looks like it did nothing. -->
+                <div id="input-error-box" style="color:darkred; padding:10px 0px; font-size:medium; display: none"></div>
                 <!-- Which stage a search is at, replaced as it advances and cleared once the results
                      are up. Separate from #notes-box so a note (eg. the dbSNP one) isn't overwritten by
                      the next stage, and isn't left behind when the progress line is cleared. -->
@@ -1297,6 +1309,18 @@
     const showProgress = (progressMessage) => $("#progress-box").text(progressMessage).show()
 
     const clearProgress = () => $("#progress-box").hide().text("")
+
+    // A form value rejected at submit time: outline the field in red and say why under the form.
+    // .text() because the messages are fixed strings that never carry user input.
+    const showInputError = ($input, errorMessage) => {
+        $input.addClass("invalid")
+        $("#input-error-box").text(errorMessage).show()
+    }
+
+    const clearInputError = () => {
+        $("#max-distance-input").removeClass("invalid")
+        $("#input-error-box").hide().text("")
+    }
 
     // Largest "Max distance" the API accepts (server.py MAX_DISTANCE_LIMIT). Keep the two in
     // sync: without this check the API rejects an over-limit value with a 400 for both SpliceAI
@@ -4265,7 +4289,11 @@
         // hiding the previous search's results, and a note explains those results (eg. which allele
         // a dbSNP id resolved to), so clearing it here would strip the caveat off scores still on
         // screen. Both boxes are cleared further down, once a submission is actually accepted.
+        // The input error box and red field outline are cleared here too, since a resubmit is
+        // the only thing that clears them: either the value is still bad and gets flagged again,
+        // or it was fixed and the search goes ahead.
         $("#error-box").hide().html("")
+        clearInputError()
         if (variant.length > MAX_VARIANT_LENGTH) {
             showError(`Input variant is ${variant.length.toLocaleString()} characters which exceeds `
                 + `the API's request size limit of ${MAX_VARIANT_LENGTH.toLocaleString()} characters.`)
@@ -4274,10 +4302,13 @@
         // Read up here with the other input checks, rather than alongside the remaining form
         // fields below, so an out-of-range distance is rejected before the submission id is
         // bumped. The regex also rejects a blank or non-numeric box, which the API answers with
-        // the same 400 as an over-limit value.
+        // the same 400 as an over-limit value. A distance of 0 is refused here even though the
+        // API accepts it: it scores only the variant's own position, which is never what a user
+        // typing into this form wants.
         const maxDistance = $("#max-distance-input").val().trim()
-        if (!/^\d+$/.test(maxDistance) || parseInt(maxDistance) > MAX_DISTANCE_LIMIT) {
-            showError(`"Max distance" must be a whole number between 0 and ${MAX_DISTANCE_LIMIT.toLocaleString()}bp`)
+        if (!/^\d+$/.test(maxDistance) || parseInt(maxDistance) < 1 || parseInt(maxDistance) > MAX_DISTANCE_LIMIT) {
+            showInputError($("#max-distance-input"),
+                `"Max distance" must be a whole number between 1 and ${MAX_DISTANCE_LIMIT.toLocaleString()}`)
             return
         }
 
@@ -4615,6 +4646,7 @@
             updateControlsForPositionOnlyMode(false)
             $("#response-box, #spliceai-table, #pangolin-table, #sai10k-table, #transcript-button-table, #error-box, #notes-box, #igv-table, #igv-div").hide()
             clearProgress()
+            clearInputError()
             return
         }
         if ($.urlParam('nosubmit') !== "1") {
