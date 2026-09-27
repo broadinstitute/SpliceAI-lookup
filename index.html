@@ -1312,7 +1312,7 @@
     const clearProgress = () => $("#progress-box").hide().text("")
 
     // A form value rejected at submit time: outline the field in red and say why under the form.
-    // .text() because the messages are built from fixed strings and lengths, never from user input.
+    // .text() because some messages quote the user's input, which must render as text, not markup.
     const showInputError = ($input, errorMessage) => {
         $input.addClass("invalid")
         $("#input-error-box").text(errorMessage).show()
@@ -4299,6 +4299,14 @@
             showInputError($("#search-box"),
                 `Input variant is ${variant.length.toLocaleString()} characters which exceeds `
                 + `the API's request size limit of ${MAX_VARIANT_LENGTH.toLocaleString()} characters.`)
+            return
+        }
+        // Every variant notation this page accepts has at least one letter or digit, so an input
+        // with neither (a row of dashes, dots, etc.) can't be one. Refused here, since sending it on
+        // would spend three API round trips to learn the same thing, and Ensembl's answer for such an
+        // input is "Skipped 1 empty line from line 1", which is not something the user can act on.
+        if (!/[A-Za-z0-9]/.test(variant)) {
+            showInputError($("#search-box"), `"${variant}" is not a variant. ${GENOMIC_COORDINATE_HINT}`)
             return
         }
         // Read up here with the other input checks, rather than alongside the remaining form
