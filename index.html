@@ -4283,7 +4283,7 @@
         // These input checks run before the submission id is bumped below, so that a
         // rejected input doesn't supersede (and orphan the loading state of) a search
         // that's still in flight.
-        if (!variant) return
+        //
         // A resubmit is the only thing that clears the input error box and the red field outline:
         // either the value is still bad and gets flagged again below, or it was fixed and the
         // search goes ahead. Only that box: the checks below return without hiding the previous
@@ -4291,6 +4291,10 @@
         // dbSNP id resolved to), so clearing them here would strip the caveats off scores still
         // on screen. Those boxes are cleared further down, once a submission is actually accepted.
         clearInputError()
+        if (!variant) {
+            showInputError($("#search-box"), "Enter a variant to look up.")
+            return
+        }
         if (variant.length > MAX_VARIANT_LENGTH) {
             showInputError($("#search-box"),
                 `Input variant is ${variant.length.toLocaleString()} characters which exceeds `
