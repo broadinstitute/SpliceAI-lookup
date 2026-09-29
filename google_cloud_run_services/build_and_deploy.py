@@ -311,7 +311,12 @@ def main():
 
                     run(f"wget -nc {gencode_gtf_url}")
                     # Pin to v369 on Linux — the "latest" binary requires glibc >=2.32 which is too new for Debian 11 / Ubuntu 20.04.
-                    gtf_to_gene_pred_os_dir = "macOSX.x86_64" if platform.system() == "Darwin" else "linux.x86_64.v369"
+                    # On Apple Silicon use the arm64 build: the x86_64 one links against an Intel Homebrew
+                    # liblzma (/usr/local/opt/xz) that an arm64 Homebrew install doesn't provide.
+                    if platform.system() == "Darwin":
+                        gtf_to_gene_pred_os_dir = "macOSX.arm64" if platform.machine() == "arm64" else "macOSX.x86_64"
+                    else:
+                        gtf_to_gene_pred_os_dir = "linux.x86_64.v369"
                     run(f"wget -nc https://hgdownload.soe.ucsc.edu/admin/exe/{gtf_to_gene_pred_os_dir}/gtfToGenePred")
                     run(f"chmod 777 gtfToGenePred")
                     gencode_gtf_paths[(genome_version, basic_or_comprehensive)] = os.path.basename(gencode_gtf_url)

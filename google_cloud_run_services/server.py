@@ -350,7 +350,7 @@ def check_ref_allele(chrom, pos, ref, genome_version):
             f"{genome_display_name(genome_version)} reference allele at {chrom}:{pos} is "
             f"{reference_allele}, not {ref}.")
 
-GENCODE_VERSION = "v49"
+GENCODE_VERSION = "v50"
 
 SHARED_TRANSCRIPT_ANNOTATIONS = {}
 SHARED_TRANSCRIPT_ANNOTATION_PATHS = {
