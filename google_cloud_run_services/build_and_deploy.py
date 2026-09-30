@@ -50,6 +50,9 @@ def get_db_connection():
 def update_transcript_tables(genome_versions, gencode_version):
     """Populate the transcripts table in the database from genePred files.
 
+    Loads the comprehensive gene set, a superset of basic, so one table serves both the basic
+    and the comprehensive services.
+
     Args:
         genome_versions: List of genome versions to process (e.g., ["37", "38"])
         gencode_version: The gencode version string (e.g., "v49")
@@ -82,11 +85,11 @@ def update_transcript_tables(genome_versions, gencode_version):
         """)
         conn.commit()
         # Look for genePred files in the annotations directory
-        gene_pred_path = f"./docker/ref/GRCh{genome_version}/gencode.{gencode_version}.GRCh{genome_version}.sorted.txt.gz"
+        gene_pred_path = f"./docker/ref/GRCh{genome_version}/gencode.{gencode_version}.GRCh{genome_version}.comprehensive.sorted.txt.gz"
 
         if not os.path.exists(gene_pred_path):
             # Try alternate path patterns
-            alt_path = f"gencode.{gencode_version}.GRCh{genome_version}.sorted.txt.gz"
+            alt_path = f"gencode.{gencode_version}.GRCh{genome_version}.comprehensive.sorted.txt.gz"
             if os.path.exists(alt_path):
                 gene_pred_path = alt_path
             else:
@@ -116,6 +119,12 @@ def update_transcript_tables(genome_versions, gencode_version):
 
         # The sorted file has an additional index column at the start
         df = pd.read_table(gene_pred_path, names=["i"] + column_names)
+
+        # Stripping the version maps a few names to the same transcript_id: PAR copies
+        # (ENST00000577553.1_PAR_Y) and extra liftover copies on GRCh37 (ENST00000583007.2_1 on
+        # chr6 vs. ENST00000583007.1 on chr1). ON CONFLICT below keeps the last row inserted, so
+        # move the unsuffixed names to the end to make the primary copy win.
+        df = df.sort_values("name", key=lambda names: ~names.str.contains("_"), kind="stable")
 
         # Prepare all rows for bulk insert
         rows = []
@@ -165,16 +174,14 @@ def update_transcript_tables(genome_versions, gencode_version):
 
         conn.commit()
 
-        # Create index on transcript_id for fast lookups
-        logging.info(f"Creating index on {temp_table_name}...")
-        cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_{temp_table_name}_tid ON {temp_table_name} (transcript_id)")
-        conn.commit()
+        # No separate index on transcript_id: the PRIMARY KEY already builds one. A second btree
+        # on the same column was created here until 2026-09-30, when building it for the
+        # comprehensive gene set ran past the database's 1-minute statement timeout.
 
         # Replace the old table with the new one
         logging.info(f"Replacing {table_name} with new data...")
         cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
         cursor.execute(f"ALTER TABLE {temp_table_name} RENAME TO {table_name}")
-        cursor.execute(f"ALTER INDEX IF EXISTS idx_{temp_table_name}_tid RENAME TO idx_{table_name}_tid")
         conn.commit()
 
         logging.info(f"Inserted {len(rows):,d} records into {table_name}")
@@ -342,9 +349,13 @@ def main():
             run(f"rm -f ./docker/pangolin/annotations/GRCh{genome_version}/gencode.*.annotation*.db")
 
         for (genome_version, basic_or_comprehensive), gencode_gtf_path in gencode_gtf_paths.items():
-            # generate genePred files to use as gene tracks in IGV.js
+            # generate genePred files: the basic one is the IGV.js gene track, and the comprehensive
+            # one is what update_transcript_tables loads. The two need separate paths; with a shared
+            # path the basic file (converted second) overwrote the comprehensive one, so the
+            # transcripts tables were loaded with basic transcripts only.
             if args.gencode_version:
-                gene_pred_path = f"gencode.{args.gencode_version}.GRCh{genome_version}.txt"
+                gene_set_suffix = "" if basic_or_comprehensive == ".basic" else ".comprehensive"
+                gene_pred_path = f"gencode.{args.gencode_version}.GRCh{genome_version}{gene_set_suffix}.txt"
                 run(f"./gtfToGenePred -genePredExt -geneNameAsName2 {gencode_gtf_path} {gene_pred_path}")
 
                 print(f"Reading {gene_pred_path}")
@@ -382,7 +393,9 @@ def main():
                 run(f"bgzip -f {sorted_gene_pred_path}")
                 run(f"tabix -s 3 -b 5 -e 6 -f {sorted_gene_pred_path}.gz")
 
-                run(f"gsutil -m cp {sorted_gene_pred_path}.gz* gs://tgg-viewer/ref/GRCh{genome_version}/gencode_{args.gencode_version}/")
+                # index.html loads only the basic file as its gene track
+                if basic_or_comprehensive == ".basic":
+                    run(f"gsutil -m cp {sorted_gene_pred_path}.gz* gs://tgg-viewer/ref/GRCh{genome_version}/gencode_{args.gencode_version}/")
 
             # generate SpliceAI annotation files
             run(f"python3 ../annotations/generate_transcript_annotation_json.py {gencode_gtf_path}")
