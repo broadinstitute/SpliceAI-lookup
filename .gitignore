@@ -176,3 +176,6 @@ google_cloud_run_services/docker/pangolin/annotations/
 # Artifacts written by /code-review-local and by Playwright's MCP server
 .code_review_local/
 .playwright-mcp/
+
+# Locally downloaded arm64 build of the UCSC gtfToGenePred tool
+google_cloud_run_services/gtfToGenePred
