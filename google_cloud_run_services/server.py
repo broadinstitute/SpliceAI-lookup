@@ -1035,8 +1035,9 @@ def get_transcript_structures(conn, transcript_ids, genome_version, empty_when_t
         return None
     except psycopg2.Error as e:
         # A transient OperationalError (e.g. broken connection mid-query)
-        # returns None so SAI-10k falls back to annotation-based defaults
-        # without spamming N per-transcript "not found" warnings.
+        # returns None so SAI-10k runs without transcript structures (and
+        # returns no aberrations) without spamming N per-transcript "not
+        # found" warnings.
         print(f"DB error fetching transcript structures for hg{genome_version}: {e}", flush=True)
         return None
 
@@ -1140,7 +1141,10 @@ def exceeds_rate_limit(conn, user_ip, params):
 # null for variants whose footprint straddles a shifted splice boundary (issue #134) --
 # those entries predate the substitution-clipping fix and would otherwise keep serving
 # a response with no protein sequence for exactly the variants the fix targets.
-SAI10K_VERSION = "v22"
+# v23 discards the v22 entries, whose pseudoexon and intron-retention sizes and
+# frameshift calls left out the variant's own insertion or deletion inside the
+# retained segment.
+SAI10K_VERSION = "v23"
 
 # Bump CACHE_VERSION whenever the SHAPE of the cached response changes for either tool, and also
 # whenever the scores change for a reason that is not one of the two inputs already in the key.
@@ -1342,13 +1346,13 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
         ]
         with get_db_connection() as conn:
             if conn is None:
-                # DB unavailable: structures dict stays empty, SAI-10k-calc
-                # silently falls back to its annotation defaults instead of
-                # EXON_STARTS/EXON_ENDS/CDS_*/STRAND, and the degraded result
-                # would be cached under the same key. Log loudly and skip the
-                # cache write so the next request retries.
+                # DB unavailable: structures dict stays empty, so SAI-10k-calc
+                # has no EXON_STARTS/EXON_ENDS/CDS_*/STRAND and silently
+                # returns no aberrations, and that degraded result would be
+                # cached under the same key. Log loudly and skip the cache
+                # write so the next request retries.
                 print(f"WARNING: DB unavailable for transcript-structure lookup for {variant}; "
-                      f"SAI-10k will use annotation defaults and the result will not be cached.", flush=True)
+                      f"SAI-10k will return no aberrations and the result will not be cached.", flush=True)
                 skip_cache = True
                 db_unavailable = True
             else:
@@ -1358,7 +1362,7 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
                     # connection: log once, skip the cache, and suppress the
                     # per-row "not found" warnings below.
                     print(f"WARNING: DB query for transcript-structure lookup failed for {variant}; "
-                          f"SAI-10k will use annotation defaults and the result will not be cached.", flush=True)
+                          f"SAI-10k will return no aberrations and the result will not be cached.", flush=True)
                     structures = {}
                     skip_cache = True
                     db_unavailable = True
@@ -1369,11 +1373,11 @@ def get_spliceai_scores(variant, genome_version, distance_param, mask_param, bas
                 transcript_scores.update(transcript_structure)
             elif not db_unavailable:
                 # DB was reachable but this row is missing. Without skip_cache,
-                # the degraded result (SAI-10k falling back to annotation
-                # defaults) would be cached permanently and re-served forever.
+                # the degraded result (SAI-10k returning no aberrations for
+                # this transcript) would be cached permanently and re-served forever.
                 print(f"WARNING: transcript {transcript_id_without_version} not found in "
                       f"transcripts_hg{genome_version} for {variant}; "
-                      f"SAI-10k will use annotation defaults and the result will not be cached.", flush=True)
+                      f"SAI-10k will return no aberrations for it and the result will not be cached.", flush=True)
                 skip_cache = True
     db_enrich_ms = (time.perf_counter() - db_enrich_t0) * 1000
 

@@ -881,7 +881,66 @@ def _cryptic_donor_orientation_ok(geo_dg, native, is_reverse):
         return geo_dg - next_estart < 0
 
 
-def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon_ends):
+def _variant_length_change_in_added_segment(seg_lo, seg_hi, low_flank_is_kept, high_flank_is_kept,
+                                            variant_pos, ref, alt, cds_start, cds_end):
+    """Return the variant's own length change that lands in a segment the aberration adds to the mRNA.
+
+    Pseudoexons and retained introns are sized from reference coordinates, but when the variant
+    inserts or deletes bases inside that segment the altered mRNA carries the change too, so the
+    real added length is the reference size plus this change. Tandem-repeat expansions that create
+    a pseudoexon are the common case.
+
+    The change counts only when it lies wholly inside the segment, or, for an insertion or a pure
+    deletion, at or across a junction with a kept exon (low_flank_is_kept / high_flank_is_kept:
+    the base just outside the segment stays in the mRNA, as for a retained intron); a deletion
+    across that junction counts only the bases it removes from the segment. Indels in kept exons
+    are not counted, here or for any other aberration type, so the size is always the added
+    segment's own length. A variant straddling the segment's other boundaries is left out, since the
+    mRNA there is unclear. So is an insertion anchored at either cryptic boundary base: SpliceAI
+    reports a splice site created inside the inserted bases at the anchor, so how many of them the
+    mRNA keeps is unknown.
+
+    The premature-stop detector applies the variant only when it lies wholly inside one kept span.
+    A whole retained intron is its own span next to the flanking exons, so the detector skips an
+    indel at or across those junctions (as straddling a splice boundary) even though it is counted
+    here.
+
+    Returns:
+        (change in the segment, change in the CDS): signed bp; (0, 0) for substitutions, a
+        variant outside the segment, or when ref / alt are not supplied.
+    """
+    if variant_pos is None or not ref or not alt or len(ref) == len(alt):
+        return 0, 0
+    change = len(alt) - len(ref)
+    has_anchor_base = ref[0].upper() == alt[0].upper()
+    if has_anchor_base and len(ref) == 1:
+        # Insertion between variant_pos and variant_pos + 1. Anchored at seg_lo it counts only
+        # when seg_lo borders a kept exon; at seg_hi, right > seg_hi already leaves it out.
+        left, right = variant_pos, variant_pos + 1
+        in_segment = ((seg_lo <= left and right <= seg_hi and (low_flank_is_kept or seg_lo < left))
+                      or (high_flank_is_kept and left == seg_hi)
+                      or (low_flank_is_kept and right == seg_lo))
+        in_cds = cds_start is not None and cds_end is not None and cds_start <= left and right <= cds_end
+    else:
+        # Deletion or complex indel: the changed reference bases, after any shared anchor base.
+        first = variant_pos + (1 if has_anchor_base else 0)
+        last = variant_pos + len(ref) - 1
+        is_pure_deletion = has_anchor_base and len(alt) == 1
+        if is_pure_deletion and ((low_flank_is_kept and first < seg_lo <= last <= seg_hi)
+                                 or (high_flank_is_kept and seg_lo <= first <= seg_hi < last)):
+            # A pure deletion running across a junction into a kept exon: only the bases it
+            # removes from the segment count.
+            first, last = max(first, seg_lo), min(last, seg_hi)
+            change = -(last - first + 1)
+        in_segment = seg_lo <= first and last <= seg_hi
+        in_cds = cds_start is not None and cds_end is not None and cds_start <= first and last <= cds_end
+    if not in_segment:
+        return 0, 0
+    return change, (change if in_cds else 0)
+
+
+def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon_ends,
+                               variant_pos=None, ref=None, alt=None):
     """
     Mutate `aberration` in place with size / frameshift / coding fields.
 
@@ -920,6 +979,14 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
     the portion of the affected segment that overlaps [cds_start, cds_end].
     The display label correspondingly shows "<N>bp coding seq." for the CDS-based
     size in coding cases, and "<N>bp" with a "non-coding" suffix otherwise.
+
+    For segments the aberration adds to the mRNA (pseudoexon, whole and partial
+    intron retention), size and cds_size also include the variant's own
+    insertion or deletion when it lies inside the segment (variant_pos, ref and
+    alt; see _variant_length_change_in_added_segment), so that e.g. a repeat
+    expansion inside a pseudoexon is part of its size and reading-frame call.
+    Segments the aberration removes need no such adjustment: the variant's
+    bases are removed with them.
     """
     # Treat cds_start==cds_end as non-coding (genePred encodes non-coding
     # transcripts with coincident cds start/end; after 0-based-to-1-based
@@ -1156,7 +1223,11 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             # Segment = retained intron: from min(geo_al, geo_dl)+1 to max(...)-1
             seg_lo = min(geo_al, geo_dl) + 1
             seg_hi = max(geo_al, geo_dl) - 1
-            cds_size = cds_overlap_size(seg_lo, seg_hi)
+            # Both flanks are the exons the retained intron joins.
+            size_change, cds_size_change = _variant_length_change_in_added_segment(
+                seg_lo, seg_hi, True, True, variant_pos, ref, alt, cds_start, cds_end)
+            intron_size += size_change
+            cds_size = cds_overlap_size(seg_lo, seg_hi) + cds_size_change
             # Intron retention adds bases; it cannot delete a codon.
             status = set_coding_fields(aberration, cds_size, start_lost=False, stop_lost=False)
             aberration['size'] = intron_size
@@ -1191,7 +1262,11 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
             gex_size = abs(geo_dg - geo_ag) + 1
             seg_lo = min(geo_ag, geo_dg)
             seg_hi = max(geo_ag, geo_dg)
-            cds_size = cds_overlap_size(seg_lo, seg_hi)
+            # Both flanks are intronic bases spliced out with the rest of the intron.
+            size_change, cds_size_change = _variant_length_change_in_added_segment(
+                seg_lo, seg_hi, False, False, variant_pos, ref, alt, cds_start, cds_end)
+            gex_size += size_change
+            cds_size = cds_overlap_size(seg_lo, seg_hi) + cds_size_change
             # Pseudoexon activation adds bases; it cannot delete a codon.
             status = set_coding_fields(aberration, cds_size, start_lost=False, stop_lost=False)
             aberration['size'] = gex_size
@@ -1339,6 +1414,12 @@ def sai10k_annotate_frameshift(aberration, cds_start, cds_end, exon_starts, exon
                 else:
                     seg_lo, seg_hi = native_site + 1, cryptic_site
             cds_size = cds_overlap_size(seg_lo, seg_hi)
+            if aberration_type == 'partial_intron_retention':
+                # The retained bases join the exon at the native site; the cryptic side's flank is spliced out.
+                size_change, cds_size_change = _variant_length_change_in_added_segment(
+                    seg_lo, seg_hi, native_site < seg_lo, native_site > seg_hi, variant_pos, ref, alt, cds_start, cds_end)
+                display_size += size_change
+                cds_size += cds_size_change
             # Start/stop-codon-lost only applies to partial_exon_deletion
             # (partial_intron_retention adds bases to the mRNA rather than
             # removing any; it can't delete the start or stop codon).
@@ -1466,6 +1547,7 @@ def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=N
             aberration,
             cds_start, cds_end,
             exon_starts, exon_ends,
+            variant_pos=variant_pos, ref=ref, alt=alt,
         )
         aberration['delta_type'] = overall_delta_type
     annotate_ms = (time.perf_counter() - t1) * 1000
@@ -1483,12 +1565,16 @@ def sai10k_compute_predictions(transcript_scores, variant_pos, chrom=None, ref=N
     #   wt_protein_window:        dict describing the ±15-aa WT context around
     #                             the change with fields prefix_hidden_aa,
     #                             visible_aa, changed_aa (always None for WT),
-    #                             suffix_hidden_aa, total_aa (PTC cases only;
-    #                             None otherwise).
+    #                             suffix_hidden_aa, total_aa (PTC cases and
+    #                             in-frame coding changes; None for a
+    #                             frameshift without a PTC, when detection was
+    #                             skipped, or when the translations match).
     #   altered_protein_window:   same dict shape for the predicted altered
-    #                             protein; changed_aa holds the PTC region
-    #                             (incl. trailing '*'), and suffix_hidden_aa
-    #                             is 0 since the protein terminates at the PTC.
+    #                             protein; in PTC cases changed_aa holds the PTC
+    #                             region (incl. trailing '*'), and
+    #                             suffix_hidden_aa is 0 since the protein
+    #                             terminates at the PTC. See
+    #                             _build_protein_windows for the in-frame shape.
     # When the detector signals a PTC or extends-past-native-stop, we flip the
     # corresponding boolean on aberration['description']; the frontend renders
     # the appended clauses. The detector silently returns (None, None, None,
@@ -1841,6 +1927,30 @@ def _apply_variant_to_altered_exon_seqs(altered_exon_spans, exon_seqs, var_pos, 
     adjustment_size = var_pos - span_start
     return [(fully_contained_idx,
              affected_exon[:adjustment_size] + alt + affected_exon[adjustment_size + len(ref):])]
+
+
+def _is_insertion_anchored_at_gained_splice_site(aberration, var_pos, ref, alt):
+    """Return True for an anchored insertion whose anchor base is a splice site the aberration gains.
+
+    SpliceAI reports a splice site created inside the inserted bases at the anchor, so how many
+    inserted bases the altered mRNA keeps is unknown, whichever end of the exon the site is on.
+    _variant_length_change_in_added_segment leaves such an insertion out of the size for the same
+    reason. Native exon boundaries are not affected: there an insertion after the first exonic
+    base is unambiguously exonic.
+    """
+    if not (len(ref) == 1 and len(alt) > 1 and ref[0].upper() == alt[0].upper()):
+        return False
+    aberration_type = aberration.get('aberration_type')
+    branch = aberration.get('_branch', '')
+    if aberration_type == 'pseudoexon':
+        gained_sites = (aberration.get('geo_ag'), aberration.get('geo_dg'))
+    elif aberration_type in ('partial_intron_retention', 'partial_exon_deletion') and branch == 'gain_B_acceptor':
+        gained_sites = (aberration.get('geo_ag'),)
+    elif aberration_type in ('partial_intron_retention', 'partial_exon_deletion') and branch == 'gain_B_donor':
+        gained_sites = (aberration.get('geo_dg'),)
+    else:
+        return False
+    return var_pos in gained_sites
 
 
 def _consensus_filtered_in_tx_order(transcript_scores):
@@ -2484,8 +2594,9 @@ def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt
     `aa_change` is a {prefix_aa, changed_aa} dict for PTC cases and None
     otherwise. `extends_past_native_stop` is True only for the frameshift case
     where the altered translation extends past the native stop without hitting
-    a PTC. The two window dicts are populated when a PTC is introduced and
-    None otherwise.
+    a PTC. The two window dicts are populated when a PTC is introduced or the
+    change is in-frame, and None for a frameshift without a PTC, when detection
+    is skipped, or when the two translations are identical.
 
     `consensus_ctx`, when provided, is a `_compute_consensus_context` result;
     callers detecting over multiple aberrations on the same transcript should
@@ -2502,6 +2613,10 @@ def _detect_premature_stop(transcript_scores, aberration, fasta, chrom, ref, alt
             return (None, None, None, None, False)
 
     if fasta is None or chrom is None or ref is None or alt is None or var_pos is None:
+        return (None, None, None, None, False)
+
+    if _is_insertion_anchored_at_gained_splice_site(aberration, var_pos, ref, alt):
+        print('WARNING: SAI-10k stop-codon detection skipped: insertion anchored at a gained splice site')
         return (None, None, None, None, False)
 
     cds_start = transcript_scores.get('CDS_START')

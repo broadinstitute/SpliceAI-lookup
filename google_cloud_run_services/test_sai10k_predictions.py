@@ -29,6 +29,8 @@ from sai10k_predictions import (
     sai10k_annotate_frameshift,
     sai10k_compute_predictions,
     sai10k_select_transcript,
+    _variant_length_change_in_added_segment,
+    _is_insertion_anchored_at_gained_splice_site,
     _translate_dna,
     _reverse_complement,
     _find_difference_point,
@@ -1999,6 +2001,149 @@ class TestPseudoexonNeverLosesCodon(unittest.TestCase):
         self.assertEqual(len(pseudo), 1)
         self.assertFalse(pseudo[0]["start_codon_lost"])
         self.assertFalse(pseudo[0]["stop_codon_lost"])
+
+
+class TestVariantLengthChangeInAddedSegment(unittest.TestCase):
+    """The variant's own insertion or deletion counts toward a pseudoexon's or
+    retained intron's size and reading frame when it lands inside it."""
+
+    # Segment [100, 200], CDS [50, 500] unless stated otherwise.
+    def change(self, variant_pos, ref, alt, low_kept=False, high_kept=False, cds=(50, 500)):
+        return _variant_length_change_in_added_segment(100, 200, low_kept, high_kept, variant_pos, ref, alt, *cds)
+
+    def test_insertion_inside_the_segment(self):
+        self.assertEqual(self.change(150, "A", "ACAGC"), (4, 4))
+
+    def test_deletion_inside_the_segment(self):
+        self.assertEqual(self.change(150, "ACA", "A"), (-2, -2))
+
+    def test_insertion_at_an_edge_counts_only_next_to_a_kept_exon(self):
+        self.assertEqual(self.change(200, "A", "AC"), (0, 0))
+        self.assertEqual(self.change(200, "A", "AC", high_kept=True), (1, 1))
+        self.assertEqual(self.change(99, "A", "AC"), (0, 0))
+        self.assertEqual(self.change(99, "A", "AC", low_kept=True), (1, 1))
+
+    def test_insertion_anchored_at_a_cryptic_boundary_base_is_left_out_at_either_end(self):
+        # A splice site created inside the inserted bases is reported at the anchor, so the
+        # number of inserted bases the mRNA keeps is unknown at both ends.
+        self.assertEqual(self.change(100, "A", "AC"), (0, 0))
+        self.assertEqual(self.change(200, "A", "AC"), (0, 0))
+        # Next to a kept exon the anchor is an ordinary segment base.
+        self.assertEqual(self.change(100, "A", "AC", low_kept=True), (1, 1))
+
+    def test_deletion_straddling_an_edge_is_left_out(self):
+        self.assertEqual(self.change(198, "ACAG", "A"), (0, 0))
+
+    def test_deletion_across_a_junction_with_a_kept_exon_counts_only_its_segment_bases(self):
+        # Deletes 98-101 (two exonic, two segment bases) and 199-202 (two segment, two exonic).
+        self.assertEqual(self.change(97, "AGGTA", "A", low_kept=True), (-2, -2))
+        self.assertEqual(self.change(198, "ACAGT", "A", high_kept=True), (-2, -2))
+        # A complex indel across the junction has no clear base mapping, so it is left out.
+        self.assertEqual(self.change(98, "AGGTA", "CC", low_kept=True), (0, 0))
+
+    def test_whole_intron_retention_with_a_deletion_across_the_donor_is_a_frameshift(self):
+        # Deletes 1099-1102: the last two bases of exon 2 and the first two of the retained intron,
+        # so the retained intron adds 900 - 2 = 898 bp, not the in-frame 900.
+        scores = {
+            "DS_AG": 0.00, "DS_AL": 0.50, "DS_DG": 0.00, "DS_DL": 0.80,
+            "DP_AG": 0, "DP_AL": 903, "DP_DG": 0, "DP_DL": 2,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": [1, 1001, 2001], "EXON_ENDS": [100, 1100, 2100],
+            "CDS_START": 1, "CDS_END": 2100, "STRAND": "+",
+        }
+        result = sai10k_compute_predictions(scores, variant_pos=1098, ref="AGGTA", alt="A")
+        ab = [a for a in result["aberrations"] if a["aberration_type"] == "whole_intron_retention"][0]
+        self.assertEqual((ab["size"], ab["cds_size"], ab["frameshift"]), (898, 898, True))
+
+    def test_outside_the_segment_substitution_or_missing_alleles(self):
+        self.assertEqual(self.change(300, "A", "ACC"), (0, 0))
+        self.assertEqual(self.change(150, "AC", "GT"), (0, 0))
+        self.assertEqual(self.change(150, None, None), (0, 0))
+
+    def test_change_outside_the_cds_counts_toward_size_only(self):
+        self.assertEqual(self.change(150, "A", "ACAGC", cds=(160, 500)), (4, 0))
+        self.assertEqual(self.change(150, "A", "ACAGC", cds=(None, None)), (4, 0))
+
+
+class TestFrameCallIncludesRetainedVariant(unittest.TestCase):
+    """A repeat expansion inside a pseudoexon or retained intron is part of the
+    added sequence, so it must be part of its size and in-frame/frameshift call."""
+
+    # The TestPseudoexonNeverLosesCodon transcript: pseudoexon [152, 352] (201 bp, in-frame) in a coding intron.
+    PSEUDOEXON_SCORES = {
+        "DS_AG": 0.30, "DS_AL": 0.00, "DS_DG": 0.40, "DS_DL": 0.00,
+        "DP_AG": 152 - 250, "DP_AL": 0, "DP_DG": 352 - 250, "DP_DL": 0,
+        "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+        "EXON_STARTS": [1, 1001, 2001], "EXON_ENDS": [100, 1100, 2100],
+        "CDS_START": 1, "CDS_END": 2100, "STRAND": "+",
+    }
+
+    def pseudoexon(self, ref=None, alt=None):
+        result = sai10k_compute_predictions(dict(self.PSEUDOEXON_SCORES), variant_pos=250, ref=ref, alt=alt)
+        pseudo = [a for a in result["aberrations"] if a["aberration_type"] == "pseudoexon"]
+        self.assertEqual(len(pseudo), 1)
+        return pseudo[0]
+
+    def test_pseudoexon_without_alleles_is_sized_from_the_reference(self):
+        ab = self.pseudoexon()
+        self.assertEqual((ab["size"], ab["cds_size"], ab["frameshift"]), (201, 201, False))
+
+    def test_insertion_of_4_bp_inside_the_pseudoexon_makes_it_a_frameshift(self):
+        ab = self.pseudoexon("A", "ACAGC")
+        self.assertEqual((ab["size"], ab["cds_size"], ab["frameshift"]), (205, 205, True))
+        self.assertEqual(ab["description"]["status"], "frameshift")
+        self.assertEqual(ab["description"]["size_bp"], 205)
+
+    def test_insertion_of_3_bp_inside_the_pseudoexon_stays_in_frame(self):
+        ab = self.pseudoexon("A", "ACAG")
+        self.assertEqual((ab["size"], ab["cds_size"], ab["frameshift"]), (204, 204, False))
+
+    def test_insertion_at_an_exon_junction_of_a_retained_intron_is_retained(self):
+        # BRCA2 intron 2 retention, variant at the exon 2 donor (its last base): an insertion right
+        # after it lies between exon 2 and the retained intron, so it is in the mRNA.
+        scores = {
+            "DS_AG": 0.00, "DS_AL": 0.50, "DS_DG": 0.00, "DS_DL": 0.80,
+            "DP_AG": 0, "DP_AL": 2550, "DP_DG": 0, "DP_DL": 0,
+            "DS_AG_ALT": 0.0, "DS_AL_ALT": 0.0, "DS_DG_ALT": 0.0, "DS_DL_ALT": 0.0,
+            "EXON_STARTS": BRCA2_TRANSCRIPT_HG19["EXON_STARTS"], "EXON_ENDS": BRCA2_TRANSCRIPT_HG19["EXON_ENDS"],
+            "CDS_START": BRCA2_TRANSCRIPT_HG19["CDS_START"], "CDS_END": BRCA2_TRANSCRIPT_HG19["CDS_END"], "STRAND": "+",
+        }
+
+        def retention(ref=None, alt=None):
+            result = sai10k_compute_predictions(dict(scores), variant_pos=32890664, ref=ref, alt=alt)
+            return [a for a in result["aberrations"] if a["aberration_type"] == "whole_intron_retention"][0]
+
+        reference_sized = retention()
+        with_insertion = retention("G", "GTT")
+        self.assertEqual(with_insertion["size"], reference_sized["size"] + 2)
+        self.assertEqual(with_insertion["cds_size"], reference_sized["cds_size"] + 2)
+        self.assertEqual(with_insertion["frameshift"], (reference_sized["cds_size"] + 2) % 3 != 0)
+
+
+class TestInsertionAnchoredAtGainedSpliceSite(unittest.TestCase):
+    """The premature-stop detector skips an insertion anchored at a splice site the aberration
+    gains, since how many inserted bases the mRNA keeps is unknown."""
+
+    def test_pseudoexon_either_gained_site(self):
+        ab = {"aberration_type": "pseudoexon", "geo_ag": 152, "geo_dg": 352}
+        self.assertTrue(_is_insertion_anchored_at_gained_splice_site(ab, 152, "A", "AC"))
+        self.assertTrue(_is_insertion_anchored_at_gained_splice_site(ab, 352, "A", "AC"))
+        self.assertFalse(_is_insertion_anchored_at_gained_splice_site(ab, 250, "A", "AC"))
+
+    def test_deletion_or_substitution_is_not_flagged(self):
+        ab = {"aberration_type": "pseudoexon", "geo_ag": 152, "geo_dg": 352}
+        self.assertFalse(_is_insertion_anchored_at_gained_splice_site(ab, 152, "AC", "A"))
+        self.assertFalse(_is_insertion_anchored_at_gained_splice_site(ab, 152, "A", "G"))
+
+    def test_partial_retention_uses_only_the_cryptic_site_of_its_branch(self):
+        ab = {"aberration_type": "partial_intron_retention", "_branch": "gain_B_acceptor",
+              "geo_ag": 900, "geo_dg": 950}
+        self.assertTrue(_is_insertion_anchored_at_gained_splice_site(ab, 900, "A", "AC"))
+        self.assertFalse(_is_insertion_anchored_at_gained_splice_site(ab, 950, "A", "AC"))
+
+    def test_types_without_a_gained_site_are_not_flagged(self):
+        ab = {"aberration_type": "whole_intron_retention", "geo_ag": 900, "geo_dg": 950}
+        self.assertFalse(_is_insertion_anchored_at_gained_splice_site(ab, 900, "A", "AC"))
 
 
 class TestIncreasedExonInclusionNeverLosesCodon(unittest.TestCase):
