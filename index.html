@@ -2276,7 +2276,9 @@
                     isVariant: false,
                     locusText: `${row.pos} (> ${row.alt})`,
                     positionDeltaText: "—",
-                    note: `inserted base ${insertedBaseNumber} of ${insertedBaseCount}`,
+                    // Same + strand numbering, and the same wording, as the main table's
+                    // "+N bp position within the inserted sequence" label.
+                    note: `inserted base ${insertedBaseNumber} of ${insertedBaseCount}, counted left to right on the + strand`,
                 }
             }
             // context.alt, not row.alt: at the variant's own position these rows carry the
@@ -2355,7 +2357,12 @@
             return `${position} bp`
         }
 
-        return `+${maxDeltaPosition} bp position within the inserted sequence`
+        // The API numbers the inserted bases left to right on the + strand, the same genomic
+        // convention as every other position on the page. For a - strand gene that runs opposite
+        // to the transcript, so +1 is the inserted base closest to the variant's own coordinate,
+        // which is the last inserted base in transcript order. Say so, since the label is
+        // otherwise read in transcript order (https://github.com/broadinstitute/SpliceAI-lookup/issues/140).
+        return `+${maxDeltaPosition} bp position within the inserted sequence (counted left to right on the + strand)`
     }
 
     // The per-position score table: one modal per transcript, opened from the table icon in

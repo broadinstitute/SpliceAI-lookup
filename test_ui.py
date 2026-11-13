@@ -528,7 +528,7 @@ class TestSpliceAILookupUI(unittest.TestCase):
         # printed as an offset.
         self.assertEqual(
             self._position_for_inserted_bases("DS_AG", "0.014", self.SCORES_FOR_INSERTED_BASES_ABCA3),
-            "+1 bp position within the inserted sequence")
+            "+1 bp position within the inserted sequence (counted left to right on the + strand)")
 
     def test_inserted_bases_without_a_gain_keep_the_reported_position(self):
         """With no gain inside the insertion, the model's own 0 bp offset is left alone."""
